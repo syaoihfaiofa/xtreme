@@ -4,6 +4,9 @@ import ai.basic.x1.adapter.api.config.ImageDatasetInitialInfo;
 import ai.basic.x1.adapter.api.config.PointCloudDatasetInitialInfo;
 import ai.basic.x1.adapter.api.job.converter.ModelCocoRequestConverter;
 import ai.basic.x1.adapter.api.job.converter.PointCloudDetectionModelReqConverter;
+import ai.basic.x1.adapter.api.job.converter.PointCloudTrackingModelReqConverter;
+import ai.basic.x1.entity.PointCloudTrackingParamBO;
+import ai.basic.x1.entity.TrackingSeedObjectBO;
 import ai.basic.x1.adapter.dto.ApiResult;
 import ai.basic.x1.adapter.dto.response.ModelResponseDTO;
 import ai.basic.x1.adapter.port.dao.*;
@@ -304,6 +307,18 @@ public class ModelUseCase {
                 var preModelReqDTO = PointCloudDetectionModelReqConverter.buildRequestParam(ModelMessageBO.builder().dataInfo(dataInfoBO).build());
                 requestBody = JSONUtil.toJsonStr(preModelReqDTO);
                 break;
+            case LIDAR_TRACKING:
+                dataInfoBO = dataInfoUseCase.getInitDataInfoBO(pointCloudDatasetInitialInfo);
+                var trackingMessage = ModelMessageBO.builder()
+                        .dataInfo(dataInfoBO)
+                        .resultFilterParam(JSONUtil.parseObj(PointCloudTrackingParamBO.builder()
+                                .sourceDataId(dataInfoBO.getId())
+                                .direction("FORWARD")
+                                .objects(List.of(TrackingSeedObjectBO.builder().trackingId("test").build()))
+                                .build()))
+                        .build();
+                requestBody = JSONUtil.toJsonStr(PointCloudTrackingModelReqConverter.buildRequestParam(trackingMessage, dataInfoBO));
+                break;
             default:
         }
         try {
@@ -491,6 +506,7 @@ public class ModelUseCase {
         switch (modelCode) {
             case IMAGE_DETECTION:
             case LIDAR_DETECTION:
+            case LIDAR_TRACKING:
                 var missFiled = new ArrayList<>();
                 var content = modelResponseBO.getContent();
                 if (!content.containsKey(Constants.MODEL_RUN_RESULT_CODE)) {

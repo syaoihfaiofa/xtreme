@@ -332,10 +332,10 @@ export default function useBottom() {
                 break;
             case 'MergeTo':
             case 'MergeFrom':
-                // onMerge();
+                onMerge();
                 break;
             case 'Split':
-                // onSplit();
+                onSplit();
                 break;
             case 'Delete':
                 onDelete();
@@ -450,79 +450,76 @@ export default function useBottom() {
         iState.trackList = trackListMap;
     }
     // 合并
-    // function onMerge() {
-    //     const curTrackId = iState.trackTargetLine.trackId;
-    //     const mergeTrackId = iState.trackMergeResult.trackId;
-    //     const trackMergeCode = iState.trackMergeCode;
-    //     if (trackMergeCode !== 'ok') {
-    //         let msg = 'error';
-    //         switch (trackMergeCode) {
-    //             case 'classType_diff':
-    //                 msg = editor.lang('warnClassTypeDiff');
-    //                 break;
-    //             case 'object_repeat':
-    //                 msg = editor.lang('warnObjectRepeat');
-    //                 break;
-    //             default:
-    //                 break;
-    //         }
-    //         editor.showMsg('warning', msg);
-    //         return;
-    //     }
-    //     try {
-    //         switch (iState.trackAction) {
-    //             case 'MergeFrom':
-    //                 editor.trackManager.mergeTrackObject(mergeTrackId, curTrackId);
-    //                 updateTrackLine(true);
-    //                 break;
+    function onMerge() {
+        const curTrackId = iState.trackTargetLine.trackId;
+        const mergeTrackId = iState.trackMergeResult.trackId;
+        const trackMergeCode = iState.trackMergeCode;
+        if (trackMergeCode !== 'ok') {
+            let msg = 'error';
+            switch (trackMergeCode) {
+                case 'classType_diff':
+                    msg = editor.lang('warnClassTypeDiff');
+                    break;
+                case 'object_repeat':
+                    msg = editor.lang('warnObjectRepeat');
+                    break;
+                default:
+                    break;
+            }
+            editor.showMsg('warning', msg);
+            return;
+        }
+        try {
+            switch (iState.trackAction) {
+                case 'MergeFrom':
+                    editor.trackManager.mergeTrackObject(mergeTrackId, curTrackId);
+                    updateTrackLine(true);
+                    break;
 
-    //             case 'MergeTo':
-    //                 editor.trackManager.mergeTrackObject(curTrackId, mergeTrackId);
-    //                 editor.selectByTrackId(mergeTrackId);
-    //                 // iState.trackTargetLine.trackId = mergeTrackId;
+                case 'MergeTo':
+                    editor.trackManager.mergeTrackObject(curTrackId, mergeTrackId);
+                    editor.selectByTrackId(mergeTrackId);
+                    break;
 
-    //                 break;
-
-    //             default:
-    //                 break;
-    //         }
-    //         // editor.dispatchEvent({ type: EditorEvent.CLEAR_MERGE_SPLIT });
-    //         editor.showMsg('success', editor.lang('successMerge'));
-    //     } catch (error) {
-    //         editor.showMsg('error', editor.lang('errorMerge'));
-    //     }
-    // }
+                default:
+                    break;
+            }
+            onClear();
+            editor.showMsg('success', editor.lang('successMerge'));
+        } catch (error) {
+            editor.showMsg('error', editor.lang('errorMerge'));
+        }
+    }
     // 拆分
-    // function onSplit() {
-    //     const trackId = iState.trackTargetLine.trackId;
-    //     const start = iState.trackSplitIndex;
+    function onSplit() {
+        const trackId = iState.trackTargetLine.trackId;
+        const start = iState.trackSplitIndex;
 
-    //     const canSplit = editor.trackManager.canSplit(trackId, start);
+        const canSplit = editor.trackManager.canSplit(trackId, start);
 
-    //     if (!canSplit) {
-    //         editor.showMsg('warning', editor.lang('warnEmptyObject'));
-    //         return;
-    //     }
-    //     try {
-    //         const splitTrackId = iState.trackList[1].trackId;
-    //         const classConfig = editor.getClassType(iState.trackSplitClass);
-    //         editor.trackManager.splitTrackObject({
-    //             trackId: trackId,
-    //             start: start,
-    //             userData: {
-    //                 trackId: splitTrackId,
-    //                 classId: iState.trackSplitClass,
-    //                 classType: classConfig.name,
-    //             },
-    //         });
-    //         onClear();
-    //         updateTrackLine();
-    //         // editor.dispatchEvent({ type: EditorEvent.CLEAR_MERGE_SPLIT });
-    //         editor.showMsg('success', editor.lang('successSplit'));
-    //     } catch (error) {
-    //         editor.showMsg('error', editor.lang('errorSplit'));
-    //     }
-    // }
+        if (!canSplit) {
+            editor.showMsg('warning', editor.lang('warnEmptyObject'));
+            return;
+        }
+        try {
+            const splitTrackId = iState.trackList[1].trackId;
+            const classConfig = editor.getClassType(iState.trackSplitClass);
+            editor.trackManager.splitTrackObject({
+                trackId: trackId,
+                start: start,
+                userData: {
+                    trackId: splitTrackId,
+                    classId: iState.trackSplitClass,
+                    classType: classConfig.name,
+                },
+            });
+            onClear();
+            updateTrackLine();
+            editor.showMsg('success', editor.lang('successSplit'));
+        } catch (error) {
+            editor.showMsg('error', editor.lang('errorSplit'));
+        }
+    }
     // 更新当前TrackLine
     function updateTrackLine(force: boolean = false) {
         const trackId = editor.currentTrack;

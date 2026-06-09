@@ -1,4 +1,4 @@
-import { ICameraInternal } from '../type';
+import { ICameraDistortion, ICameraInternal, ICameraModel } from '../type';
 import * as THREE from 'three';
 import { Box, Box2D, Rect } from '../objects';
 import Image2DRenderView from '../renderView/Image2DRenderView';
@@ -37,6 +37,64 @@ export function createMatrixFromCameraInternal(
     );
 }
 
+export interface ICameraProjectionOption {
+    cameraInternal: ICameraInternal;
+    cameraModel?: ICameraModel | string;
+    distortion?: ICameraDistortion;
+    imageSize: THREE.Vector2;
+    matrixWorldInverse: THREE.Matrix4;
+    projectionMatrix: THREE.Matrix4;
+}
+
+export function isFisheyeCamera(cameraModel?: ICameraModel | string) {
+    return (cameraModel || 'pinhole').toLowerCase() === 'fisheye';
+}
+
+export function projectWorldToImage(
+    pos: THREE.Vector3,
+    target: THREE.Vector3,
+    option: ICameraProjectionOption,
+) {
+    target.copy(pos).applyMatrix4(option.matrixWorldInverse);
+
+    if (isFisheyeCamera(option.cameraModel)) {
+        return projectCameraToFisheyeImage(target, target, option);
+    }
+
+    target.applyMatrix4(option.projectionMatrix);
+    target.x = ((target.x + 1) / 2) * option.imageSize.x;
+    target.y = (-(target.y - 1) / 2) * option.imageSize.y;
+    return Math.abs(target.z) < 1;
+}
+
+function projectCameraToFisheyeImage(
+    cameraPos: THREE.Vector3,
+    target: THREE.Vector3,
+    option: ICameraProjectionOption,
+) {
+    const zForward = -cameraPos.z;
+    if (zForward <= 0.000001) {
+        target.set(Number.NaN, Number.NaN, 2);
+        return false;
+    }
+
+    const x = cameraPos.x / zForward;
+    const y = -cameraPos.y / zForward;
+    const r = Math.sqrt(x * x + y * y);
+    const theta = Math.atan(r);
+    const theta2 = theta * theta;
+    const theta4 = theta2 * theta2;
+    const theta6 = theta4 * theta2;
+    const theta8 = theta4 * theta4;
+    const { k1 = 0, k2 = 0, k3 = 0, k4 = 0 } = option.distortion || {};
+    const thetaD = theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
+    const scale = r > 0.000001 ? thetaD / r : 1;
+    const { fx, fy, cx, cy } = option.cameraInternal;
+
+    target.set(fx * x * scale + cx, fy * y * scale + cy, 0);
+    return true;
+}
+
 export function isPointInRect(pos: THREE.Vector2, rect: THREE.Vector2[]) {
     let A = rect[0];
     let B = rect[1];
@@ -67,6 +125,7 @@ export function getMaxMinV2(positions: THREE.Vector2[]) {
     // let minZ = Infinity;
     // let maxZ = -Infinity;
     positions.forEach((pos) => {
+        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y)) return;
         if (pos.x < minX) minX = pos.x;
         if (pos.x > maxX) maxX = pos.x;
         if (pos.y < minY) minY = pos.y;

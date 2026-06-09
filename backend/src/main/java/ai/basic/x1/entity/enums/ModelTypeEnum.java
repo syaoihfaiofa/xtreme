@@ -8,5 +8,9 @@ public enum ModelTypeEnum {
     /**
      * Detection
      */
-    DETECTION
+    DETECTION,
+    /**
+     * Tracking
+     */
+    TRACKING
 }

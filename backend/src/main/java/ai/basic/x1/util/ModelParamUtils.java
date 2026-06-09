@@ -22,6 +22,8 @@ public class ModelParamUtils {
                 var modelClass = DefaultConverter.convert(resultFilterParam, PreModelParamDTO.class);
                 ValidateUtil.validate(modelClass);
                 break;
+            case LIDAR_TRACKING:
+                break;
             default:
                 throw new UsecaseException(UsecaseCode.UNKNOWN, "Not support the model code: " + modelCode);
         }

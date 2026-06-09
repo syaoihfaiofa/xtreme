@@ -58,6 +58,35 @@ const en = {
     newBadge: 'New',
     copyLeft1: 'Copy one frame backward (Alt+←)',
     copyRight1: 'Copy one frame forward (Alt+→)',
+
+    mergeTitle: 'Merge Track',
+    mergeTo: 'Merge To',
+    mergeFrom: 'Merge From',
+    mergeConfirm: 'Confirm merge?',
+    selectTrack: 'Select track',
+    successMerge: 'Merge successfully',
+    errorMerge: 'Merge failed',
+    warnClassTypeDiff: 'Class type mismatch',
+    warnObjectRepeat: 'Duplicate objects exist',
+    warnEmptyObject: 'Cannot create empty object',
+
+    splitTitle: 'Split Track',
+    splitBtnTitle: 'Split from current frame',
+    splitNewClass: 'New object class',
+    splitConfirm: 'Confirm split?',
+    successSplit: 'Split successful',
+    errorSplit: 'Split failed',
+
+    trackTitle: 'Track',
+    trackDirection: 'Direction',
+    trackForward: 'Forward',
+    trackBackward: 'Backward',
+    trackFrameN: 'Frames',
+    trackMethod: 'Mode',
+    trackCopy: 'Copy',
+    trackModel: 'Model',
+    trackRun: 'Run',
+    btnConfirm: 'Confirm',
 };
 
 export type ILocale = typeof en;

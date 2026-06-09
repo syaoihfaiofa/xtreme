@@ -1,5 +1,6 @@
 import type { Vector2, Vector3 } from 'three';
 import { Vector2Of4, AnnotateType } from 'pc-render';
+import type { ICameraDistortion, ICameraModel } from 'pc-render';
 
 export * from './common/ActionManager/type';
 export * from './common/CmdManager/type';
@@ -174,6 +175,8 @@ export interface IClassType {
 export interface IImgViewConfig {
     cameraInternal: { fx: number; fy: number; cx: number; cy: number };
     cameraExternal: number[];
+    cameraModel?: ICameraModel;
+    distortion?: ICameraDistortion;
     imgSize: [number, number];
     imgUrl: string;
     imgObject: HTMLImageElement;

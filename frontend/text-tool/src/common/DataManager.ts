@@ -4,6 +4,7 @@ import * as api from '../api';
 import { DataManager as BaseDataManager, Const } from 'pc-editor';
 import * as bsUtils from '../utils';
 import { AnnotateObject } from 'pc-render';
+import { pollModelTrack } from '../utils/model';
 
 export default class DataManager extends BaseDataManager {
     editor: Editor;
@@ -95,6 +96,73 @@ export default class DataManager extends BaseDataManager {
             return request;
         }
     }
+    async runModelTrack(
+        curId: string,
+        toIds: string[],
+        direction: 'BACKWARD' | 'FORWARD',
+        targetObjects: any[],
+        _trackIdName: Record<string, string>,
+        onComplete?: () => void,
+    ) {
+        let editor = this.editor;
+        let bsState = editor.bsState;
+        let trackingModel = editor.state.models.find((m) => m.code === 'LIDAR_TRACKING');
+        if (!trackingModel) {
+            editor.showMsg('warning', editor.lang('load-model-error'));
+            return;
+        }
+
+        editor.showLoading({ type: 'track', content: editor.lang('load-track') });
+
+        let config = {
+            datasetId: bsState.datasetId,
+            dataIds: toIds.map((id) => +id),
+            modelId: +trackingModel.id,
+            modelVersion: trackingModel.version,
+            operateItemType: 'SINGLE_DATA',
+            modelCode: 'LIDAR_TRACKING',
+            resultFilterParam: {
+                sourceDataId: +curId,
+                direction,
+                objects: targetObjects.map((o) => ({
+                    trackingId: o.trackingId,
+                    center3D: { x: o.center3D.x, y: o.center3D.y, z: o.center3D.z },
+                    rotation3D: { x: o.rotation3D.x, y: o.rotation3D.y, z: o.rotation3D.z },
+                    size3D: { x: o.size3D.x, y: o.size3D.y, z: o.size3D.z },
+                    modelClass: o.modelClass,
+                    confidence: o.confidence,
+                })),
+            },
+        };
+
+        try {
+            let result = await api.runModel(config);
+            if (!result.data) throw new Error('track error');
+            let recordId = String(result.data);
+            pollModelTrack(
+                recordId,
+                toIds,
+                (objectsMap) => {
+                    editor.showLoading(false);
+                    if (Object.keys(objectsMap).length === 0) {
+                        editor.showMsg('warning', editor.lang('track-no-data'));
+                        return;
+                    }
+                    editor.modelManager.addModelTrackData(objectsMap);
+                    editor.showMsg('success', editor.lang('track-ok'));
+                    onComplete && onComplete();
+                },
+                () => {
+                    editor.showLoading(false);
+                    editor.showMsg('error', editor.lang('track-error'));
+                },
+            );
+        } catch (error) {
+            editor.showLoading(false);
+            editor.showMsg('error', editor.lang('track-error'));
+        }
+    }
+
     onAnnotatesAdd(objects: AnnotateObject[], frame?: IFrame | undefined): void {
         let { user } = this.editor.bsState;
 

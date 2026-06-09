@@ -13,5 +13,9 @@ public enum ModelCodeEnum {
     /**
      * PRE_LABEL
      */
-    LIDAR_DETECTION
+    LIDAR_DETECTION,
+    /**
+     * LIDAR_TRACKING
+     */
+    LIDAR_TRACKING
 }

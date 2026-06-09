@@ -40,7 +40,8 @@ services:
       start_period: 10s
       retries: 10
   minio:
-    image: bitnami/minio:2022.9.1
+    #image: bitnami/minio:2022.9.1
+    image: bitnamilegacy/minio:2022.9.1
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: 1tQB970y
@@ -64,11 +65,9 @@ services:
       start_period: 10s
       retries: 10
   backend:
-    # By default, Compose will pull image from Docker Hub when no local image found.
-    image: basicai/xtreme1-backend:v0.9.1
-    pull_policy: always
-    # Uncomment this line and comment previous line to build image locally, not pull from Docker Hub.
-    # build: ./backend
+    build: ./backend
+    # image: basicai/xtreme1-backend:v0.9.1
+    # pull_policy: always
     ports:
       - 8290:8080
     # volumes:
@@ -95,11 +94,9 @@ services:
       minio:
         condition: service_healthy
   frontend:
-    # By default, Compose will pull image from Docker Hub when no local image found.
-    image: basicai/xtreme1-frontend:v0.9.1
-    pull_policy: always
-    # Uncomment this line and comment previous line to build image locally, not pull from Docker Hub.
-    # build: ./frontend
+    build: ./frontend
+    # image: basicai/xtreme1-frontend:v0.9.1
+    # pull_policy: always
     ports:
       - 8291:80
   pcd-tools:
@@ -120,7 +117,7 @@ services:
     # You need to explicitly specify model profile to start this service.
     profiles:
       - model
-    runtime: nvidia
+    gpus: all
   point-cloud-object-detection:
     image: basicai/xtreme1-point-cloud-object-detection
     pull_policy: always
@@ -129,7 +126,13 @@ services:
     # You need to explicitly specify model profile to start this service.
     profiles:
       - model
-    runtime: nvidia
+    gpus: all
+  point-cloud-object-tracking:
+    build: ./deploy/point-cloud-object-tracking
+    ports:
+      - 8296:5000
+    profiles:
+      - model
 volumes:
   mysql-data:
   redis-data:

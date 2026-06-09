@@ -1,15 +1,14 @@
 # syntax=docker/dockerfile:1
+# Reuse official main/image-tool bundles; overlay locally built pc-tool & text-tool (tracking UI).
+FROM basicai/xtreme1-frontend:v0.9.1 as base
+
 FROM node:16 as build
 WORKDIR /build
-COPY . .
-RUN --mount=type=cache,target=main/node_modules \
-    cd main && npm install && npm run build
-RUN --mount=type=cache,target=image-tool/node_modules \
-    cd image-tool && npm install && npm run build
-RUN --mount=type=cache,target=pc-tool/node_modules \
-    cd pc-tool && npm install && npm run build
-RUN --mount=type=cache,target=text-tool/node_modules \
-    cd text-tool && npm install && npm run build
+COPY pc-tool ./pc-tool
+COPY text-tool ./text-tool
+RUN cd pc-tool && npm install && npm run build
+RUN cd text-tool && npm install && npm run build
 
-FROM nginx:1.22
-COPY --from=build /build/dist /usr/share/nginx/html
+FROM base
+COPY --from=build /build/dist/pc-tool /usr/share/nginx/html/pc-tool
+COPY --from=build /build/dist/text-tool /usr/share/nginx/html/text-tool

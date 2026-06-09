@@ -135,17 +135,11 @@ docker compose --profile model up
 Make sure you have installed [NVIDIA CUDA Driver](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html) and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/index.html) on host machine.
 
 ```bash
-# You need set "default-runtime" as "nvidia" in /etc/docker/daemon.json and restart docker to enable NVIDIA Container Toolkit
-{
-  "runtimes": {
-    "nvidia": {
-      "path": "nvidia-container-runtime",
-      "runtimeArgs": []
-    }
-  },
-  "default-runtime": "nvidia"
-}
+# Verify GPU works in Docker (compose uses "gpus: all", no daemon.json change required in most setups)
+docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
 ```
+
+See [docs/gpu-setup.md](docs/gpu-setup.md) for details. Legacy setups may still need `runtimes.nvidia` in `/etc/docker/daemon.json`.
 
 If you use **Docker Desktop** + **WSL2.0**, please find this [issue #144](https://github.com/xtreme1-io/xtreme1/issues/144) for your reference.
 

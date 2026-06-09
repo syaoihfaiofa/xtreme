@@ -34,9 +34,18 @@ export interface ICameraInternal {
   cx: number;
   cy: number;
 }
+export type ICameraModel = 'pinhole' | 'fisheye';
+export interface ICameraDistortion {
+  k1?: number;
+  k2?: number;
+  k3?: number;
+  k4?: number;
+}
 export interface IImgViewConfig {
   cameraInternal: ICameraInternal;
   cameraExternal: number[];
+  cameraModel?: ICameraModel;
+  distortion?: ICameraDistortion;
   imgSize: [number, number];
   imgUrl: string;
   imgObject: HTMLImageElement;
@@ -152,17 +161,39 @@ export function getCameraMatrix(item: IImgViewConfig) {
       ext[15],
     )
     .premultiply(new Matrix4().makeScale(1, -1, -1));
+  if (isFisheyeCamera(item.cameraModel)) {
+    return {
+      cameraInternal: item.cameraInternal,
+      cameraModel: item.cameraModel,
+      distortion: item.distortion,
+      imageSize: item.imgSize,
+      matrixWorldInverse,
+      projectionMatrix,
+    };
+  }
   projectionMatrix.multiply(matrixWorldInverse);
   return projectionMatrix;
 }
-export function transformToImage(object: IObject, size: ISize, cameraMatrix: Matrix4) {
+
+type ICameraProjection = {
+  cameraInternal: ICameraInternal;
+  cameraModel?: ICameraModel;
+  distortion?: ICameraDistortion;
+  imageSize: [number, number];
+  matrixWorldInverse: Matrix4;
+  projectionMatrix: Matrix4;
+};
+
+export function transformToImage(object: IObject, size: ISize, cameraMatrix: Matrix4 | ICameraProjection) {
   const { center3D, rotation3D, size3D } = object;
   tempCenter.set(center3D.x, center3D.y, center3D.z);
   tempEuler.set(rotation3D.x, rotation3D.y, rotation3D.z);
   tempSize.set(size3D.x, size3D.y, size3D.z);
-  worldMatrix
-    .compose(tempCenter, _quat.setFromEuler(tempEuler, false), tempSize)
-    .premultiply(cameraMatrix);
+  worldMatrix.compose(tempCenter, _quat.setFromEuler(tempEuler, false), tempSize);
+  const projection = cameraMatrix instanceof Matrix4 ? null : cameraMatrix;
+  if (!projection) {
+    worldMatrix.premultiply(cameraMatrix);
+  }
 
   const _pos = new Vector3();
   const min = new Vector3(Infinity, Infinity, Infinity);
@@ -170,8 +201,12 @@ export function transformToImage(object: IObject, size: ISize, cameraMatrix: Mat
   vertexs.forEach((item) => {
     _pos.copy(item);
     _pos.applyMatrix4(worldMatrix);
-    _pos.x = ((_pos.x + 1) / 2) * size.width;
-    _pos.y = (-(_pos.y - 1) / 2) * size.height;
+    if (projection) {
+      if (!projectWorldPointToImage(_pos, _pos, projection)) return;
+    } else {
+      _pos.x = ((_pos.x + 1) / 2) * size.width;
+      _pos.y = (-(_pos.y - 1) / 2) * size.height;
+    }
     min.min(_pos);
     max.max(_pos);
   });
@@ -194,6 +229,37 @@ export function transformToImage(object: IObject, size: ISize, cameraMatrix: Mat
     return null;
   }
 }
+function isFisheyeCamera(cameraModel?: ICameraModel | string) {
+  return (cameraModel || 'pinhole').toLowerCase() === 'fisheye';
+}
+function projectWorldPointToImage(pos: Vector3, target: Vector3, projection: ICameraProjection) {
+  target.copy(pos).applyMatrix4(projection.matrixWorldInverse);
+  if (!isFisheyeCamera(projection.cameraModel)) {
+    target.applyMatrix4(projection.projectionMatrix);
+    target.x = ((target.x + 1) / 2) * projection.imageSize[0];
+    target.y = (-(target.y - 1) / 2) * projection.imageSize[1];
+    return Math.abs(target.z) < 1;
+  }
+
+  const zForward = -target.z;
+  if (zForward <= 0.000001) return false;
+
+  const x = target.x / zForward;
+  const y = -target.y / zForward;
+  const r = Math.sqrt(x * x + y * y);
+  const theta = Math.atan(r);
+  const theta2 = theta * theta;
+  const theta4 = theta2 * theta2;
+  const theta6 = theta4 * theta2;
+  const theta8 = theta4 * theta4;
+  const { k1 = 0, k2 = 0, k3 = 0, k4 = 0 } = projection.distortion || {};
+  const thetaD = theta * (1 + k1 * theta2 + k2 * theta4 + k3 * theta6 + k4 * theta8);
+  const scale = r > 0.000001 ? thetaD / r : 1;
+  const { fx, fy, cx, cy } = projection.cameraInternal;
+
+  target.set(fx * x * scale + cx, fy * y * scale + cy, 0);
+  return true;
+}
 export function isMatrixColumnMajor(elements: number[]) {
   const rightZero = elements[3] === 0 && elements[7] === 0 && elements[11] === 0;
   const bottomHasOne = !!elements[12] || !!elements[13] || !!elements[14];
@@ -201,8 +267,10 @@ export function isMatrixColumnMajor(elements: number[]) {
 }
 export function translateCameraConfig(info: any) {
   // 兼容
-  let cameraExternal = info.cameraExternal || info.camera_external;
-  const cameraInternal = info.cameraInternal || info.camera_internal;
+  let cameraExternal = info?.cameraExternal || info?.camera_external;
+  const cameraInternal = info?.cameraInternal || info?.camera_internal;
+  const cameraModel = info?.cameraModel || info?.camera_model || 'pinhole';
+  const distortion = info?.distortion || info?.cameraDistortion || info?.camera_distortion;
 
   if (!info || !cameraExternal || cameraExternal.length !== 16) return null;
 
@@ -214,7 +282,7 @@ export function translateCameraConfig(info: any) {
     cameraExternal = matrix.elements;
   }
 
-  return { cameraExternal, cameraInternal };
+  return { cameraExternal, cameraInternal, cameraModel, distortion };
 }
 export async function xhrGet(url: string, responseType: XMLHttpRequestResponseType = 'json') {
   return new Promise<any>((resolve) => {
@@ -252,9 +320,11 @@ export async function getCameraConfig(url: string) {
     if (!translateInfo) return;
 
     configs[index] = {
-      imgSize: [config.width || 10, config.height | 10],
+      imgSize: [config.width || 10, config.height || 10],
       cameraExternal: translateInfo.cameraExternal,
       cameraInternal: translateInfo.cameraInternal,
+      cameraModel: translateInfo.cameraModel,
+      distortion: translateInfo.distortion,
     };
   });
 
