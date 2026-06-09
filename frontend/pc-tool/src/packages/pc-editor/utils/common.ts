@@ -12,6 +12,8 @@ export function isMatrixColumnMajor(elements: number[]) {
 export function translateCameraConfig(info: any) {
     let cameraExternal = info?.cameraExternal || info?.camera_external;
     let cameraInternal = info?.cameraInternal || info?.camera_internal;
+    let cameraModel = info?.cameraModel || info?.camera_model || 'pinhole';
+    let distortion = info?.distortion || info?.cameraDistortion || info?.camera_distortion;
 
     if (!info || !cameraExternal || cameraExternal.length !== 16) return null;
 
@@ -23,7 +25,7 @@ export function translateCameraConfig(info: any) {
         cameraExternal = matrix.elements;
     }
 
-    return { cameraExternal, cameraInternal };
+    return { cameraExternal, cameraInternal, cameraModel, distortion };
 }
 
 export function clamRange(v: number, min: number, max: number) {
@@ -43,6 +45,7 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
             viewConfig[index] = {
                 cameraInternal: { fx: 0, fy: 0, cx: 0, cy: 0 },
                 cameraExternal: [],
+                cameraModel: 'pinhole',
                 imgSize: [0, 0],
                 imgUrl: e.url,
                 name: e.name,
@@ -59,6 +62,8 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
 
         config.cameraExternal = translateInfo.cameraExternal;
         config.cameraInternal = translateInfo.cameraInternal;
+        config.cameraModel = translateInfo.cameraModel;
+        config.distortion = translateInfo.distortion;
         config.imgSize = [info.width, info.height];
         // config.rowMajor = info.rowMajor;
     });

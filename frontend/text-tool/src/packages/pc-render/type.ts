@@ -27,6 +27,15 @@ export interface ICameraInternal {
     cy: number;
 }
 
+export type ICameraModel = 'pinhole' | 'fisheye';
+
+export interface ICameraDistortion {
+    k1?: number;
+    k2?: number;
+    k3?: number;
+    k4?: number;
+}
+
 export enum AnnotateType {
     ANNOTATE_3D = 'annotate_3d',
     ANNOTATE_2D = 'annotate_2d',

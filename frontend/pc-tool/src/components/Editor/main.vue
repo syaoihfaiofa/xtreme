@@ -12,7 +12,7 @@
             </Layout>
         </div>
         <div class="frame-wrap" v-if="state.isSeriesFrame">
-            <TimeLine :config="{ noModelTrack: true }" />
+            <TimeLine :config="{ noModelTrack: false }" />
         </div>
     </div>
 </template>

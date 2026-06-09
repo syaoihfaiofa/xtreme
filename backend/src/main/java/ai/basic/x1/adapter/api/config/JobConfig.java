@@ -156,4 +156,9 @@ public class JobConfig {
     public ImageDetectionModelHandler imageDetectionModelHandler() {
         return new ImageDetectionModelHandler();
     }
+
+    @Bean
+    public PointCloudTrackingModelMessageHandler pointCloudTrackingModelMessageHandler() {
+        return new PointCloudTrackingModelMessageHandler();
+    }
 }

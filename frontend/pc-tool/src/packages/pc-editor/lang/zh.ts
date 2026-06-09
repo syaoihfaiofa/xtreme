@@ -58,6 +58,35 @@ const zh: ILocale = {
     newBadge: '新',
     copyLeft1: '向左复制一帧(Alt+←)',
     copyRight1: '向右复制一帧(Alt+→)',
+
+    mergeTitle: '合并轨迹',
+    mergeTo: '合并到',
+    mergeFrom: '合并从',
+    mergeConfirm: '确认合并?',
+    selectTrack: '选择轨迹',
+    successMerge: '合并成功',
+    errorMerge: '合并失败',
+    warnClassTypeDiff: '标签类型不一致',
+    warnObjectRepeat: '存在重复对象',
+    warnEmptyObject: '不能创建空对象',
+
+    splitTitle: '拆分轨迹',
+    splitBtnTitle: '从当前帧拆分',
+    splitNewClass: '新对象标签',
+    splitConfirm: '确认拆分?',
+    successSplit: '拆分成功',
+    errorSplit: '拆分失败',
+
+    trackTitle: '跟踪',
+    trackDirection: '方向',
+    trackForward: '向前',
+    trackBackward: '向后',
+    trackFrameN: '帧数',
+    trackMethod: '模式',
+    trackCopy: '复制',
+    trackModel: '模型',
+    trackRun: '执行',
+    btnConfirm: '确认',
 };
 
 export { zh };

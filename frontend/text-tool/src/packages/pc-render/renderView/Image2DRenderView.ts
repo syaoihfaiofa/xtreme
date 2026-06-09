@@ -4,8 +4,15 @@ import PointCloud from '../PointCloud';
 import PointsMaterial, { IUniformOption } from '../material/PointsMaterial';
 import * as _ from 'lodash';
 import { Object2D, Box, Rect, Vector2Of4, Box2D, AnnotateObject } from '../objects';
-import { IRenderViewConfig, ICameraInternal } from '../type';
-import { createMatrixFromCameraInternal, getMaxMinV2, reformProjectPoints } from '../utils';
+import { ICameraDistortion, ICameraInternal, ICameraModel, IRenderViewConfig } from '../type';
+import {
+    createMatrixFromCameraInternal,
+    getMaxMinV2,
+    isFisheyeCamera,
+    projectWorldToImage,
+    reformProjectPoints,
+    renderBox2D,
+} from '../utils';
 import { get } from '../utils/tempVar';
 import Image2DRenderProxy from './Image2DRenderProxy';
 import { Event } from '../config/';
@@ -24,6 +31,8 @@ type ActionType = 'select' | 'render-2d-shape' | 'create-obj' | 'edit-2d' | 'tra
 interface IOption {
     cameraInternal: ICameraInternal;
     cameraExternal: Array<number>;
+    cameraModel?: ICameraModel;
+    distortion?: ICameraDistortion;
     imgSize?: [number, number];
     imgUrl?: string;
     imgObject: HTMLImageElement;
@@ -217,6 +226,10 @@ export default class Image2DRenderView extends Render {
         this.render();
     }
 
+    isFisheye() {
+        return isFisheyeCamera(this.option.cameraModel);
+    }
+
     testFrustum() {
         let frustum = new THREE.Frustum();
         frustum.setFromProjectionMatrix(
@@ -232,17 +245,14 @@ export default class Image2DRenderView extends Render {
         // let domElement = this.renderer.domElement;
         target = target || pos;
 
-        target.copy(pos);
-
-        let matrix = get(THREE.Matrix4);
-        matrix.copy(this.camera.projectionMatrix);
-        matrix.multiply(this.camera.matrixWorldInverse);
-
-        // pos.applyMatrix4(e.matrixWorld);
-        target.applyMatrix4(matrix);
-        target.x = ((target.x + 1) / 2) * this.imgSize.x;
-        target.y = (-(target.y - 1) / 2) * this.imgSize.y;
-
+        projectWorldToImage(pos, target, {
+            cameraInternal: this.option.cameraInternal,
+            cameraModel: this.option.cameraModel,
+            distortion: this.option.distortion,
+            imageSize: this.imgSize,
+            matrixWorldInverse: this.camera.matrixWorldInverse,
+            projectionMatrix: this.camera.projectionMatrix,
+        });
         return target;
     }
 
@@ -311,7 +321,9 @@ export default class Image2DRenderView extends Render {
             // this.projectToImg(v);
         });
 
-        reformProjectPoints(positionsFrontV3, positionsBackV3, this.clipCamera);
+        if (!this.isFisheye()) {
+            reformProjectPoints(positionsFrontV3, positionsBackV3, this.clipCamera);
+        }
 
         // isInCamera([...positionsFrontV3, ...positionsBackV3], this.camera);
 
@@ -320,14 +332,10 @@ export default class Image2DRenderView extends Render {
         // }
 
         positionsFrontV3.forEach((v) => {
-            v.applyMatrix4(this.camera.matrixWorldInverse);
-            v.applyMatrix4(this.camera.projectionMatrix);
-            this.projectToImg(v);
+            this.worldToImg(v);
         });
         positionsBackV3.forEach((v) => {
-            v.applyMatrix4(this.camera.matrixWorldInverse);
-            v.applyMatrix4(this.camera.projectionMatrix);
-            this.projectToImg(v);
+            this.worldToImg(v);
         });
 
         // let points = [...positionsFrontV3, ...positionsBackV3];
@@ -539,7 +547,7 @@ export default class Image2DRenderView extends Render {
 
     renderBoxData(box: Box) {
         let { selectionMap, selectColor, highlightColor } = this.pointCloud;
-        let { renderer } = this.proxy;
+        let { context, renderer } = this.proxy;
         let boxMaterial = box.material as THREE.LineBasicMaterial;
 
         let color = selectionMap[box.uuid] ? selectColor : box.color;
@@ -550,6 +558,20 @@ export default class Image2DRenderView extends Render {
         //     renderBoxMask(box, this.renderer, this.camera);
         //     color = this.selectColor;
         // }
+
+        if (this.isFisheye()) {
+            const { positionsBack, positionsFront } = this.getBox2DBox(box);
+            const positions = [...positionsBack, ...positionsFront];
+            if (positions.some((pos) => !Number.isFinite(pos.x) || !Number.isFinite(pos.y))) {
+                return;
+            }
+            renderBox2D(
+                context,
+                { positions1: positionsFront, positions2: positionsBack, dashed: box.dashed } as any,
+                { color: `#${color.getHexString()}`, lineWidth: this.lineWidth },
+            );
+            return;
+        }
 
         if (box.dashed) {
             let dashedMaterial = box.dashedMaterial;

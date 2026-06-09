@@ -7,6 +7,7 @@
                     <template #header="{ isActive }">
                         <span class="item-header">
                             <span class="title1">{{ 'Cuboid' + ' ' + state.trackName }}</span>
+                            <span class="title2" v-if="state.trackId">{{ state.trackId }}</span>
                             <template v-if="!state.isBatch && !state.isInvisible">
                                 <EyeInvisibleOutlined
                                     @click.stop="onToggleTrackVisible"

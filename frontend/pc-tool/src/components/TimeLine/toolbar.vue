@@ -160,14 +160,10 @@
             </div>
         </div>
         <div class="bar-right" v-show="!isCheck()" v-if="canEdit()">
-            <!-- object tracking -->
-            <!-- <toolTipTrack v-if="isAnnotate()" :state="state" /> -->
-            <!-- <div class="divide-line"> </div> -->
-
-            <!-- <toolTipMerge v-if="!isGroup()" :state="state" @action="onTrackAction" /> -->
-
-            <!-- <toolTipSplit v-if="!isGroup()" :state="state" @action="onTrackAction" /> -->
-
+            <toolTipTrack :state="state" />
+            <div class="divide-line"></div>
+            <toolTipMerge :state="state" @action="onTrackAction" />
+            <toolTipSplit :state="state" @action="onTrackAction" />
             <a-tooltip placement="top">
                 <template #title>{{ editor.lang('delete') }}</template>
                 <a-button @click="() => onTrackAction('Delete')">
@@ -189,6 +185,9 @@
 
     import { StepForwardOutlined, StepBackwardOutlined, CopyOutlined } from '@ant-design/icons-vue';
     import { useInjectEditor } from '../../state';
+    import toolTipTrack from './toolTipTrack.vue';
+    import toolTipMerge from './toolTipMerge.vue';
+    import toolTipSplit from './toolTipSplit.vue';
     const props = defineProps<{
         state: IBottomState;
     }>();

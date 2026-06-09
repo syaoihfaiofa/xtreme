@@ -193,6 +193,14 @@ export const createObjectWith3 = define({
                         editor.cmdManager.withGroup(() => {
                             editor.cmdManager.execute('add-object', box);
                             if (editor.state.isSeriesFrame) {
+                                if (!trackObject.trackId) {
+                                    trackObject.trackId = editor.createTrackId();
+                                }
+                                if (!trackObject.trackName) {
+                                    trackObject.trackName = editor.getId();
+                                }
+                                userData.trackId = trackObject.trackId;
+                                userData.trackName = trackObject.trackName;
                                 editor.cmdManager.execute('add-track', trackObject);
                             }
 

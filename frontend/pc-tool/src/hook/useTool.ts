@@ -26,7 +26,8 @@ export default function useTool() {
             let models = await api.getModelList();
             editor.state.models = models;
         } catch (error) {
-            throw new BSError('', editor.lang('load-model-error'), error);
+            console.warn('load models error', error);
+            editor.state.models = [];
         }
     }
 
