@@ -18,7 +18,9 @@
 | MinIO API | `xtreme1-minio-1` | 8193 | 对象存储 |
 | MinIO 控制台 | `xtreme1-minio-1` | 8194 | 用户 `admin` / 密码 `1tQB970y` |
 | pcd-tools | `xtreme1-pcd-tools-1` | 8295 | 点云解析 |
-| **point-cloud-object-tracking** | `xtreme1-point-cloud-object-tracking-1` | **8296** | 跟踪模型（`model` profile） |
+| point-cloud-object-detection | `xtreme1-point-cloud-object-detection-1` | 8293 | 点云检测（`model` profile，需 GPU） |
+| image-object-detection | `xtreme1-image-object-detection-1` | 8292 | 图像检测（`model` profile，需 GPU） |
+| **point-cloud-object-tracking** | `xtreme1-point-cloud-object-tracking-1` | **8296** | 跟踪模型（`model` profile，不需 GPU） |
 
 默认账号（首次初始化）：`admin@basic.ai` / `basicai123`（以你实际注册账号为准）。
 
@@ -26,34 +28,63 @@
 
 ## 2. 首次启动（推荐流程）
 
+### 2.0 为什么首次不用 `docker compose --profile model up -d`？
+
+`docker-compose.yml` 里带 `profiles: [model]` 的服务**默认不会启动**，需要显式加 `--profile model` 才会拉起：
+
+| 服务 | 端口 | 需要 GPU | 用途 |
+|------|------|----------|------|
+| `point-cloud-object-tracking` | 8296 | **否** | 模型跟踪（LIDAR_TRACKING） |
+| `point-cloud-object-detection` | 8293 | **是** | 点云 3D 检测预标注 |
+| `image-object-detection` | 8292 | **是** | 图像 2D 检测预标注 |
+
+首次部署的目标是**先让网页能打开、能手动标注**，因此推荐分两步：
+
+1. **先起基础栈**（nginx / backend / frontend / MySQL / MinIO 等）— 不依赖 GPU，启动快、失败面小
+2. **再按需起模型服务** — 只用跟踪就单独起跟踪；要用检测再考虑 GPU（见 [gpu-setup.md](gpu-setup.md)）
+
+> 若机器已配好 GPU 且首次就要检测 + 跟踪，可直接 `docker compose --profile model up -d` 一次全起；无 GPU 时请勿带 `model` profile 全起，否则两个检测容器可能起不来。
+
+### 2.1 第一步：基础栈（必做）
+
 在项目根目录执行：
 
 ```bash
 cd /path/to/xtreme1
 
-# 1) 构建并启动基础服务（含本地 frontend / backend，带跟踪 UI 与 LIDAR_TRACKING API）
+# 构建并启动基础服务（含本地 frontend / backend，带跟踪 UI 与 LIDAR_TRACKING API）
 docker compose build frontend backend
 docker compose up -d
 
-# 2) 等待 backend 健康（约 1～3 分钟）
+# 等待 backend 健康（约 1～3 分钟）
 docker compose ps
 curl -sf http://localhost:8290/actuator/health
 
-# 3) 若通过 nginx 访问 API 出现 502，重启 nginx 刷新上游
+# 若通过 nginx 访问 API 出现 502，重启 nginx 刷新上游
 docker compose restart nginx
 ```
 
 浏览器打开：**http://localhost:8190**
 
-### 2.1 启动跟踪模型服务（可选，用于「模型跟踪」）
+此时已可进行 **Scene 手动跟踪**（画框、Alt+→ 复制、合并/拆分），**不需要** `--profile model`。
 
-跟踪 HTTP 服务**不依赖 GPU**，可单独启动（点云/图像**检测**模型才需要 GPU，见 [gpu-setup.md](gpu-setup.md)）：
+### 2.2 第二步：跟踪 / 检测模型（按需）
+
+按实际需求选择**一种**方式（不要无脑全起）：
 
 ```bash
+# 仅「模型跟踪」— 不依赖 GPU，推荐大多数跟踪场景
 docker compose --profile model up -d point-cloud-object-tracking
+
+# 基础栈 + 跟踪（不启动两个 GPU 检测服务）
+docker compose up -d
+docker compose --profile model up -d point-cloud-object-tracking
+
+# 基础栈 + 全部模型（跟踪 + 点云/图像检测，检测需 GPU）
+docker compose --profile model up -d
 ```
 
-验证：
+验证跟踪服务：
 
 ```bash
 curl -sf http://localhost:8296/pointCloud/tracking -X POST \
@@ -67,7 +98,7 @@ curl -sf http://localhost:8296/pointCloud/tracking -X POST \
 bash scripts/validate_tracking.sh
 ```
 
-### 2.2 已有数据库、非全新安装时
+### 2.3 已有数据库、非全新安装时
 
 若 MySQL 卷已存在，`V3__Add_tracking_model.sql` 不会自动重跑。需手动执行（仅需一次）：
 
@@ -83,7 +114,7 @@ docker exec xtreme1-mysql-1 mysql -uxtreme1 -pRc4K3L6f xtreme1 \
   -e "SELECT id, name, model_code FROM model;"
 ```
 
-### 2.3 序列帧数据结构（Scene）
+### 2.4 序列帧数据结构（Scene）
 
 跟踪仅对**序列帧 / Scene** 任务生效。试用数据集若各帧为散落的 `SINGLE_DATA`，需合并为 Scene（`V4` 迁移，仅对 `parent_id=0` 的帧生效）：
 
@@ -101,10 +132,14 @@ docker exec -i xtreme1-mysql-1 mysql -uxtreme1 -pRc4K3L6f xtreme1 \
 ### 3.1 启动
 
 ```bash
-# 仅基础栈（标注 + 手动跟踪）
+# 仅基础栈（标注 + 手动跟踪，不含任何 model profile 服务）
 docker compose up -d
 
-# 基础栈 + 跟踪模型
+# 基础栈 + 仅跟踪模型（8296，不需 GPU）
+docker compose up -d
+docker compose --profile model up -d point-cloud-object-tracking
+
+# 基础栈 + 全部 model 服务（跟踪 + 点云/图像检测，检测需 GPU）
 docker compose --profile model up -d
 ```
 
@@ -328,7 +363,7 @@ docker compose --profile model up -d
 
 启动后按顺序自检：
 
-- [ ] `docker compose ps` 中 `backend` 为 `healthy`
+- [ ] `docker compose ps` 中 `backend` 为 `healthy`（首次只需基础栈，不必强求 model 容器）
 - [ ] 浏览器可打开 http://localhost:8190
 - [ ] 数据集存在 **Scene-1**，无 `Editing by` 锁
 - [ ] Annotate 后底部有时间轴
