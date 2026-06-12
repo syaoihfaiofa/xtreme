@@ -68,6 +68,8 @@
           :datasetType="info?.type"
           v-model:showAnnotation="showAnnotation"
           @handleMakeFrame="handleMakeFrame"
+          @handleOrganizeScene="handleOrganizeScene"
+          @handleSplitScene="handleSplitScene"
           @handleSelectAll="handleSelectAll"
           @handleAnnotate="handleAnnotate"
           @handleUnselectAll="handleUnselectAll"
@@ -339,6 +341,8 @@
     getStatusNum,
     hasOntologyApi,
     makeFrameSeriesApi,
+    organizeAsSceneApi,
+    splitSceneApi,
     takeRecordByData,
     takeRecordByDataModel,
     ungroupFrameSeriesApi,
@@ -680,6 +684,72 @@
       dataIds: selectedList.value,
     });
     fixedFetchList();
+  };
+
+  const handleOrganizeScene = async () => {
+    if (info.value?.type !== datasetTypeEnum.LIDAR_FUSION) {
+      message.warning('Only LiDAR Fusion datasets can be organized into a Scene.');
+      return;
+    }
+    const selectedItems = unref(list).filter((item) => unref(selectedList).includes(item.id));
+    const invalidItems = selectedItems.filter((item) => item.type !== dataTypeEnum.SINGLE_DATA);
+    if (invalidItems.length > 0) {
+      message.warning('Only single data can be organized into a Scene.');
+      return;
+    }
+    Modal.confirm({
+      title: () => 'Make Scene',
+      content: () =>
+        `Create a Scene from ${selectedList.value.length} selected frame(s). The selected frames will move under the new Scene.`,
+      okText: 'Make Scene',
+      onOk() {
+        return new Promise(async (resolve) => {
+          await organizeAsSceneApi({
+            datasetId: id as unknown as number,
+            dataIds: selectedList.value,
+          });
+          selectedList.value = [];
+          message.success('Scene created');
+          fixedFetchList();
+          resolve(1);
+        }).catch(() => console.log('Oops errors!'));
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      onCancel() {},
+    });
+  };
+
+  const handleSplitScene = async () => {
+    if (info.value?.type !== datasetTypeEnum.LIDAR_FUSION) {
+      message.warning('Only LiDAR Fusion datasets can split Scene.');
+      return;
+    }
+    const selectedItems = unref(list).filter((item) => unref(selectedList).includes(item.id));
+    const invalidItems = selectedItems.filter((item) => item.type !== dataTypeEnum.FRAME_SERIES);
+    if (invalidItems.length > 0) {
+      message.warning('Only Scene items can be split.');
+      return;
+    }
+    Modal.confirm({
+      title: () => 'Split Scene',
+      content: () =>
+        `Split ${selectedList.value.length} selected Scene(s). Their frames will move back to the dataset root.`,
+      okText: 'Split Scene',
+      onOk() {
+        return new Promise(async (resolve) => {
+          await splitSceneApi({
+            datasetId: id as unknown as number,
+            sceneIds: selectedList.value,
+          });
+          selectedList.value = [];
+          message.success('Scene split');
+          fixedFetchList();
+          resolve(1);
+        }).catch(() => console.log('Oops errors!'));
+      },
+      // eslint-disable-next-line @typescript-eslint/no-empty-function
+      onCancel() {},
+    });
   };
 
   const handleUngroup = async () => {

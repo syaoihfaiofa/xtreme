@@ -71,6 +71,26 @@
         <Button class="ml-2" type="default" @click="handleOpenExport" :size="ButtonSize.LG">
           {{ t('common.exportText') }}
         </Button>
+        <template v-if="datasetType === datasetTypeEnum.LIDAR_FUSION && pageType !== PageTypeEnum.frame">
+          <Button
+            class="ml-2"
+            type="default"
+            @click="emits('handleOrganizeScene')"
+            :disabled="selectedList.length === 0"
+            :size="ButtonSize.LG"
+          >
+            Make Scene
+          </Button>
+          <Button
+            class="ml-2"
+            type="default"
+            @click="emits('handleSplitScene')"
+            :disabled="selectedList.length === 0"
+            :size="ButtonSize.LG"
+          >
+            Split Scene
+          </Button>
+        </template>
       </div>
     </div>
 
@@ -101,11 +121,7 @@
           <template #overlay>
             <Menu>
               <template
-                v-for="(item, index) in pageType === PageTypeEnum.frame
-                  ? actionListFrame
-                  : datasetType === datasetTypeEnum.IMAGE
-                  ? actionImageList
-                  : actionList"
+                v-for="(item, index) in actionMenuList"
                 :key="item.text"
               >
                 <Authority :value="item.permission ? [item.permission] : undefined">
@@ -359,6 +375,21 @@
     },
   });
 
+  const actionMenuList = computed(() => {
+    if (props.pageType === PageTypeEnum.frame) {
+      return actionListFrame;
+    }
+    if (props.datasetType === datasetTypeEnum.IMAGE) {
+      return actionImageList;
+    }
+    if (props.datasetType !== datasetTypeEnum.LIDAR_FUSION) {
+      return actionList.filter(
+        (item) => !['handleOrganizeScene', 'handleSplitScene'].includes(item.function),
+      );
+    }
+    return actionList;
+  });
+
   let TabChange = (val) => {
     if (val === 'Scenario') {
       handleGoSearch();
@@ -446,6 +477,8 @@
     'handleUnselectAll',
     'fetchList',
     'handleMakeFrame',
+    'handleOrganizeScene',
+    'handleSplitScene',
     'handleMultipleFrame',
     'handleModelRun',
     'update:showAnnotation',
