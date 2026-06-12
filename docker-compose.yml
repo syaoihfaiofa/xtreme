@@ -128,11 +128,28 @@ services:
       - model
     gpus: all
   point-cloud-object-tracking:
-    build: ./deploy/point-cloud-object-tracking
+    build:
+      context: ./deploy/point-cloud-object-tracking
+      args:
+        BASE_IMAGE: ${TRACKING_BASE_IMAGE:-python:3.10-slim}
+        INSTALL_MMLAB: ${TRACKING_INSTALL_MMLAB:-false}
+    environment:
+      TRACKING_BACKEND: ${TRACKING_BACKEND:-auto}
+      MODEL_DEVICE: ${TRACKING_MODEL_DEVICE:-cuda:0}
+      CENTERPOINT_CONFIG: ${CENTERPOINT_CONFIG:-/models/centerpoint_nuscenes.py}
+      CENTERPOINT_CHECKPOINT: ${CENTERPOINT_CHECKPOINT:-/models/centerpoint_nuscenes.pth}
+      CENTERPOINT_AUTO_DOWNLOAD: ${CENTERPOINT_AUTO_DOWNLOAD:-true}
+      CENTERPOINT_CONFIG_URL: ${CENTERPOINT_CONFIG_URL:-https://raw.githubusercontent.com/open-mmlab/mmdetection3d/main/configs/centerpoint/centerpoint_voxel0075_second_secfpn_head-circlenms_8xb4-cyclic-20e_nus-3d.py}
+      CENTERPOINT_CHECKPOINT_URL: ${CENTERPOINT_CHECKPOINT_URL:-https://download.openmmlab.com/mmdetection3d/v1.0.0_models/centerpoint/centerpoint_0075voxel_second_secfpn_circlenms_4x8_cyclic_20e_nus/centerpoint_0075voxel_second_secfpn_circlenms_4x8_cyclic_20e_nus_20220810_011659-04cb3a3b.pth}
+      CENTERPOINT_SCORE_THRESHOLD: ${CENTERPOINT_SCORE_THRESHOLD:-0.25}
+      TRACK_MATCH_MAX_DISTANCE: ${TRACK_MATCH_MAX_DISTANCE:-4.0}
+    volumes:
+      - ./deploy/point-cloud-object-tracking/weights:/models
     ports:
       - 8296:5000
     profiles:
       - model
+    gpus: all
 volumes:
   mysql-data:
   redis-data:
