@@ -189,7 +189,13 @@ docker compose logs -f nginx
 docker compose logs -f point-cloud-object-tracking
 ```
 
+```
+修改重启
+docker compose --profile model down
+docker compose --profile model up -d --build
+```
 ---
+
 
 ## 4. 进入跟踪标注（前置条件）
 
