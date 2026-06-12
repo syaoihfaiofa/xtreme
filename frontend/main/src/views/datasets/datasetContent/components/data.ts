@@ -49,6 +49,18 @@ export const actionList: actionItem[] = [
     img: modelRun,
     hasDivider: true,
   },
+  {
+    text: 'Make Scene',
+    function: 'handleOrganizeScene',
+    icon: 'mdi:timeline-plus-outline',
+    hasDivider: false,
+  },
+  {
+    text: 'Split Scene',
+    function: 'handleSplitScene',
+    icon: 'mdi:timeline-remove-outline',
+    hasDivider: false,
+  },
 
   {
     text: t('business.datasetContent.splitModel.splitInto'),

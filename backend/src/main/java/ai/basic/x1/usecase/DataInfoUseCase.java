@@ -14,6 +14,7 @@ import ai.basic.x1.usecase.exception.UsecaseCode;
 import ai.basic.x1.usecase.exception.UsecaseException;
 import ai.basic.x1.util.Constants;
 import ai.basic.x1.util.DefaultConverter;
+import ai.basic.x1.util.NaturalSortUtil;
 import ai.basic.x1.util.Page;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.collection.CollectionUtil;
@@ -136,6 +137,158 @@ public class DataInfoUseCase {
                 .in(DataInfo::getParentId, dataIds));
         dataInfoLambdaUpdateWrapper.set(DataInfo::getSplitType, splitType);
         dataInfoDAO.update(dataInfoLambdaUpdateWrapper);
+    }
+
+    /**
+     * Organize existing root-level single data rows under a newly created scene.
+     *
+     * @param datasetId dataset id
+     * @param dataIds   root-level single data ids to move into the scene
+     * @param sceneName scene display name
+     * @param userId    current user id
+     * @return created scene id
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long organizeAsScene(Long datasetId, List<Long> dataIds, String sceneName, Long userId) {
+        if (ObjectUtil.isNull(datasetId) || CollUtil.isEmpty(dataIds)) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        var dataset = datasetDAO.getById(datasetId);
+        if (ObjectUtil.isNull(dataset)) {
+            throw new UsecaseException(DATASET_NOT_FOUND);
+        }
+        if (!DatasetTypeEnum.LIDAR_FUSION.equals(dataset.getType())) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+
+        var dataInfoLambdaQueryWrapper = Wrappers.lambdaQuery(DataInfo.class);
+        dataInfoLambdaQueryWrapper.eq(DataInfo::getDatasetId, datasetId);
+        dataInfoLambdaQueryWrapper.in(DataInfo::getId, dataIds);
+        dataInfoLambdaQueryWrapper.eq(DataInfo::getIsDeleted, false);
+        var dataList = dataInfoDAO.list(dataInfoLambdaQueryWrapper);
+        if (dataList.size() != new HashSet<>(dataIds).size()) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
+        var invalidData = dataList.stream().anyMatch(data ->
+                !ItemTypeEnum.SINGLE_DATA.equals(data.getType()) || !DEFAULT_PARENT_ID.equals(data.getParentId()));
+        if (invalidData) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+
+        var lockedCount = dataEditDAO.count(Wrappers.lambdaQuery(DataEdit.class).in(DataEdit::getDataId, dataIds));
+        if (lockedCount > 0) {
+            throw new UsecaseException(UsecaseCode.DATASET_DATA_OTHERS_ANNOTATING);
+        }
+
+        var finalSceneName = StrUtil.blankToDefault(sceneName, nextSceneName(datasetId));
+        var duplicateSceneCount = dataInfoDAO.count(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getDatasetId, datasetId)
+                .eq(DataInfo::getName, finalSceneName)
+                .eq(DataInfo::getIsDeleted, false));
+        if (duplicateSceneCount > 0) {
+            throw new UsecaseException(UsecaseCode.NAME_DUPLICATED);
+        }
+
+        var scene = DataInfo.builder()
+                .datasetId(datasetId)
+                .name(finalSceneName)
+                .orderName(NaturalSortUtil.convert(finalSceneName))
+                .type(ItemTypeEnum.SCENE)
+                .parentId(DEFAULT_PARENT_ID)
+                .status(DataStatusEnum.VALID)
+                .annotationStatus(DataAnnotationStatusEnum.NOT_ANNOTATED)
+                .splitType(SplitTypeEnum.NOT_SPLIT)
+                .isDeleted(false)
+                .createdAt(OffsetDateTime.now())
+                .createdBy(userId)
+                .build();
+        dataInfoDAO.save(scene);
+
+        var dataInfoLambdaUpdateWrapper = Wrappers.lambdaUpdate(DataInfo.class);
+        dataInfoLambdaUpdateWrapper.eq(DataInfo::getDatasetId, datasetId);
+        dataInfoLambdaUpdateWrapper.in(DataInfo::getId, dataIds);
+        dataInfoLambdaUpdateWrapper.set(DataInfo::getParentId, scene.getId());
+        dataInfoLambdaUpdateWrapper.set(DataInfo::getUpdatedAt, OffsetDateTime.now());
+        dataInfoLambdaUpdateWrapper.set(DataInfo::getUpdatedBy, userId);
+        dataInfoDAO.update(dataInfoLambdaUpdateWrapper);
+        return scene.getId();
+    }
+
+    private String nextSceneName(Long datasetId) {
+        var sceneCount = dataInfoDAO.count(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getDatasetId, datasetId)
+                .eq(DataInfo::getType, ItemTypeEnum.SCENE)
+                .eq(DataInfo::getIsDeleted, false));
+        return String.format("Scene-%s", sceneCount + 1);
+    }
+
+    /**
+     * Split scenes back into root-level single data rows.
+     *
+     * @param datasetId dataset id
+     * @param sceneIds  scene ids to split
+     * @param userId    current user id
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void splitScene(Long datasetId, List<Long> sceneIds, Long userId) {
+        if (ObjectUtil.isNull(datasetId) || CollUtil.isEmpty(sceneIds)) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        var dataset = datasetDAO.getById(datasetId);
+        if (ObjectUtil.isNull(dataset)) {
+            throw new UsecaseException(DATASET_NOT_FOUND);
+        }
+        if (!DatasetTypeEnum.LIDAR_FUSION.equals(dataset.getType())) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+
+        var sceneLambdaQueryWrapper = Wrappers.lambdaQuery(DataInfo.class);
+        sceneLambdaQueryWrapper.eq(DataInfo::getDatasetId, datasetId);
+        sceneLambdaQueryWrapper.in(DataInfo::getId, sceneIds);
+        sceneLambdaQueryWrapper.eq(DataInfo::getIsDeleted, false);
+        var sceneList = dataInfoDAO.list(sceneLambdaQueryWrapper);
+        if (sceneList.size() != new HashSet<>(sceneIds).size()) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
+        var invalidScene = sceneList.stream().anyMatch(scene ->
+                !ItemTypeEnum.SCENE.equals(scene.getType()) || !DEFAULT_PARENT_ID.equals(scene.getParentId()));
+        if (invalidScene) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+
+        var childLambdaQueryWrapper = Wrappers.lambdaQuery(DataInfo.class);
+        childLambdaQueryWrapper.eq(DataInfo::getDatasetId, datasetId);
+        childLambdaQueryWrapper.in(DataInfo::getParentId, sceneIds);
+        childLambdaQueryWrapper.eq(DataInfo::getIsDeleted, false);
+        var childList = dataInfoDAO.list(childLambdaQueryWrapper);
+        var childIds = childList.stream().map(DataInfo::getId).collect(Collectors.toList());
+
+        var lockedCount = dataEditDAO.count(Wrappers.lambdaQuery(DataEdit.class).in(DataEdit::getSceneId, sceneIds));
+        if (lockedCount > 0) {
+            throw new UsecaseException(UsecaseCode.DATASET_DATA_OTHERS_ANNOTATING);
+        }
+        if (CollUtil.isNotEmpty(childIds)) {
+            lockedCount = dataEditDAO.count(Wrappers.lambdaQuery(DataEdit.class).in(DataEdit::getDataId, childIds));
+            if (lockedCount > 0) {
+                throw new UsecaseException(UsecaseCode.DATASET_DATA_OTHERS_ANNOTATING);
+            }
+
+            var childLambdaUpdateWrapper = Wrappers.lambdaUpdate(DataInfo.class);
+            childLambdaUpdateWrapper.eq(DataInfo::getDatasetId, datasetId);
+            childLambdaUpdateWrapper.in(DataInfo::getId, childIds);
+            childLambdaUpdateWrapper.set(DataInfo::getParentId, DEFAULT_PARENT_ID);
+            childLambdaUpdateWrapper.set(DataInfo::getUpdatedAt, OffsetDateTime.now());
+            childLambdaUpdateWrapper.set(DataInfo::getUpdatedBy, userId);
+            dataInfoDAO.update(childLambdaUpdateWrapper);
+        }
+
+        var sceneLambdaUpdateWrapper = Wrappers.lambdaUpdate(DataInfo.class);
+        sceneLambdaUpdateWrapper.setSql("del_unique_key=id,is_deleted=1");
+        sceneLambdaUpdateWrapper.eq(DataInfo::getDatasetId, datasetId);
+        sceneLambdaUpdateWrapper.in(DataInfo::getId, sceneIds);
+        sceneLambdaUpdateWrapper.set(DataInfo::getUpdatedAt, OffsetDateTime.now());
+        sceneLambdaUpdateWrapper.set(DataInfo::getUpdatedBy, userId);
+        dataInfoDAO.update(sceneLambdaUpdateWrapper);
     }
 
     /**

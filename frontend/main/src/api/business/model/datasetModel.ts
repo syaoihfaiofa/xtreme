@@ -1,5 +1,5 @@
 import { BasicPageParams, BasicFetchResult, SortType } from '/@/api/model/baseModel';
-import { resultFilterParam } from '/@/api/business/model/modelsModel';
+import { ResultsModelParam } from '/@/api/business/model/modelsModel';
 
 export enum listTypeEnum {
   list = 'LIST',
@@ -67,6 +67,17 @@ export type MakeFrameParams = {
   dataIds: number[];
   datasetId: number;
   frameSize?: number;
+};
+
+export type OrganizeSceneParams = {
+  dataIds: number[];
+  datasetId: number;
+  sceneName?: string;
+};
+
+export type SplitSceneParams = {
+  sceneIds: number[];
+  datasetId: number;
 };
 
 export type MergeFrameParams = {
@@ -210,7 +221,7 @@ export interface takeRecordParams {
   modelId?: Nullable<number>;
   modelCode?: modelCode;
   isFilterData?: boolean;
-  resultFilterParam?: Nullable<resultFilterParam>;
+  resultFilterParam?: Nullable<ResultsModelParam>;
   operateItemType: dataTypeEnum;
 }
 

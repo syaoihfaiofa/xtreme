@@ -189,6 +189,16 @@ public class DataInfoController extends BaseDatasetController {
         dataInfoUsecase.deleteBatch(dto.getDatasetId(), dto.getIds());
     }
 
+    @PostMapping("organizeAsScene")
+    public Long organizeAsScene(@RequestBody @Validated DataOrganizeSceneDTO dto, @LoggedUser LoggedUserDTO userDTO) {
+        return dataInfoUsecase.organizeAsScene(dto.getDatasetId(), dto.getDataIds(), dto.getSceneName(), userDTO.getId());
+    }
+
+    @PostMapping("splitScene")
+    public void splitScene(@RequestBody @Validated DataSplitSceneDTO dto, @LoggedUser LoggedUserDTO userDTO) {
+        dataInfoUsecase.splitScene(dto.getDatasetId(), dto.getSceneIds(), userDTO.getId());
+    }
+
     @GetMapping("generatePresignedUrl")
     public PresignedUrlDTO generatePresignedUrl(@RequestParam(value = "fileName") String fileName,
                                                 @RequestParam(value = "datasetId") Long datasetId, @LoggedUser LoggedUserDTO userDTO) {

@@ -11,6 +11,8 @@ import {
   DatasetIdParams,
   InsertPointCloudParams,
   MakeFrameParams,
+  OrganizeSceneParams,
+  SplitSceneParams,
   MergeFrameParams,
   GetFrameParams,
   FrameListResult,
@@ -164,6 +166,26 @@ export const getMaxCountApi = (params: DatasetIdParams) =>
 export const makeFrameSeriesApi = (params: MakeFrameParams) =>
   defHttp.post<null>({
     url: `${Api.DATA}/frames/combine`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const organizeAsSceneApi = (params: OrganizeSceneParams) =>
+  defHttp.post<number>({
+    url: `${Api.DATA}/organizeAsScene`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const splitSceneApi = (params: SplitSceneParams) =>
+  defHttp.post<null>({
+    url: `${Api.DATA}/splitScene`,
     params,
     headers: {
       // @ts-ignore
