@@ -12,11 +12,12 @@
                 <a-button size="small" style="margin-left: 8px" @click="onCancel">{{ editor.lang('btnCancelText') }}</a-button>
             </div>
             <div class="track-tooltip-content" v-else>
-                <div class="track-tooltip-title">{{ editor.lang('mergeTo') }} / {{ editor.lang('mergeFrom') }}</div>
+                <div class="track-tooltip-title">{{ editor.lang('mergeTitle') }}</div>
+                <div class="track-tooltip-help">{{ editor.lang('mergeHelp') }}</div>
                 <a-select
                     v-model:value="selectedTrackId"
                     style="width: 200px"
-                    :placeholder="editor.lang('selectTrack')"
+                    :placeholder="editor.lang('selectOtherTrack')"
                     size="small"
                 >
                     <a-select-option
@@ -29,7 +30,7 @@
                 </a-select>
                 <div style="margin-top: 8px">
                     <a-button size="small" :disabled="!selectedTrackId" @click="() => startMerge('MergeTo')">
-                        {{ editor.lang('mergeTo') }}
+                        {{ editor.lang('mergeCurrentToSelected') }}
                     </a-button>
                     <a-button
                         size="small"
@@ -37,8 +38,11 @@
                         :disabled="!selectedTrackId"
                         @click="() => startMerge('MergeFrom')"
                     >
-                        {{ editor.lang('mergeFrom') }}
+                        {{ editor.lang('mergeSelectedToCurrent') }}
                     </a-button>
+                </div>
+                <div class="track-tooltip-help track-tooltip-footnote">
+                    {{ editor.lang('mergeCurrentHint') }}
                 </div>
             </div>
         </template>
@@ -48,6 +52,7 @@
                 <template #icon>
                     <i class="iconfont icon-hebing" />
                 </template>
+                <span class="track-tooltip-button-text">{{ editor.lang('mergeButton') }}</span>
             </a-button>
         </a-tooltip>
     </a-popover>
@@ -124,5 +129,24 @@
             margin-bottom: 8px;
             font-size: 12px;
         }
+
+        .track-tooltip-help {
+            max-width: 220px;
+            margin-bottom: 8px;
+            color: #aaa;
+            font-size: 12px;
+            line-height: 18px;
+            white-space: normal;
+        }
+
+        .track-tooltip-footnote {
+            margin-top: 8px;
+            margin-bottom: 0;
+        }
+    }
+
+    .track-tooltip-button-text {
+        margin-left: 4px;
+        font-size: 12px;
     }
 </style>

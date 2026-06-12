@@ -18,6 +18,9 @@ const zh: ILocale = {
     'track-error': '追踪错误',
     'track-no-source': '无追踪对象',
     'track-ok': '追踪成功',
+    /** 勿用左侧「模型」跑 LiDAR 跟踪；应使用时间轴「跟踪」→「模型」 */
+    trackFromTimelineTip:
+        'LiDAR 跟踪请在底部时间轴：点「跟踪」图标（合并左侧），模式选「模型」后执行，勿用左侧工具栏的「模型」按钮。',
     'copy-ok': '复制成功',
 
     // info
@@ -60,10 +63,16 @@ const zh: ILocale = {
     copyRight1: '向右复制一帧(Alt+→)',
 
     mergeTitle: '合并轨迹',
+    mergeButton: '合并',
+    mergeHelp: '先选择另一条轨迹，再选择合并方向。',
+    mergeCurrentHint: '当前 = 你正在选中的这条轨迹',
+    mergeCurrentToSelected: '当前 → 所选',
+    mergeSelectedToCurrent: '所选 → 当前',
     mergeTo: '合并到',
     mergeFrom: '合并从',
-    mergeConfirm: '确认合并?',
+    mergeConfirm: '确认合并这两条轨迹?',
     selectTrack: '选择轨迹',
+    selectOtherTrack: '选择另一条轨迹',
     successMerge: '合并成功',
     errorMerge: '合并失败',
     warnClassTypeDiff: '标签类型不一致',

@@ -120,6 +120,10 @@ export default function useTool() {
         let bsState = editor.bsState;
         let data = toolState.frames[toolState.frameIndex];
         let model = toolState.models.find((e) => e.name === modelConfig.model) as IModel;
+        if (!model) {
+            editor.showMsg('warning', 'Please choose Model');
+            return;
+        }
         const resultFilterParam = {
             minConfidence: 0.5,
             maxConfidence: 1,
@@ -142,6 +146,10 @@ export default function useTool() {
             resultFilterParam.minConfidence = modelConfig.confidence[0];
             resultFilterParam.maxConfidence = modelConfig.confidence[1];
             resultFilterParam.classes = selectedClasses;
+        }
+        if (model.code === 'LIDAR_TRACKING') {
+            editor.showMsg('warning', editor.lang('trackFromTimelineTip'));
+            return;
         }
         let config = {
             datasetId: bsState.datasetId,
