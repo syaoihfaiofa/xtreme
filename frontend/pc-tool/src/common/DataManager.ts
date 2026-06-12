@@ -64,7 +64,12 @@ export default class DataManager extends BaseDataManager {
                             let modelResult = info.modelResult;
                             let objects = (modelResult.objects || []) as IObject[];
 
-                            if (modelResult.code !== 'OK') {
+                            const code = modelResult.code;
+                            const resultOk =
+                                code == null ||
+                                code === '' ||
+                                code === 'OK';
+                            if (!resultOk) {
                                 dataMeta.model = undefined;
                                 if (dataMeta.id === curData.id)
                                     editor.showMsg('error', editor.lang('model-run-error'));
@@ -73,9 +78,12 @@ export default class DataManager extends BaseDataManager {
 
                             if (objects.length > 0) {
                                 model.state = 'complete';
-                                objects = objects.filter(
-                                    (e) => e.confidence && e.confidence >= 0.5,
-                                );
+                                // Keep objects when confidence is missing (e.g. tracking); only drop low scores when present.
+                                objects = objects.filter((e) => {
+                                    const c = (e as any).confidence;
+                                    if (c == null || c === '') return true;
+                                    return Number(c) >= 0.5;
+                                });
                                 editor.modelManager.modelMap.set(dataMeta.id, objects);
                             } else {
                                 dataMeta.model = undefined;

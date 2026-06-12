@@ -17,6 +17,8 @@ const en = {
     'track-no-source': 'No Tracking Objects',
     'track-error': 'Track Error',
     'track-ok': 'Track Success',
+    trackFromTimelineTip:
+        'For LiDAR tracking, use the bottom timeline: open Track (icon left of Merge), choose mode “Model”, then Run — not the left toolbar Model button.',
     'copy-ok': 'Copy Success',
 
     // info
@@ -60,10 +62,16 @@ const en = {
     copyRight1: 'Copy one frame forward (Alt+→)',
 
     mergeTitle: 'Merge Track',
+    mergeButton: 'Merge',
+    mergeHelp: 'Select another track, then choose the merge direction.',
+    mergeCurrentHint: 'Current = the track you are editing now',
+    mergeCurrentToSelected: 'Current → Selected',
+    mergeSelectedToCurrent: 'Selected → Current',
     mergeTo: 'Merge To',
     mergeFrom: 'Merge From',
-    mergeConfirm: 'Confirm merge?',
+    mergeConfirm: 'Merge these two tracks?',
     selectTrack: 'Select track',
+    selectOtherTrack: 'Select another track',
     successMerge: 'Merge successfully',
     errorMerge: 'Merge failed',
     warnClassTypeDiff: 'Class type mismatch',

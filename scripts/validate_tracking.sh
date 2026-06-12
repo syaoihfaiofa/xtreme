@@ -4,10 +4,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TRACKING_DIR="$ROOT/deploy/point-cloud-object-tracking"
 
-echo "[1/3] Python syntax check"
+echo "[1/4] Python syntax check"
 python3 -m py_compile "$TRACKING_DIR/app.py"
 
-echo "[2/3] Tracking API smoke test"
+echo "[2/4] Tracking API smoke test"
 python3 - <<'PY'
 import json
 import sys
@@ -41,7 +41,7 @@ assert obj["x"] == 1.5
 print("tracking API ok")
 PY
 
-echo "[3/3] Frontend pollModelTrack contract check"
+echo "[3/4] Frontend pollModelTrack contract check"
 node - <<'NODE'
 const fs = require('fs');
 const src = fs.readFileSync('frontend/pc-tool/src/utils/model.ts', 'utf8');
@@ -49,5 +49,14 @@ if (!src.includes('targetDataIds')) throw new Error('pollModelTrack missing targ
 if (!src.includes('objectsMap[dataId]')) throw new Error('pollModelTrack missing dataId key');
 console.log('pollModelTrack contract ok');
 NODE
+
+echo "[4/4] Backend tracking JSON normalize (optional, set XTREME1_RUN_JAVA_TEST=1)"
+if [ "${XTREME1_RUN_JAVA_TEST:-}" = 1 ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  docker run --rm -v "$ROOT/backend:/build" -w /build maven:3.8-eclipse-temurin-11 \
+    mvn -q -Dtest=PointCloudTrackingModelHttpCallerTest test
+  echo "Java unit test ok"
+else
+  echo "skip Java test (set XTREME1_RUN_JAVA_TEST=1 with Docker to run PointCloudTrackingModelHttpCallerTest)"
+fi
 
 echo "All tracking validation checks passed."

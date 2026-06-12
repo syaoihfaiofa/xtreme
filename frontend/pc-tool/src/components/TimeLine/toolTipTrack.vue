@@ -37,6 +37,7 @@
                 <template #icon>
                     <i class="iconfont icon-guiji" />
                 </template>
+                <span class="track-tooltip-button-text">{{ editor.lang('trackTitle') }}</span>
             </a-button>
         </a-tooltip>
     </a-popover>
@@ -90,5 +91,10 @@
                 margin-right: 8px;
             }
         }
+    }
+
+    .track-tooltip-button-text {
+        margin-left: 4px;
+        font-size: 12px;
     }
 </style>

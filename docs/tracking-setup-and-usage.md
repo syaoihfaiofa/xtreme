@@ -70,7 +70,18 @@ docker compose restart nginx
 
 ### 2.2 第二步：跟踪 / 检测模型（按需）
 
-按实际需求选择**一种**方式（不要无脑全起）：
+`docker compose --profile model up -d`（**不带服务名**）会同时拉起 3 个 model 服务。多数场景**不必全起**，原因如下：
+
+| 原因 | 说明 |
+|------|------|
+| **功能不重叠** | 做 LiDAR **跟踪**只需 `point-cloud-object-tracking`（8296）；两个**检测**服务是另一套能力（自动画 3D/2D 框预标注），与跟踪无关 |
+| **检测要 GPU** | `point-cloud-object-detection`、`image-object-detection` 配置了 `gpus: all`。无 GPU 或 toolkit 未配好时，容器会 **Exited / Restarting**，拖慢排障 |
+| **更占资源** | 检测镜像大，常驻会占显存和内存；只做跟踪时白占资源 |
+| **启动更慢** | 全起要拉 3 个大镜像，首次部署等待更长 |
+
+**什么时候可以全起？** 机器已按 [gpu-setup.md](gpu-setup.md) 配好 GPU，且确实要用**点云/图像自动检测预标注 + 模型跟踪**时，再用最后一条命令。
+
+按实际需求选择**一种**方式：
 
 ```bash
 # 仅「模型跟踪」— 不依赖 GPU，推荐大多数跟踪场景
@@ -293,6 +304,7 @@ docker compose --profile model up -d point-cloud-object-tracking backend
 
 | 现象 | 处理 |
 |------|------|
+| **Model Run Error**（左侧工具栏点「模型」） | **不要**在左侧选「Basic Lidar Object Tracking」再点模型：跟踪参数不对。应使用时间轴 **「跟踪」→ 模式选「模型」→ 执行**。后端已修复：跟踪 HTTP 返回 `"code":"OK"` 时 Hutool 可能未映射到枚举，导致误判失败（需重建 `backend`）。 |
 | 无「模型」选项 | 前端未用本地构建镜像，或 `noModelTrack: true` |
 | 追踪错误 | `docker compose logs point-cloud-object-tracking` |
 | 无追踪对象 | 未选中 3D 框 |
