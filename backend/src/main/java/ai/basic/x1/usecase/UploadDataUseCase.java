@@ -47,9 +47,11 @@ import java.io.FileFilter;
 import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -61,6 +63,7 @@ import java.util.stream.Collectors;
 
 import static ai.basic.x1.entity.enums.DataUploadSourceEnum.LOCAL;
 import static ai.basic.x1.entity.enums.DatasetTypeEnum.IMAGE;
+import static ai.basic.x1.entity.enums.DatasetTypeEnum.LIDAR_FUSION;
 import static ai.basic.x1.entity.enums.DatasetTypeEnum.TEXT;
 import static ai.basic.x1.entity.enums.RelationEnum.*;
 import static ai.basic.x1.entity.enums.SplitTypeEnum.NOT_SPLIT;
@@ -113,6 +116,12 @@ public class UploadDataUseCase {
     @Autowired
     private DatasetSimilarityJobUseCase datasetSimilarityJobUseCase;
 
+    @Autowired
+    private DataInfoUseCase dataInfoUseCase;
+
+    @Autowired
+    private SceneLocationImportService sceneLocationImportService;
+
     @Value("${file.tempPath:/tmp/xtreme1/}")
     private String tempPath;
 
@@ -139,6 +148,7 @@ public class UploadDataUseCase {
 
     private static final ExecutorService executorService = ThreadUtil.newExecutor(2);
     private static final ExecutorService parseExecutorService = ThreadUtil.newExecutor(5);
+    private final Map<String, DataInfoBO.FileNodeBO> sceneCameraConfigNodeCache = new ConcurrentHashMap<>();
 
     private final FileFilter textFileFilter = file -> {
         //if the file extension is json return true, else false
@@ -273,6 +283,7 @@ public class UploadDataUseCase {
     }
 
     public void parsePointCloudUploadFile(DataInfoUploadBO dataInfoUploadBO) {
+        pointCloudUploadUseCase.normalizeUploadLayout(dataInfoUploadBO.getBaseSavePath());
         this.commonParseUploadFile(dataInfoUploadBO, pointCloudUploadUseCase::findPointCloudParentList, pointCloudUploadUseCase::getDataNames);
     }
 
@@ -483,6 +494,7 @@ public class UploadDataUseCase {
                 sourceId = modelRunRecordUseCase.save(dataInfoUploadBO.getModelId(), datasetId, totalDataNum);
             }
         }
+        var importedRootDataIds = new ArrayList<Long>();
         var dataAnnotationObjectBOBuilder = DataAnnotationObjectBO.builder()
                 .datasetId(datasetId).createdBy(userId).createdAt(OffsetDateTime.now()).sourceId(sourceId);
         sceneFileList.forEach(sceneFile -> {
@@ -526,6 +538,7 @@ public class UploadDataUseCase {
                             dataAnnotationObjectBO.setDataId(tempDataId);
                             handleDataResult(sceneFile, dataName, dataAnnotationObjectBO, dataAnnotationObjectBOList, errorBuilder);
                             var fileNodeList = this.assembleContent(dataFiles, rootPath, dataInfoUploadBO);
+                            appendSceneCameraConfigIfMissing(sceneFile, fileNodeList, rootPath, dataInfoUploadBO, datasetType);
                             log.info("Get data content,frameName:{},content:{} ", dataName, JSONUtil.toJsonStr(fileNodeList));
                             var dataInfoBO = dataInfoBOBuilder.build();
                             dataInfoBO.setName(dataName);
@@ -539,6 +552,9 @@ public class UploadDataUseCase {
                         log.info("dataInfoBOList:{}",dataInfoBOList.stream().map(DataInfoBO::getTempDataId).collect(Collectors.toList()));
                         log.info("dataAnnotationObjectBOList:{}",dataAnnotationObjectBOList.stream().map(DataAnnotationObjectBO::getDataId).collect(Collectors.toList()));
                         var resDataInfoList = this.insertBatch(dataInfoBOList, datasetId, errorBuilder, sceneId);
+                        if (DEFAULT_PARENT_ID.equals(sceneId) && CollUtil.isNotEmpty(resDataInfoList)) {
+                            resDataInfoList.forEach(dataInfoBO -> importedRootDataIds.add(dataInfoBO.getId()));
+                        }
                         this.saveBatchDataResult(resDataInfoList, dataAnnotationObjectBOList);
                     }
                 } catch (Exception e) {
@@ -555,7 +571,21 @@ public class UploadDataUseCase {
             } catch (InterruptedException e) {
                 log.error("Parse point cloud count down latch error", e);
             }
+            sceneCameraConfigNodeCache.remove(sceneFile.getAbsolutePath());
         });
+        if (Boolean.TRUE.equals(dataInfoUploadBO.getAutoCreateScene())
+                && LIDAR_FUSION.equals(datasetType)
+                && CollUtil.isNotEmpty(importedRootDataIds)) {
+            try {
+                var sceneName = resolveAutoSceneName(dataInfoUploadBO);
+                var sceneId = dataInfoUseCase.organizeAsScene(datasetId, importedRootDataIds, sceneName, userId);
+                importSceneLocationIfPresent(dataInfoUploadBO.getBaseSavePath(), sceneId, errorBuilder);
+            } catch (Exception e) {
+                log.error("Auto create scene after upload failed,datasetId:{},userId:{},dataIds:{}",
+                        datasetId, userId, importedRootDataIds, e);
+                errorBuilder.append("Auto create scene failed;");
+            }
+        }
         var uploadRecordBO = uploadRecordBOBuilder.parsedDataNum(totalDataNum).errorMessage(errorBuilder.toString()).status(PARSE_COMPLETED).build();
         uploadRecordDAO.updateById(DefaultConverter.convert(uploadRecordBO, UploadRecord.class));
         if (ObjectUtil.isNotNull(sourceId) && ResultTypeEnum.MODEL_RUN.equals(dataInfoUploadBO.getResultType())) {
@@ -609,6 +639,70 @@ public class UploadDataUseCase {
             }
         }
         return isErr ? ListUtil.empty() : singleDataFile;
+    }
+
+    /**
+     * Scene-level camera_config is shared by every frame but does not match frame file names.
+     * Upload it once per scene and attach the node to each frame content.
+     */
+    private void appendSceneCameraConfigIfMissing(File sceneFile, List<DataInfoBO.FileNodeBO> fileNodeList,
+                                                  String rootPath, DataInfoUploadBO dataInfoUploadBO,
+                                                  DatasetTypeEnum datasetType) {
+        if (fileNodeList.stream().anyMatch(node -> CAMERA_CONFIG.equalsIgnoreCase(node.getName()))) {
+            return;
+        }
+        var cacheKey = sceneFile.getAbsolutePath();
+        var cachedNode = sceneCameraConfigNodeCache.computeIfAbsent(cacheKey, key -> {
+            var configFiles = resolveSceneCameraConfigFiles(sceneFile, datasetType);
+            if (CollectionUtil.isEmpty(configFiles)) {
+                return null;
+            }
+            var nodes = assembleContent(configFiles, rootPath, dataInfoUploadBO);
+            var node = nodes.stream()
+                    .filter(item -> CAMERA_CONFIG.equalsIgnoreCase(item.getName()))
+                    .findFirst()
+                    .orElse(CollectionUtil.isEmpty(nodes) ? null : nodes.get(0));
+            if (ObjectUtil.isNotNull(node) && !CAMERA_CONFIG.equalsIgnoreCase(node.getName())) {
+                node.setName(CAMERA_CONFIG);
+            }
+            return node;
+        });
+        if (ObjectUtil.isNotNull(cachedNode)) {
+            fileNodeList.add(cachedNode);
+        }
+    }
+
+    /**
+     * Resolve shared scene camera calibration files.
+     * Supports {@code camera_config/}, legacy {@code config/camera_config.json},
+     * and other JSON files under {@code config/}.
+     */
+    private List<File> resolveSceneCameraConfigFiles(File sceneFile, DatasetTypeEnum datasetType) {
+        var configDir = new File(sceneFile, CAMERA_CONFIG);
+        if (configDir.isDirectory()) {
+            var files = Arrays.stream(Objects.requireNonNull(configDir.listFiles()))
+                    .filter(File::isFile)
+                    .filter(file -> validateFileFormat(file, datasetType))
+                    .collect(Collectors.toList());
+            if (CollectionUtil.isNotEmpty(files)) {
+                return files;
+            }
+        }
+        var legacyConfigFile = new File(sceneFile, "config/camera_config.json");
+        if (legacyConfigFile.isFile() && validateFileFormat(legacyConfigFile, datasetType)) {
+            return List.of(legacyConfigFile);
+        }
+        var legacyConfigDir = new File(sceneFile, "config");
+        if (legacyConfigDir.isDirectory()) {
+            var files = Arrays.stream(Objects.requireNonNull(legacyConfigDir.listFiles()))
+                    .filter(File::isFile)
+                    .filter(file -> validateFileFormat(file, datasetType))
+                    .collect(Collectors.toList());
+            if (CollectionUtil.isNotEmpty(files)) {
+                return files;
+            }
+        }
+        return List.of();
     }
 
     /**
@@ -1065,6 +1159,67 @@ public class UploadDataUseCase {
             }
         });
         dataImportResultBO.setObjects(objects);
+    }
+
+    /**
+     * Use the uploaded archive name (without extension) as the auto-created Scene name.
+     */
+    private String resolveAutoSceneName(DataInfoUploadBO dataInfoUploadBO) {
+        var archiveName = StrUtil.trim(dataInfoUploadBO.getFileName());
+        if (StrUtil.isBlank(archiveName) && StrUtil.isNotBlank(dataInfoUploadBO.getSavePath())) {
+            archiveName = FileUtil.getPrefix(FileUtil.getName(dataInfoUploadBO.getSavePath()));
+        }
+        return StrUtil.blankToDefault(archiveName, null);
+    }
+
+    /**
+     * Import {@code location/location.txt} (or {@code location.txt}) into scene pose tables after upload.
+     */
+    private void importSceneLocationIfPresent(String baseSavePath, Long sceneId, StringBuilder errorBuilder) {
+        if (ObjectUtil.isNull(sceneId) || StrUtil.isBlank(baseSavePath)) {
+            return;
+        }
+        var locationFile = findSceneLocationFile(new File(baseSavePath));
+        if (ObjectUtil.isNull(locationFile)) {
+            return;
+        }
+        try {
+            var lines = Files.readAllLines(locationFile.toPath(), StandardCharsets.UTF_8);
+            var result = sceneLocationImportService.replaceSceneLocation(sceneId, lines);
+            log.info("Imported scene location after upload, sceneId:{}, matched:{}, invalid:{}",
+                    sceneId, result.getMatchedCount(), result.getInvalidCount());
+            if (result.getMatchedCount() <= 0) {
+                errorBuilder.append("Location file imported but no frame matched;");
+            }
+        } catch (Exception e) {
+            log.error("Import scene location after upload failed, sceneId:{}, file:{}",
+                    sceneId, locationFile.getAbsolutePath(), e);
+            errorBuilder.append("Import location failed;");
+        }
+    }
+
+    private File findSceneLocationFile(File root) {
+        if (!root.isDirectory()) {
+            return null;
+        }
+        var nested = new File(root, "location/location.txt");
+        if (nested.isFile()) {
+            return nested;
+        }
+        var flat = new File(root, "location.txt");
+        if (flat.isFile()) {
+            return flat;
+        }
+        for (var child : Objects.requireNonNull(root.listFiles())) {
+            if (!child.isDirectory()) {
+                continue;
+            }
+            var found = findSceneLocationFile(child);
+            if (ObjectUtil.isNotNull(found)) {
+                return found;
+            }
+        }
+        return null;
     }
 
     /**

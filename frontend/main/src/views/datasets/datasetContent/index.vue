@@ -669,9 +669,9 @@
             if (!res[dataId]) {
               res[dataId] = [];
             }
-            res[dataId] = objects.map((o) => ({
-              sourceId: +(o.sourceId || o.classAttributes.sourceId || -1),
-              ...o.classAttributes,
+            res[dataId] = (objects || []).map((o) => ({
+              sourceId: +(o.sourceId || o.classAttributes?.sourceId || -1),
+              ...(o.classAttributes || {}),
             }));
             return res;
           }, map);

@@ -1,0 +1,7 @@
+# syntax=docker/dockerfile:1
+FROM node:16
+WORKDIR /build
+COPY pc-tool/package.json pc-tool/package-lock.json* pc-tool/yarn.lock* ./pc-tool/
+RUN cd pc-tool && (npm ci || npm install)
+COPY pc-tool ./pc-tool
+RUN cd pc-tool && npm run build

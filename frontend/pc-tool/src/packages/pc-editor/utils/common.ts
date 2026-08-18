@@ -28,6 +28,33 @@ export function translateCameraConfig(info: any) {
     return { cameraExternal, cameraInternal, cameraModel, distortion };
 }
 
+function extractCameraIndex(key: string, info?: any): number {
+    const keyMatch = key.match(/(\d+)\s*$/);
+    if (keyMatch) {
+        return parseInt(keyMatch[1], 10);
+    }
+    const cameraName = info?.cameraName || info?.camera_name || '';
+    const nameMatch = cameraName.match(/(\d+)/);
+    if (nameMatch) {
+        return parseInt(nameMatch[1], 10);
+    }
+    return Number.MAX_SAFE_INTEGER;
+}
+
+export function normalizeCameraInfoList(cameraInfo: any[] | Record<string, any>): any[] {
+    if (Array.isArray(cameraInfo)) {
+        if (cameraInfo.length === 1 && Array.isArray(cameraInfo[0])) {
+            return cameraInfo[0];
+        }
+        return cameraInfo;
+    }
+    return Object.entries(cameraInfo || {})
+        .sort(([keyA, valueA], [keyB, valueB]) =>
+            extractCameraIndex(keyA, valueA) - extractCameraIndex(keyB, valueB),
+        )
+        .map(([, value]) => value);
+}
+
 export function clamRange(v: number, min: number, max: number) {
     return Math.max(Math.min(max, v), min);
 }
@@ -36,12 +63,14 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
     let viewConfig = [] as IImgViewConfig[];
     let pointsUrl = '';
     const regLidar = new RegExp(/point(_?)cloud/i);
-    const regImage = new RegExp(/image/i);
+    const regImage = new RegExp(/camera(_?)image/i);
     fileConfig.forEach((e) => {
         if (regLidar.test(e.dirName)) {
             pointsUrl = e.url;
         } else if (regImage.test(e.dirName)) {
-            const index = +(e.dirName.match(/[0-9]{1,5}$/) as any)[0];
+            const match = e.dirName.match(/[0-9]{1,5}$/);
+            if (!match) return;
+            const index = +match[0];
             viewConfig[index] = {
                 cameraInternal: { fx: 0, fy: 0, cx: 0, cy: 0 },
                 cameraExternal: [],
@@ -54,22 +83,24 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
         }
     });
     viewConfig = viewConfig.filter((e) => !!e);
-    viewConfig.forEach((config, index) => {
-        let info = cameraInfo[index];
+    for (let index = 0; index < viewConfig.length; index++) {
+        const config = viewConfig[index];
+        if (!config) continue;
+        const info = cameraInfo[index];
+        if (!info) continue;
 
         let translateInfo = translateCameraConfig(info);
-        if (!translateInfo) return;
+        if (!translateInfo) continue;
 
         config.cameraExternal = translateInfo.cameraExternal;
         config.cameraInternal = translateInfo.cameraInternal;
         config.cameraModel = translateInfo.cameraModel;
         config.distortion = translateInfo.distortion;
         config.imgSize = [info.width, info.height];
-        // config.rowMajor = info.rowMajor;
-    });
+    }
 
-    // filter
-    viewConfig = viewConfig.filter((e) => e.cameraExternal.length === 16 && e.cameraInternal);
+    // Keep camera views that have image URLs even without calibration (display-only).
+    viewConfig = viewConfig.filter((e) => !!e.imgUrl);
 
     return { pointsUrl, config: viewConfig };
 }

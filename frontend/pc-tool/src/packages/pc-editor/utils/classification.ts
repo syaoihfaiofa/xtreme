@@ -245,8 +245,11 @@ export function isAttrHasValue(attr: IClassificationAttr) {
         return !!attr.value;
     }
 }
-export function saveToClassificationValue(data: any[]) {
+export function saveToClassificationValue(data: any) {
     let values = {} as Record<string, any>;
+    if (!Array.isArray(data)) {
+        return values;
+    }
     data.forEach((v) => {
         // 忽略老数据
         if (Array.isArray(v)) return;

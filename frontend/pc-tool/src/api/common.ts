@@ -18,6 +18,19 @@ import { IDataSetInfo } from '../type';
 
 let { empty, queryStr, traverseClassification2Arr, traverseClass2Arr } = utils;
 
+const EMPTY_OBJECT_RESULT = {
+    objectsMap: {} as Record<string, IObject[]>,
+    classificationMap: {} as Record<string, Record<string, string>>,
+    queryTime: Date.now(),
+};
+
+function normalizeDataIds(dataIds: string[] | string | number | undefined): string[] {
+    const raw = Array.isArray(dataIds) ? dataIds : [dataIds];
+    return raw
+        .map((id) => (id == null ? '' : String(id).trim()))
+        .filter((id) => id.length > 0 && id !== 'undefined' && id !== 'null');
+}
+
 export async function getUrl(url: string) {
     return get(url, null, { headers: { 'x-request-type': 'resource' } });
 }
@@ -59,12 +72,16 @@ export async function reviewTrack(dataId: string, trackId: string, reviewedCorre
     });
 }
 
-export async function getDataObjectBatch(dataIds: string[] | string) {
-    if (!Array.isArray(dataIds)) dataIds = [dataIds];
+export async function getDataObjectBatch(dataIds: string[] | string | number) {
+    const normalizedIds = normalizeDataIds(dataIds);
+    if (normalizedIds.length === 0) {
+        return { ...EMPTY_OBJECT_RESULT, queryTime: Date.now() };
+    }
     const batchSize = 200;
+    const pendingIds = [...normalizedIds];
     const requests: ReturnType<typeof getDataObject>[] = [];
-    while (dataIds.length > 0) {
-        const batchIds = dataIds.splice(0, batchSize);
+    while (pendingIds.length > 0) {
+        const batchIds = pendingIds.splice(0, batchSize);
         requests.push(getDataObject(batchIds));
     }
     return Promise.all(requests).then((res) => {
@@ -79,43 +96,61 @@ export async function getDataObjectBatch(dataIds: string[] | string) {
     });
 }
 
-export async function getDataObject(dataIds: string[] | string) {
-    if (!Array.isArray(dataIds)) dataIds = [dataIds];
+export async function getDataObject(dataIds: string[] | string | number) {
+    const normalizedIds = normalizeDataIds(dataIds);
+    if (normalizedIds.length === 0) {
+        return { ...EMPTY_OBJECT_RESULT, queryTime: Date.now() };
+    }
 
     let url = '/api/annotate/data/listByDataIds';
-    let argsStr = queryStr({ dataIds });
-    let data = await get(`${url}?${argsStr}`);
-    data = data.data || [];
+    let argsStr = queryStr({ dataIds: normalizedIds });
+    let response = await get(`${url}?${argsStr}`);
+    let data = response.data || [];
     let objectsMap = {} as Record<string, IObject[]>;
-    let classificationMap = {};
-    // let objects = [] as IObject[];
+    let classificationMap = {} as Record<string, Record<string, string>>;
     data.forEach((e: any) => {
         const { dataId, objects, classificationValues } = e;
-        objectsMap[String(dataId)] = objects.map((o: any) => {
-            let { id, sourceId, sourceType, classId } = o;
-            return utils.translateToObject(
-                Object.assign({ backId: id, sourceId, sourceType, classId }, o.classAttributes),
-            );
-        });
-        classificationMap[String(dataId)] = classificationValues.reduce((map: any, c: any) => {
-            return Object.assign(
-                map,
-                utils.saveToClassificationValue(c.classificationAttributes.values),
-            );
+        objectsMap[String(dataId)] = (objects || [])
+            .map((o: any) => {
+                let { id, sourceId, sourceType, classId } = o;
+                const classAttributes = o.classAttributes || {};
+                const { meta, contour, ...rest } = classAttributes;
+                try {
+                    return utils.translateToObject(
+                        Object.assign(
+                            { backId: id, sourceId, sourceType, classId },
+                            rest,
+                            meta || {},
+                            contour || {},
+                        ),
+                    );
+                } catch (error) {
+                    console.warn('skip invalid annotation object', { dataId, id, error });
+                    return null;
+                }
+            })
+            .filter((item): item is IObject => item != null);
+        classificationMap[String(dataId)] = (classificationValues || []).reduce((map: any, c: any) => {
+            const rawValues = c?.classificationAttributes?.values;
+            const values = Array.isArray(rawValues) ? rawValues : [];
+            return Object.assign(map, utils.saveToClassificationValue(values));
         }, {});
     });
     return {
         objectsMap,
         classificationMap,
-        queryTime: data.queryDate,
+        queryTime: response.queryDate,
     };
 }
 
-export async function getDataClassification(dataIds: string[] | string) {
-    if (!Array.isArray(dataIds)) dataIds = [dataIds];
+export async function getDataClassification(dataIds: string[] | string | number) {
+    const normalizedIds = normalizeDataIds(dataIds);
+    if (normalizedIds.length === 0) {
+        return {};
+    }
 
     let url = `/api/annotate/data/listByDataIds`;
-    let argsStr = queryStr({ dataIds });
+    let argsStr = queryStr({ dataIds: normalizedIds });
     let data = await get(`${url}?${argsStr}`);
     // data = data.data || {};
     let dataAnnotations = data.data || [];
@@ -128,12 +163,16 @@ export async function getDataClassification(dataIds: string[] | string) {
     });
     return attrsMap;
 }
-export async function getDataClassificationBatch(dataIds: string[] | string) {
-    if (!Array.isArray(dataIds)) dataIds = [dataIds];
+export async function getDataClassificationBatch(dataIds: string[] | string | number) {
+    const normalizedIds = normalizeDataIds(dataIds);
+    if (normalizedIds.length === 0) {
+        return {};
+    }
     const batchSize = 200;
+    const pendingIds = [...normalizedIds];
     const requests: Promise<any>[] = [];
-    while (dataIds.length > 0) {
-      const batchIds = dataIds.splice(0, batchSize);
+    while (pendingIds.length > 0) {
+      const batchIds = pendingIds.splice(0, batchSize);
       requests.push(getDataClassification(batchIds));
     }
     return Promise.all(requests).then((res) => {
@@ -251,10 +290,16 @@ export async function getDataFile(dataId: string) {
     let data = await get(url, { dataIds: dataId });
 
     data = data.data || [];
+    if (data.length === 0 || !data[0]?.content) {
+        return { configs: [] as IFileConfig[], name: '' };
+    }
 
     let configs = [] as IFileConfig[];
     data[0].content.forEach((config: any) => {
-        let file = config.files[0];
+        let file = config.files?.[0];
+        if (!file?.file) {
+            return;
+        }
         let fileUrl = file.file;
         if (fileUrl.binary) fileUrl = fileUrl.binary;
         configs.push({
@@ -294,10 +339,13 @@ export async function getResultSources(dataId: string) {
     // let url = `/api/dataset/dataset/getDatasetAnnotateResult/${datasetId}`;
     let data = await get(url);
 
-    data = data.data || {};
+    const payload = data.data;
+    if (!Array.isArray(payload)) {
+        return [] as IResultSource[];
+    }
 
     let sources = [] as IResultSource[];
-    data.forEach((item: any) => {
+    payload.forEach((item: any) => {
         let { modelId, modelName, runRecords = [] } = item;
         runRecords.forEach((e: any) => {
             sources.push({
@@ -327,7 +375,7 @@ export async function getFrameSeriesData(datasetId: string, frameSeriesId: strin
     const dataList = [] as IFrame[];
     list.forEach((e: any) => {
         dataList.push({
-            id: e,
+            id: String(e),
             datasetId: datasetId,
             pointsUrl: '',
             queryTime: '',

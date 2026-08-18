@@ -70,8 +70,15 @@ export default class LoadManager {
     async loadObjectAndClassification() {
         let { frameIndex, frames, classifications } = this.editor.state;
         let frame = frames[frameIndex];
+        if (!frame?.id) {
+            this.editor.handleErr(
+                new Error(`Frame id is missing at index ${frameIndex}`),
+                this.editor.lang('load-object-error'),
+            );
+            return;
+        }
 
-        let objects = this.editor.dataManager.getFrameObject(frame.id);
+        let cachedObjects = this.editor.dataManager.getFrameObject(frame.id);
         // LiDAR Fusion "Sync Mode": a tracked object edited in *any* frame of the Scene can
         // change what this frame's data should look like at any time (see TrackSyncUseCase on
         // the backend). The client only proactively pushes the propagated result into frames
@@ -84,10 +91,11 @@ export default class LoadManager {
         const bsState = (this.editor as any).bsState;
         let forceRefetch =
             (!!bsState?.syncMode || !!bsState?.inferenceMode) && !frame.needSave;
-        if (!objects || forceRefetch) {
+        const shouldLoad = cachedObjects === undefined || forceRefetch;
+        if (shouldLoad) {
             try {
-                if (objects && objects.length > 0 && this.editor.state.isSeriesFrame) {
-                    this.editor.trackManager.removeTrackCount(objects, frame);
+                if (cachedObjects && cachedObjects.length > 0 && this.editor.state.isSeriesFrame) {
+                    this.editor.trackManager.removeTrackCount(cachedObjects, frame);
                 }
                 let data = await this.editor.businessManager.getFrameObject(frame);
                 frame.queryTime = data.queryTime;

@@ -25,6 +25,8 @@ export default {
   uploadingItems: 'items uploading...',
   uploadedItems: 'items uploaded successfully',
   uploadData: 'Upload Data',
+  autoCreateScene: '上传后自动创建 Scene',
+  autoCreateSceneTip: '导入的点云帧将自动合并为一个 Scene。',
   cancelUpload: 'Cancel Upload',
   continueUpload: 'continue Upload',
 

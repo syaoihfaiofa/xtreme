@@ -10,7 +10,12 @@
     @register="register"
   >
     <div class="flex justify-center">
-      <UploadContent v-bind="$attrs" :datasetType="props.datasetType" :id="props.id" />
+      <UploadContent
+        v-bind="$attrs"
+        :datasetType="props.datasetType"
+        :id="props.id"
+        @closeUpload="(...args) => emit('closeUpload', ...args)"
+      />
     </div>
   </BasicModal>
 </template>
@@ -22,6 +27,7 @@
 
   const { t } = useI18n();
   const props = defineProps<{ id: number; datasetType: datasetTypeEnum | undefined }>();
+  const emit = defineEmits(['closeUpload', 'localImportSuccess']);
 
   const [register] = useModalInner();
 </script>

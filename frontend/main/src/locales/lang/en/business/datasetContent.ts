@@ -25,6 +25,8 @@ export default {
   uploadingItems: 'items uploading',
   uploadedItems: 'uploads complete',
   uploadData: 'Upload Data',
+  autoCreateScene: 'Auto create Scene after upload',
+  autoCreateSceneTip: 'Imported point-cloud frames will be grouped into one Scene automatically.',
   cancelUpload: 'Cancel Upload',
   continueUpload: 'continue Upload',
 

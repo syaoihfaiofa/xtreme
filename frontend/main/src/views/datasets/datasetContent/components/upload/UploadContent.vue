@@ -11,6 +11,12 @@
     <div class="custom-item mb-15px" v-if="datasetType !== datasetTypeEnum.TEXT">
       <Checkbox v-model:checked="containsAnnotationResult">Contains annotation result</Checkbox>
     </div>
+    <div class="custom-item mb-15px" v-if="datasetType === datasetTypeEnum.LIDAR_FUSION">
+      <Checkbox v-model:checked="autoCreateScene">
+        {{ t('business.datasetContent.autoCreateScene') }}
+      </Checkbox>
+      <div class="auto-create-scene-tip">{{ t('business.datasetContent.autoCreateSceneTip') }}</div>
+    </div>
     <div v-if="containsAnnotationResult" class="flex items-center gap-10px mb-15px">
       <div class="whitespace-nowrap" style="color: #333; width: 100px">Result Type</div>
       <Select
@@ -153,6 +159,7 @@
   let resultType = ref<string | undefined>(undefined);
   let modelId = ref<number | undefined>(undefined);
   let containsAnnotationResult = ref<boolean>(false);
+  let autoCreateScene = ref<boolean>(false);
   const resSetModelList = async (res) => {
     let result = await getmodelRunsList();
     if (result.code === 200) {
@@ -212,6 +219,7 @@
       resultType: resultType.value,
       modelId: modelId.value,
       dataFormat: dataFormat.value,
+      autoCreateScene: autoCreateScene.value,
     });
     // console.log(modelId.value)
     return false;
@@ -240,6 +248,7 @@
           resultType: resultType.value,
           modelId: modelId.value,
           dataFormat: dataFormat.value,
+          autoCreateScene: autoCreateScene.value,
         });
       }, 1000);
     } catch {}
@@ -367,6 +376,14 @@
         font-size: 14px;
         line-height: 16px;
       }
+    }
+
+    .auto-create-scene-tip {
+      margin-top: 6px;
+      margin-left: 24px;
+      font-size: 12px;
+      line-height: 18px;
+      color: #999999;
     }
   }
 </style>

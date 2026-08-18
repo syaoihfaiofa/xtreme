@@ -201,13 +201,17 @@ public class DataInfoUseCase {
             throw new UsecaseException(UsecaseCode.DATASET_DATA_OTHERS_ANNOTATING);
         }
 
-        var finalSceneName = StrUtil.blankToDefault(sceneName, nextSceneName(datasetId));
-        var duplicateSceneCount = dataInfoDAO.count(Wrappers.lambdaQuery(DataInfo.class)
-                .eq(DataInfo::getDatasetId, datasetId)
-                .eq(DataInfo::getName, finalSceneName)
-                .eq(DataInfo::getIsDeleted, false));
-        if (duplicateSceneCount > 0) {
-            throw new UsecaseException(UsecaseCode.NAME_DUPLICATED);
+        var finalSceneName = StrUtil.isNotBlank(sceneName)
+                ? ensureUniqueSceneName(datasetId, StrUtil.trim(sceneName))
+                : nextSceneName(datasetId);
+        if (StrUtil.isBlank(sceneName)) {
+            var duplicateSceneCount = dataInfoDAO.count(Wrappers.lambdaQuery(DataInfo.class)
+                    .eq(DataInfo::getDatasetId, datasetId)
+                    .eq(DataInfo::getName, finalSceneName)
+                    .eq(DataInfo::getIsDeleted, false));
+            if (duplicateSceneCount > 0) {
+                throw new UsecaseException(UsecaseCode.NAME_DUPLICATED);
+            }
         }
 
         var scene = DataInfo.builder()
@@ -452,6 +456,19 @@ public class DataInfoUseCase {
                 .eq(DataInfo::getType, ItemTypeEnum.SCENE)
                 .eq(DataInfo::getIsDeleted, false));
         return String.format("Scene-%s", sceneCount + 1);
+    }
+
+    private String ensureUniqueSceneName(Long datasetId, String sceneName) {
+        var candidate = sceneName;
+        var suffix = 1;
+        while (dataInfoDAO.count(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getDatasetId, datasetId)
+                .eq(DataInfo::getName, candidate)
+                .eq(DataInfo::getIsDeleted, false)) > 0) {
+            suffix++;
+            candidate = sceneName + "-" + suffix;
+        }
+        return candidate;
     }
 
     /**
