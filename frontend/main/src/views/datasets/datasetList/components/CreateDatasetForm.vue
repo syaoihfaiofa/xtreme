@@ -6,7 +6,7 @@
     :okText="t('common.createText')"
     :ok-button-props="{ type: 'primary' }"
     :bodyStyle="{
-      height: '370px',
+      height: '420px',
     }"
     @ok="handleOk"
   >
@@ -45,6 +45,21 @@
                 </Radio>
               </Radio.Group>
             </FormItem>
+            <FormItem v-if="model[field] === datasetTypeEnum.LIDAR_FUSION" :wrapperCol="{ span: 24 }">
+              <Checkbox v-model:checked="syncMode">{{ t('business.dataset.syncMode') }}</Checkbox>
+              <div class="sync-mode-tip">{{ t('business.dataset.syncModeTip') }}</div>
+            </FormItem>
+            <FormItem
+              v-if="model[field] === datasetTypeEnum.LIDAR_FUSION && syncMode"
+              :wrapperCol="{ span: 24 }"
+            >
+              <Checkbox v-model:checked="inferenceMode" disabled>
+                {{ t('business.dataset.inferenceMode') }}
+              </Checkbox>
+              <div class="sync-mode-tip">
+                {{ t('business.dataset.inferenceCreateTip') }}
+              </div>
+            </FormItem>
           </div>
         </template>
       </BasicForm>
@@ -52,7 +67,8 @@
   </BasicModal>
 </template>
 <script lang="ts" setup>
-  import { Form, Radio } from 'ant-design-vue';
+  import { Form, Radio, Checkbox } from 'ant-design-vue';
+  import { ref } from 'vue';
   import { useI18n } from '/@/hooks/web/useI18n';
   import { useDesign } from '/@/hooks/web/useDesign';
   import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
@@ -77,6 +93,8 @@
     labelAlign: 'left',
   });
   const [registerCreateModal, { closeModal: closeCreateModal, changeOkLoading }] = useModalInner();
+  const syncMode = ref(false);
+  const inferenceMode = ref(false);
   // defineProps({
   //   registerForm: { type: Object as any, required: true },
   // });
@@ -84,10 +102,16 @@
     changeOkLoading(true);
     try {
       const data = await validate();
-      const res = await createDatasetApi(data);
+      const res = await createDatasetApi({
+        ...data,
+        syncMode: data.type === datasetTypeEnum.LIDAR_FUSION ? syncMode.value : false,
+        inferenceMode: false,
+      });
       if (res) {
         closeCreateModal();
         resetFields();
+        syncMode.value = false;
+        inferenceMode.value = false;
         changeOkLoading(false);
         createMessage.success(t('action.createSuccess'));
         setDatasetBreadcrumb(res.name, res.type);

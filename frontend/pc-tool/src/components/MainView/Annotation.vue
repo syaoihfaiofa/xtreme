@@ -3,10 +3,13 @@
         <div
             class="item limit"
             v-for="item in props.data"
+            :key="item.id"
             :title="item.name"
             :style="{ transform: `translate(${item.x}px, ${item.y}px) scale(${item.scale})` }"
         >
-            <span class="title"><CommentOutlined style="margin-right: 4px" />{{ item.name }}</span>
+            <span class="title" @click="$emit('select', item.id)"
+                ><CommentOutlined style="margin-right: 4px" />{{ item.name }}</span
+            >
         </div>
     </div>
 </template>
@@ -16,7 +19,7 @@
     import { useInjectState } from '../../state';
     import { CommentOutlined } from '@ant-design/icons-vue';
     // ***************Props and Emits***************
-    // const emit = defineEmits(['close']);
+    defineEmits(['select']);
     let props = defineProps(['data']);
     // *********************************************
 </script>

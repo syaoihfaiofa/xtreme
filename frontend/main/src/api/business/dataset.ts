@@ -22,10 +22,12 @@ import {
   GetPresignedParams,
   ResponsePresignedParams,
   UploadParams,
+  LocalDirectoryImportParams,
   ResponseUploadRecord,
   SelectedDataPa,
   splitFliterParams,
   TotalDataCountPa,
+  UpdateDatasetParams,
 } from './model/datasetModel';
 import { BasicIdParams } from '/@/api/model/baseModel';
 
@@ -133,7 +135,7 @@ export const deleteBatchDataset = (params: { ids: number[]; datasetId: number })
     },
   });
 
-export const updateDataset = (params: { id: string | number; name: string }) =>
+export const updateDataset = (params: UpdateDatasetParams) =>
   defHttp.post<null>({
     url: `${Api.DATASET}/update/${params.id}`,
     params,
@@ -192,6 +194,44 @@ export const splitSceneApi = (params: SplitSceneParams) =>
       ignoreCancelToken: true,
     },
   });
+
+export const updateSceneInfoApi = (params: { id: string | number; name: string; detail?: string }) =>
+  defHttp.post<null>({
+    url: `${Api.DATA}/updateSceneInfo/${params.id}`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+// Note: defHttp.uploadFile bypasses the normal response-unwrapping interceptor, so the
+// resolved value is the raw `{ code, message, data }` envelope; read `.data` for the payload.
+export const uploadSceneLocationApi = (sceneId: string | number, file: File): Promise<any> =>
+  defHttp.uploadFile(
+    {
+      url: `/api${Api.DATA}/uploadSceneLocation/${sceneId}`,
+      headers: {
+        // @ts-ignore
+        ignoreCancelToken: true,
+      },
+    },
+    { file },
+  );
+
+// Note: defHttp.uploadFile bypasses the normal response-unwrapping interceptor, so the
+// resolved value is the raw `{ code, message, data }` envelope; read `.data` for the payload.
+export const importSceneResultApi = (sceneId: string | number, file: File): Promise<any> =>
+  defHttp.uploadFile(
+    {
+      url: `/api${Api.DATA}/importSceneResult/${sceneId}`,
+      headers: {
+        // @ts-ignore
+        ignoreCancelToken: true,
+      },
+    },
+    { file },
+  );
 
 export const ungroupFrameSeriesApi = (params: MakeFrameParams) =>
   defHttp.post<null>({
@@ -317,6 +357,16 @@ export const uploadDatasetApi = (params: UploadParams, signal?: any) =>
   defHttp.post<string>({
     url: `${Api.DATA}/upload`,
     signal: signal,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const importLocalDirectoryApi = (params: LocalDirectoryImportParams) =>
+  defHttp.post<string>({
+    url: `${Api.DATA}/importLocalDirectory`,
     params,
     headers: {
       // @ts-ignore

@@ -96,6 +96,8 @@ export default class ActionManager {
         } else if (this.editor.pc.selection.length > 0) {
             // this.editor.cmdManager.execute('select-object');
             this.editor.selectObject();
+        } else if (this.editor.currentTrack) {
+            this.editor.setCurrentTrack(undefined, '');
         }
     }
 

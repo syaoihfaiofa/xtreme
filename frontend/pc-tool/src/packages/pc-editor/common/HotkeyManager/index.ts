@@ -66,6 +66,10 @@ export default class HotkeyManager {
             }
         });
     }
+
+    destroy(): void {
+        hotkeys.unbind();
+    }
 }
 
 function validActions(actionMap: Record<IActionName, boolean>, actions: IActionName[]) {

@@ -1,5 +1,6 @@
 package ai.basic.x1.adapter.dto;
 
+import ai.basic.x1.entity.DatasetInferenceConfig;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -30,6 +31,15 @@ public class DatasetDTO {
      * Dataset type
      */
     private String type;
+
+    /**
+     * Whether cross-frame static/dynamic object sync is enabled (only meaningful for LIDAR_FUSION)
+     */
+    private Boolean syncMode;
+
+    private Boolean inferenceMode;
+
+    private DatasetInferenceConfig inferenceConfig;
 
     /**
      * Dataset description

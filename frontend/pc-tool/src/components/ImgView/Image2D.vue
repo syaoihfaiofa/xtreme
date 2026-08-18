@@ -65,7 +65,7 @@
                 actions: ['render-2d-shape'],
                 proxy: renderProxy,
             });
-            view.renderBox = state.config.projectMap3d;
+            view.renderBox = false;
             view.renderRect = state.config.projectPoint4;
             view.renderBox2D = state.config.projectPoint8;
 

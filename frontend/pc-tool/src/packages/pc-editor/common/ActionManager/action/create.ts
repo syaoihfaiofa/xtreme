@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import * as _ from 'lodash';
 import Editor from '../../../Editor';
 import { define } from '../define';
-import { getTransformFrom3Point, getMiniBox, getMiniBox1 } from '../../../utils';
+import { getTransformFrom3Point, getMiniBox, getMiniBox1, getDefaultMotionMode, sameAnnotationClass } from '../../../utils';
 import { IAnnotationInfo, StatusType, IUserData, Const, IObject } from '../../../type';
 import EditorEvent from '../../../config/event';
 
@@ -159,6 +159,9 @@ export const createObjectWith3 = define({
                         if (classConfig) {
                             userData.classType = classConfig.name;
                             userData.classId = classConfig.id;
+                            if (editor.bsState.syncMode) {
+                                userData.motionMode = getDefaultMotionMode(classConfig.name);
+                            }
                         }
                         if (editor.currentTrack) {
                             const object3d = editor.pc.getAnnotate3D().find((e) => {
@@ -168,7 +171,16 @@ export const createObjectWith3 = define({
                                     e.userData.trackId == editor.currentTrack
                                 );
                             });
-                            if (!object3d) {
+                            const currentTrackData = editor.trackManager.getTrackObject(
+                                editor.currentTrack as string,
+                            );
+                            const sameClass = sameAnnotationClass(
+                                classConfig
+                                    ? { classId: classConfig.id, classType: classConfig.name }
+                                    : undefined,
+                                currentTrackData,
+                            );
+                            if (!object3d && sameClass) {
                                 userData.trackId = editor.currentTrack as string;
                                 userData.trackName = editor.currentTrackName;
                             }

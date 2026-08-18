@@ -22,6 +22,84 @@ let scale = new THREE.Vector3();
 let center = new THREE.Vector2();
 let size = new THREE.Vector2();
 
+export const OCCLUDED_OBJECT_COLOR = '#ff3bff';
+export const SYNC_DIRTY_OBJECT_COLOR = '#00e5ff';
+export const REVIEWED_CORRECT_OBJECT_COLOR = '#49aa19';
+export const INFERENCE_OBJECT_COLOR = '#ff9f1c';
+
+export function isObjectOccluded(userData?: Pick<IUserData, 'occluded'>) {
+    return userData?.occluded === true;
+}
+
+export function isObjectSyncDirty(userData?: Pick<IUserData, 'syncDirty'>) {
+    return userData?.syncDirty === true;
+}
+
+export function isObjectReviewedCorrect(userData?: Pick<IUserData, 'reviewedCorrectVisible'>) {
+    return userData?.reviewedCorrectVisible === true;
+}
+
+export function getObjectDisplayColor(
+    classColor?: string,
+    userData?: Pick<
+        IUserData,
+        'occluded' | 'syncDirty' | 'reviewedCorrectVisible' | 'sourceType'
+    >,
+) {
+    if (isObjectSyncDirty(userData)) return SYNC_DIRTY_OBJECT_COLOR;
+    if (isObjectOccluded(userData)) return OCCLUDED_OBJECT_COLOR;
+    if (userData?.sourceType === SourceType.INFERENCE) return INFERENCE_OBJECT_COLOR;
+    return isObjectReviewedCorrect(userData) ? REVIEWED_CORRECT_OBJECT_COLOR : classColor || '#ffffff';
+}
+
+export function getOcclusionAttr(classConfig?: IClassType) {
+    return classConfig?.attrs?.find((attr) => {
+        const text = [attr.key, attr.name, attr.label].filter(Boolean).join(' ').toLowerCase();
+        return text.includes('occlusion') || text.includes('遮挡');
+    });
+}
+
+export function getOcclusionAttrValue(classConfig: IClassType | undefined, occluded: boolean) {
+    const attr = getOcclusionAttr(classConfig);
+    if (!attr || !Array.isArray(attr.options) || attr.options.length === 0) return undefined;
+
+    const options = attr.options;
+    if (occluded) {
+        const severe = options.find((option) => {
+            const label = String(option.label || '').toLowerCase();
+            const value = String(option.value ?? '').toLowerCase();
+            return label.includes('severe') || label.startsWith('3') || value === '3';
+        });
+        return (severe || options[options.length - 1]).value;
+    }
+
+    const noOcclusion = options.find((option) => {
+        const label = String(option.label || '').toLowerCase();
+        const value = String(option.value ?? '').toLowerCase();
+        return label.includes('no occlusion') || label.startsWith('0') || value === '0';
+    });
+    return (noOcclusion || options[0]).value;
+}
+
+export function isOcclusionAttrValue(classConfig: IClassType | undefined, value: any) {
+    const severeValue = getOcclusionAttrValue(classConfig, true);
+    return severeValue !== undefined && String(value) === String(severeValue);
+}
+
+export function getOccludedUserDataPatch(
+    classConfig: IClassType | undefined,
+    userData: IUserData | undefined,
+    occluded: boolean,
+) {
+    const attrs = { ...(userData?.attrs || {}) };
+    const occlusionAttr = getOcclusionAttr(classConfig);
+    const occlusionValue = getOcclusionAttrValue(classConfig, occluded);
+    if (occlusionAttr && occlusionValue !== undefined) {
+        attrs[occlusionAttr.id] = occlusionValue;
+    }
+    return { occluded, attrs } as IUserData;
+}
+
 function objToArray(obj: Record<string, any> = {}, classType?: IClassType) {
     if (!classType) {
         let data = [] as any[];
@@ -78,6 +156,23 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         backId: object.backId,
         frontId: object.id,
         trackName: object.trackName,
+        groupId: object.groupId,
+        motionMode: object.motionMode,
+        syncDistance: object.syncDistance,
+        syncMaxDisappearGap: object.syncMaxDisappearGap,
+        syncLocationGapMs: object.syncLocationGapMs,
+        dynamicRangeSyncEnabled: object.dynamicRangeSyncEnabled,
+        dynamicSyncPreviousFrames: object.dynamicSyncPreviousFrames,
+        dynamicSyncNextFrames: object.dynamicSyncNextFrames,
+        syncPoseSegmentId: object.syncPoseSegmentId,
+        syncPoseSegmentsInitialized: object.syncPoseSegmentsInitialized,
+        syncUseZ: object.syncUseZ,
+        syncYawOffsetDeg: object.syncYawOffsetDeg,
+        syncXOffsetM: object.syncXOffsetM,
+        syncYOffsetM: object.syncYOffsetM,
+        occluded: object.occluded === true,
+        syncDirty: object.syncDirty === true,
+        reviewedCorrect: object.reviewedCorrect === true,
         classId: object.classId,
         className: object.classType,
         sourceId: object.sourceId,
@@ -157,6 +252,25 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         // userData.isStandard = obj.isStandard || false;
         userData.trackId = obj.trackId || '';
         userData.trackName = obj.trackName || '';
+        userData.groupId = obj.groupId || '';
+        userData.motionMode = obj.motionMode;
+        userData.syncDistance = obj.syncDistance;
+        userData.syncMaxDisappearGap = obj.syncMaxDisappearGap;
+        userData.syncLocationGapMs = obj.syncLocationGapMs;
+        userData.dynamicRangeSyncEnabled = obj.dynamicRangeSyncEnabled;
+        userData.dynamicSyncPreviousFrames = obj.dynamicSyncPreviousFrames;
+        userData.dynamicSyncNextFrames = obj.dynamicSyncNextFrames;
+        userData.syncPoseSegmentId = obj.syncPoseSegmentId;
+        userData.syncPoseSegmentsInitialized = obj.syncPoseSegmentsInitialized;
+        userData.syncUseZ = obj.syncUseZ;
+        userData.syncYawOffsetDeg = obj.syncYawOffsetDeg;
+        userData.syncXOffsetM = obj.syncXOffsetM;
+        userData.syncYOffsetM = obj.syncYOffsetM;
+        userData.occluded = obj.occluded === true;
+        userData.syncDirty = obj.syncDirty === true;
+        userData.reviewedCorrect = obj.reviewedCorrect === true;
+        userData.reviewedCorrectVisible =
+            (editor as any).bsState?.reviewMode === true && userData.reviewedCorrect;
 
         userData.classType = classConfig?.name || '';
         userData.classId = obj.classId || '';
@@ -177,7 +291,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             let box = createUtils.createAnnotate3D(editor, position, scale, rotation, userData);
             // if (obj.frontId) box.uuid = obj.frontId;
             if (classConfig) {
-                box.color.setStyle(classConfig.color);
+                box.color.setStyle(getObjectDisplayColor(classConfig.color, userData));
                 // box.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
             }
             bindInfo(box, obj);
@@ -189,7 +303,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             let rect = createUtils.createAnnotateRect(editor, center, size, userData);
 
             rect.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
-            if (classConfig) rect.color = classConfig.color;
+            if (classConfig) rect.color = getObjectDisplayColor(classConfig.color, userData);
             bindInfo(rect, obj);
             annotates.push(rect);
         } else if (objType === ObjectType.TYPE_2D_BOX || objType === ObjectType.TYPE_BOX2D) {
@@ -210,7 +324,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             );
             // if (obj.frontId) box2d.uuid = obj.frontId;
             box2d.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
-            if (classConfig) box2d.color = classConfig.color;
+            if (classConfig) box2d.color = getObjectDisplayColor(classConfig.color, userData);
             bindInfo(box2d, obj);
             annotates.push(box2d);
         }
@@ -265,6 +379,24 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             // isStandard: userData.isStandard || false,
             trackId: userData.trackId || '',
             trackName: userData.trackName || '',
+            groupId: userData.groupId || '',
+            motionMode: userData.motionMode,
+            syncDistance: userData.syncDistance,
+            syncMaxDisappearGap: userData.syncMaxDisappearGap,
+            syncLocationGapMs: userData.syncLocationGapMs,
+            dynamicRangeSyncEnabled: userData.dynamicRangeSyncEnabled,
+            dynamicSyncPreviousFrames: userData.dynamicSyncPreviousFrames,
+            dynamicSyncNextFrames: userData.dynamicSyncNextFrames,
+            syncPoseSegmentId: userData.syncPoseSegmentId,
+            syncPoseSegmentsInitialized: userData.syncPoseSegmentsInitialized,
+            syncUseZ: userData.syncUseZ,
+            syncYawOffsetDeg: userData.syncYawOffsetDeg,
+            syncXOffsetM: userData.syncXOffsetM,
+            syncYOffsetM: userData.syncYOffsetM,
+            occluded: userData.occluded === true,
+            syncDirty: userData.syncDirty === true,
+            reviewedCorrect: userData.reviewedCorrect === true,
+            manualModified: userData.manualModified === true,
             // resultStatus: userData.resultStatus || '',
             // resultType: userData.resultType || '',
             classId: classConfig ? classConfig.id : undefined,

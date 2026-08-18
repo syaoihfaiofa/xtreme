@@ -11,7 +11,6 @@ import {
     isFisheyeCamera,
     projectWorldToImage,
     reformProjectPoints,
-    renderBox2D,
 } from '../utils';
 import { get } from '../utils/tempVar';
 import Image2DRenderProxy from './Image2DRenderProxy';
@@ -51,6 +50,21 @@ let positionsFrontV2 = [...Array(4)].map((e) => new THREE.Vector2());
 let positionsBackV2 = [...Array(4)].map((e) => new THREE.Vector2());
 
 let rotate180 = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(0, 0, 1), Math.PI);
+const boxEdges = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [3, 0],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [7, 4],
+    [0, 4],
+    [1, 5],
+    [2, 6],
+    [3, 7],
+] as const;
+const fisheyeEdgeSegments = 24;
 
 export default class Image2DRenderView extends Render {
     container: HTMLDivElement;
@@ -67,6 +81,7 @@ export default class Image2DRenderView extends Render {
     height: number;
     // proxy
     proxy: Image2DRenderProxy;
+    private ownsProxy: boolean;
     clientRect: DOMRect = {} as DOMRect;
     // 2d
     // canvas?: HTMLCanvasElement;
@@ -119,8 +134,10 @@ export default class Image2DRenderView extends Render {
 
         if (config.proxy) {
             this.proxy = config.proxy;
+            this.ownsProxy = false;
         } else {
             this.proxy = new Image2DRenderProxy(pointCloud);
+            this.ownsProxy = true;
             this.proxy.attach(this.container);
         }
         this.proxy.addView(this);
@@ -149,9 +166,18 @@ export default class Image2DRenderView extends Render {
     init(): void {}
 
     destroy(): void {
-        // this.renderer.dispose();
-        // this.pointCloud.scene.remove(this.group);
-        // this.cameraHelper.dispose();
+        super.destroy();
+        this.proxy.removeView(this);
+        if (this.ownsProxy) {
+            this.proxy.destroy();
+        }
+        this.cameraHelper.dispose();
+        this.group.clear();
+        this.pointCloud.scene.remove(this.group);
+        this.img = null;
+        this.option = {} as IOption;
+        // @ts-ignore
+        if (window.imgView === this) window.imgView = undefined;
     }
 
     updateSize() {
@@ -359,6 +385,64 @@ export default class Image2DRenderView extends Render {
         return { positionsBack: positionsBackV2, positionsFront: positionsFrontV2 };
     }
 
+    getFisheyeBoxLines(object: Box) {
+        let bbox = object.geometry.boundingBox as THREE.Box3;
+        const front = [...Array(4)].map(() => new THREE.Vector3());
+        const back = [...Array(4)].map(() => new THREE.Vector3());
+        getPositions(bbox, front, back);
+
+        const worldPositions = [...front, ...back];
+        worldPositions.forEach((pos) => pos.applyMatrix4(object.matrixWorld));
+
+        const lines = boxEdges.map(([startIndex, endIndex]) => {
+            const start = worldPositions[startIndex];
+            const end = worldPositions[endIndex];
+            const line: THREE.Vector2[] = [];
+
+            for (let index = 0; index <= fisheyeEdgeSegments; index++) {
+                const t = index / fisheyeEdgeSegments;
+                const worldPos = new THREE.Vector3().lerpVectors(start, end, t);
+                const imgPos = this.worldToImg(worldPos, new THREE.Vector3());
+                if (Number.isFinite(imgPos.x) && Number.isFinite(imgPos.y)) {
+                    line.push(new THREE.Vector2(imgPos.x, imgPos.y));
+                }
+            }
+
+            return line;
+        });
+
+        return lines;
+    }
+
+    isFisheyeBoxVisible(lines: THREE.Vector2[]) {
+        const margin = 20;
+        return lines.some(
+            (pos) =>
+                pos.x >= -margin &&
+                pos.x <= this.imgSize.x + margin &&
+                pos.y >= -margin &&
+                pos.y <= this.imgSize.y + margin,
+        );
+    }
+
+    renderFisheyeBoxLines(context: CanvasRenderingContext2D, lines: THREE.Vector2[][], color: string) {
+        context.strokeStyle = color;
+        context.lineWidth = this.lineWidth;
+        context.globalAlpha = 1;
+        context.setLineDash([]);
+
+        lines.forEach((line) => {
+            if (line.length < 2 || !this.isFisheyeBoxVisible(line)) return;
+
+            context.beginPath();
+            context.moveTo(line[0].x, line[0].y);
+            line.slice(1).forEach((pos) => {
+                context.lineTo(pos.x, pos.y);
+            });
+            context.stroke();
+        });
+    }
+
     get2DObject() {
         return this.pointCloud.getAnnotate2D();
     }
@@ -556,7 +640,13 @@ export default class Image2DRenderView extends Render {
         let { context, renderer } = this.proxy;
         let boxMaterial = box.material as THREE.LineBasicMaterial;
 
-        let color = selectionMap[box.uuid] ? selectColor : box.color;
+        let color =
+            selectionMap[box.uuid] &&
+            box.userData?.occluded !== true &&
+            box.userData?.syncDirty !== true &&
+            box.userData?.reviewedCorrectVisible !== true
+                ? selectColor
+                : box.color;
         let highFlag = this.isHighlight(box);
         color = highFlag ? highlightColor : color;
         // let mask = this.showMask(box);
@@ -566,16 +656,16 @@ export default class Image2DRenderView extends Render {
         // }
 
         if (this.isFisheye()) {
-            const { positionsBack, positionsFront } = this.getBox2DBox(box);
-            const positions = [...positionsBack, ...positionsFront];
-            if (positions.some((pos) => !Number.isFinite(pos.x) || !Number.isFinite(pos.y))) {
+            const lines = this.getFisheyeBoxLines(box);
+            const positions = lines.flat();
+            if (
+                positions.length === 0 ||
+                positions.some((pos) => !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) ||
+                !this.isFisheyeBoxVisible(positions)
+            ) {
                 return;
             }
-            renderBox2D(
-                context,
-                { positions1: positionsFront, positions2: positionsBack, dashed: box.dashed } as any,
-                { color: `#${color.getHexString()}`, lineWidth: this.lineWidth },
-            );
+            this.renderFisheyeBoxLines(context, lines, `#${color.getHexString()}`);
             return;
         }
 

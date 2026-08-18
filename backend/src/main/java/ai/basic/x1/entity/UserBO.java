@@ -1,5 +1,6 @@
 package ai.basic.x1.entity;
 
+import ai.basic.x1.entity.enums.UserRoleEnum;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,6 +24,8 @@ public class UserBO {
     private String password;
 
     private String nickname;
+
+    private UserRoleEnum role;
 
     private Long avatarId;
 

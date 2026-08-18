@@ -207,5 +207,29 @@ public class CommonConfig implements WebMvcConfigurer {
         return new ImageUploadUseCase();
     }
 
+    @Bean
+    public SceneInferenceUseCase sceneInferenceUseCase() {
+        return new SceneInferenceUseCase();
+    }
+
+    @Bean
+    public SceneInferenceFinalizer sceneInferenceFinalizer() {
+        return new SceneInferenceFinalizer();
+    }
+
+    @Bean
+    public DataAnnotationCommentUseCase dataAnnotationCommentUseCase() {
+        return new DataAnnotationCommentUseCase();
+    }
+
+    @Bean
+    public TrackSyncUseCase trackSyncUseCase() {
+        return new TrackSyncUseCase();
+    }
+
+    @Bean
+    public SceneLocationImportService sceneLocationImportService() {
+        return new SceneLocationImportService();
+    }
 
 }

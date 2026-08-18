@@ -1,6 +1,7 @@
 package ai.basic.x1.adapter.port.dao.mybatis.model;
 
 import ai.basic.x1.entity.UserBO;
+import ai.basic.x1.entity.enums.UserRoleEnum;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -33,6 +34,8 @@ public class User implements Serializable {
 
     private String nickname;
 
+    private UserRoleEnum role;
+
     private Long avatarId;
 
     private OffsetDateTime lastLoginAt;
@@ -47,6 +50,7 @@ public class User implements Serializable {
                 .username(bo.getUsername())
                 .password(bo.getPassword())
                 .nickname(bo.getNickname())
+                .role(bo.getRole())
                 .avatarId(bo.getAvatarId())
                 .lastLoginAt(bo.getLastLoginAt())
                 .createdAt(bo.getCreatedAt())
@@ -60,6 +64,7 @@ public class User implements Serializable {
                 .username(username)
                 .password(password)
                 .nickname(nickname)
+                .role(role)
                 .avatarId(avatarId)
                 .lastLoginAt(lastLoginAt)
                 .createdAt(createdAt)

@@ -19,10 +19,29 @@
       </div>
       <div
         :class="getMaskClass"
-        v-if="!data.lockedBy && type !== PageTypeEnum.frame"
+        v-if="type !== PageTypeEnum.frame"
         @click="handleCheck"
       >
-        <div class="frameWrapper" v-if="isFrame()">
+        <div class="wrapper" v-if="data.lockedBy">
+          <div class="wrapper-line">
+            <div class="openBtn" v-if="discussionAvailable">
+              <Button
+                type="primary"
+                block
+                border
+                @click="
+                  (e) => {
+                    e.stopPropagation();
+                    handleDiscuss(data.id, isFrame());
+                  }
+                "
+              >
+                Discuss
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div class="frameWrapper" v-else-if="isFrame()">
           <div class="openBtn">
             <Button type="primary" block border @click.stop="handleOpen"> Open </Button>
           </div>
@@ -41,6 +60,21 @@
               View
             </Button>
           </div>
+          <div class="openBtn" v-if="discussionAvailable">
+            <Button
+              type="primary"
+              block
+              border
+              @click="
+                (e) => {
+                  e.stopPropagation();
+                  handleDiscuss(data.id, isFrame());
+                }
+              "
+            >
+              Discuss
+            </Button>
+          </div>
           <div class="openBtn">
             <Button
               type="primary"
@@ -54,6 +88,66 @@
               "
             >
               Annotate
+            </Button>
+          </div>
+          <div class="openBtn">
+            <Button
+              type="primary"
+              block
+              border
+              @click="
+                (e) => {
+                  e.stopPropagation();
+                  handleEditScene(e);
+                }
+              "
+            >
+              {{ t('business.datasetContent.scene.edit') }}
+            </Button>
+          </div>
+          <div class="openBtn">
+            <Button
+              type="primary"
+              block
+              border
+              @click="
+                (e) => {
+                  e.stopPropagation();
+                  handleUploadLocation(e);
+                }
+              "
+            >
+              {{ t('business.datasetContent.scene.location') }}
+            </Button>
+          </div>
+          <div class="openBtn">
+            <Button
+              type="primary"
+              block
+              border
+              @click="
+                (e) => {
+                  e.stopPropagation();
+                  handleImportResult(e);
+                }
+              "
+            >
+              {{ t('business.datasetContent.scene.importResult') }}
+            </Button>
+          </div>
+          <div class="openBtn">
+            <Button
+              type="primary"
+              block
+              border
+              @click="
+                (e) => {
+                  e.stopPropagation();
+                  handleGlobalMap(e);
+                }
+              "
+            >
+              Global Map
             </Button>
           </div>
           <div class="openBtn">
@@ -87,6 +181,21 @@
                 "
               >
                 View
+              </Button>
+            </div>
+            <div class="openBtn" v-if="discussionAvailable">
+              <Button
+                type="primary"
+                block
+                border
+                @click="
+                  (e) => {
+                    e.stopPropagation();
+                    handleDiscuss(data.id, isFrame());
+                  }
+                "
+              >
+                Discuss
               </Button>
             </div>
             <div class="openBtn">
@@ -166,7 +275,7 @@
             <NodePcImage :pcImageObject="iState.pcImageObject[item]?.object" />
           </div>
         </div>
-        <div class="name"> {{ data.name }} </div>
+        <div class="name" :title="data.detail || undefined"> {{ data.name }} </div>
       </template>
       <div
         class="place relation-container"
@@ -238,6 +347,9 @@
     'handleSingleAnnotate',
     'handleAnotateFrame',
     'handleChangeType',
+    'handleEditScene',
+    'handleUploadLocation',
+    'handleImportResult',
   ]);
   const translateSplit = (type) => {
     let LowerCase = type.toLowerCase();
@@ -263,6 +375,11 @@
   const checked = ref<boolean>(false);
   const { t } = useI18n();
   const convaersationData: any = ref({});
+  const discussionAvailable = computed(
+    () =>
+      props.info?.type === datasetTypeEnum.LIDAR_FUSION ||
+      props.info?.type === datasetTypeEnum.LIDAR_BASIC,
+  );
 
   onBeforeMount(async () => {
     convaersationData.value = await getTextJson();
@@ -360,9 +477,41 @@
     goToTool(params, props.info?.type);
   };
 
+  const handleDiscuss = (dataId, isFrame) => {
+    let params: any = {
+      datasetId: id,
+      dataId,
+      type: 'discussion',
+    };
+    if (isFrame) {
+      params.dataType = 'frame';
+    }
+    goToTool(params, props.info?.type);
+  };
+
   const handleOpen = (e) => {
     e.stopPropagation();
     emits('handleChangeType', dataTypeEnum.FRAME_SERIES, props.data.id, props.data.name);
+  };
+
+  const handleEditScene = (e) => {
+    e.stopPropagation();
+    emits('handleEditScene', props.data);
+  };
+
+  const handleUploadLocation = (e) => {
+    e.stopPropagation();
+    emits('handleUploadLocation', props.data);
+  };
+
+  const handleImportResult = (e) => {
+    e.stopPropagation();
+    emits('handleImportResult', props.data);
+  };
+
+  const handleGlobalMap = (e) => {
+    e.stopPropagation();
+    window.open(`/api/data/staticGlobalMap/${props.data.id}`, '_blank');
   };
 </script>
 <style lang="less" scoped>

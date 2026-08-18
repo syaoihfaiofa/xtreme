@@ -7,13 +7,14 @@ export function pollModelTrack(
     targetDataIds: string[],
     onComplete: (e: Record<string, IObject[]>) => void,
     onErr?: () => void,
-) {
+): () => void {
     let stop = false;
     let hasErr = false;
-    poll();
+    let timer: number | undefined;
+    void poll();
     return clear;
 
-    async function poll() {
+    async function poll(): Promise<void> {
         let result;
 
         try {
@@ -29,16 +30,23 @@ export function pollModelTrack(
         } else {
             if (result) onComplete(result);
             else {
-                setTimeout(poll, 1000);
+                timer = window.setTimeout(() => {
+                    timer = undefined;
+                    void poll();
+                }, 1000);
             }
         }
     }
 
-    function clear() {
+    function clear(): void {
         stop = true;
+        if (timer !== undefined) {
+            window.clearTimeout(timer);
+            timer = undefined;
+        }
     }
 
-    async function request() {
+    async function request(): Promise<Record<string, IObject[]> | undefined> {
         let request = api.getModelResult(targetDataIds, recordId).then((data) => {
             data = data.data || {};
             let resultList = data.modelDataResults || [];
@@ -49,15 +57,15 @@ export function pollModelTrack(
             resultList.forEach((dataResult: any) => {
                 let dataId = String(dataResult.dataId);
                 let modelResult = dataResult.modelResult || {};
-                if (modelResult.code && modelResult.code !== 'OK') return;
+                if (modelResult.code && modelResult.code !== 'OK') {
+                    throw new Error(modelResult.message || `Tracking failed for frame ${dataId}`);
+                }
 
                 let objects = (modelResult.objects || []) as IObject[];
-                if (objects.length === 0) return;
-
                 objects.forEach((e: any) => {
                     e.trackId = e.trackingId || e.trackId;
                 });
-                objectsMap[dataId] = objects;
+                if (objects.length > 0) objectsMap[dataId] = objects;
                 completed++;
             });
 

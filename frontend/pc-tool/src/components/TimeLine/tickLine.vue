@@ -5,7 +5,11 @@
     >
         <div class="i-scale-head-container">
             <template v-for="(item, index) in configArray" :key="item.key">
-                <div class="ruler-container" :style="_style(index)">
+                <div
+                    class="ruler-container"
+                    :class="{ 'filtered-out': frameFilterMask?.[index] === false }"
+                    :style="_style(index)"
+                >
                     <div v-if="_mark(index)" class="ruler-text">{{ index + 1 }}</div>
                     <span :class="{ 'ruler-scale': true, bold: _mark(index) }"></span>
                     <span :style="_style1(index)" class="loaded"></span>
@@ -41,6 +45,7 @@
     interface frameProps {
         frames: Array<Frame>;
         status: Array<boolean>;
+        frameFilterMask?: boolean[];
         config: {
             curFrameIndex: number;
             disabled?: boolean;
@@ -213,6 +218,10 @@
                 style.borderRight = border;
             }
         }
+        if (props.frameFilterMask?.[index] === false) {
+            style.opacity = '0.25';
+            style.backgroundColor = '#17181b';
+        }
         return style;
     };
     function preMouseEvent(e: MouseEvent) {
@@ -237,7 +246,7 @@
             index = props.frames.length;
             return false;
         }
-        editor.loadFrame(index - 1); // emit('frameIndexChange', index);
+        editor.loadFrameForNavigation(index - 1); // emit('frameIndexChange', index);
         // editor.reportManager.reportChangeFrame('Time Line', beforeIndex);
         return true;
     }

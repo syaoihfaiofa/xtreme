@@ -217,7 +217,7 @@ export default class MainRenderView extends Render {
                     type: 0,
                     min: bbox.min,
                     max: bbox.max,
-                    color: this.selectColor,
+                    color: this.getSelectedBoxColor(box),
                     matrix: this.boxInvertMatrix.copy(box.matrixWorld).invert(),
                 },
             });
@@ -235,15 +235,28 @@ export default class MainRenderView extends Render {
 
             // render select
             // let select = selection[0];
-            this.renderBox(box, this.selectColor);
+            this.renderBox(box, this.getSelectedBoxColor(box));
         } else {
             annotate3D.visible = false;
             this.renderer.render(scene, this.camera);
             annotate3D.visible = true;
             annotate3D.children.forEach((box) => {
-                this.renderBox(box as Box, selectionMap[box.uuid] ? this.selectColor : undefined);
+                this.renderBox(
+                    box as Box,
+                    selectionMap[box.uuid] ? this.getSelectedBoxColor(box as Box) : undefined,
+                );
             });
         }
+    }
+
+    getSelectedBoxColor(box: Box) {
+        return (
+            box.userData?.occluded === true ||
+            box.userData?.syncDirty === true ||
+            box.userData?.reviewedCorrectVisible === true
+        )
+            ? box.color
+            : this.selectColor;
     }
 
     renderBox(box: Box, color?: THREE.Color) {
@@ -267,5 +280,17 @@ export default class MainRenderView extends Render {
         this.backgroundColor = backgroundColor;
         this.renderer.setClearColor(this.backgroundColor);
         this.render();
+    }
+
+    destroy(): void {
+        super.destroy();
+        this.tween?.stop();
+        this.tween = null;
+        this.pointCloud.scene.remove(this.camera);
+        this.renderer.dispose();
+        this.renderer.forceContextLoss();
+        this.renderer.domElement.remove();
+        // @ts-ignore
+        if (window.mainview === this) window.mainview = undefined;
     }
 }

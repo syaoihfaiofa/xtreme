@@ -29,7 +29,7 @@ export default class LoadManager {
         try {
             await this.editor.getResultSources();
             await Promise.all([this.loadObjectAndClassification(), this.loadResource()]);
-            // if (!this.editor.playManager.playing) this.editor.dataResource.load();
+            this.editor.dataResource.load(index);
         } catch (error: any) {
             this.editor.handleErr(error);
         }
@@ -72,22 +72,40 @@ export default class LoadManager {
         let frame = frames[frameIndex];
 
         let objects = this.editor.dataManager.getFrameObject(frame.id);
-        if (!objects) {
+        // LiDAR Fusion "Sync Mode": a tracked object edited in *any* frame of the Scene can
+        // change what this frame's data should look like at any time (see TrackSyncUseCase on
+        // the backend). The client only proactively pushes the propagated result into frames
+        // that happen to already be cached in this session (see Editor.refreshTrackFromServer) -
+        // if this frame was never touched during that push (e.g. the session was reloaded, or it
+        // simply hadn't been visited yet when the sync ran), its cached copy - if any - can be
+        // stale. So for sync-mode datasets, always re-fetch from the server on navigation rather
+        // than trusting whatever is already cached, unless this frame has unsaved local edits
+        // (in which case re-fetching would blow those away).
+        const bsState = (this.editor as any).bsState;
+        let forceRefetch =
+            (!!bsState?.syncMode || !!bsState?.inferenceMode) && !frame.needSave;
+        if (!objects || forceRefetch) {
             try {
-                // let data = await api.getDataObject(datInfo.dataId);
+                if (objects && objects.length > 0 && this.editor.state.isSeriesFrame) {
+                    this.editor.trackManager.removeTrackCount(objects, frame);
+                }
                 let data = await this.editor.businessManager.getFrameObject(frame);
                 frame.queryTime = data.queryTime;
                 // this.setTrackData(data.objectsMap);
 
                 frame.classifications = utils.copyClassification(
                     classifications,
-                    data.classificationMap[frame.id] || {},
+                    utils.lookupByFrameId(data.classificationMap, frame.id) || {},
                 );
 
-                let objects = data.objectsMap[frame.id] || [];
+                let objects = utils.objectsMapForFrame(data.objectsMap, frame.id);
                 let annotates = utils.convertObject2Annotate(objects, this.editor);
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
                 this.editor.dataManager.updateFrameId(frame.id);
+                if (this.editor.state.isSeriesFrame) {
+                    this.editor.trackManager.addTrackCount(annotates, frame);
+                }
+                if (bsState?.inferenceMode) this.updateTrackMap();
             } catch (error: any) {
                 this.editor.handleErr(error, this.editor.lang('load-object-error'));
             }
@@ -178,17 +196,15 @@ export default class LoadManager {
 
         try {
             let data = await this.editor.businessManager.getFrameObject(filterFrames);
-            // let data = await api.getDataObject(dataIds);
-            console.log(data);
             if (isSeriesFrame) this.setTrackData(data.objectsMap);
 
             filterFrames.forEach((frame) => {
-                let objects = data.objectsMap[frame.id] || [];
+                let objects = utils.objectsMapForFrame(data.objectsMap, frame.id);
                 frame.queryTime = data.queryTime;
 
                 frame.classifications = utils.copyClassification(
                     classifications,
-                    data.classificationMap[frame.id] || {},
+                    utils.lookupByFrameId(data.classificationMap, frame.id) || {},
                 );
 
                 let annotates = utils.convertObject2Annotate(objects, this.editor);
@@ -196,10 +212,9 @@ export default class LoadManager {
                     let userData = obj.userData as IUserData;
                     if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
                 });
-                if (isSeriesFrame) this.editor.trackManager.addTrackCount(annotates, frame);
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
-                // this.editor.dataManager.updateFrameId(frame.id);
             });
+            if (isSeriesFrame) this.editor.trackManager.rebuildTrackCountCaches();
         } catch (error: any) {
             this.editor.handleErr(error, this.editor.lang('load-object-error'));
         }

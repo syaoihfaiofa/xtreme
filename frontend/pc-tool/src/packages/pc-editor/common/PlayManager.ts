@@ -58,14 +58,15 @@ export default class PlayManager extends THREE.EventDispatcher {
     async next() {
         if (!this.playing) return;
 
-        const { frameIndex, frames } = this.editor.state;
-        const toIndex = frameIndex + this.forward;
+        const { frames } = this.editor.state;
+        const toIndex = this.editor.getAdjacentFrameIndex(this.forward);
         const data = frames[toIndex];
         // data.loadState === 'complete'
-        if (toIndex < frames.length && toIndex >= 0 && data.loadState === 'complete') {
+        if (toIndex >= 0 && data?.loadState === 'complete') {
             try {
                 // console.log('toIndex:', toIndex);
-                await this.editor.loadFrame(toIndex, false);
+                const loaded = await this.editor.loadFrame(toIndex, false);
+                if (!loaded) this.stop();
                 // this.dispatchEvent({ type: Event.PLAY_FRAME_CHANGE });
             } catch (error) {
                 this.editor.handleErr(error as any, this.editor.lang('play-error'));

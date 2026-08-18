@@ -20,7 +20,8 @@ export default class OrbitControlsAction extends Action {
         // this.control.autoRotate = false;
         // this.control.update();
 
-        this.control.addEventListener('change', this.controlChange.bind(this));
+        this.controlChange = this.controlChange.bind(this);
+        this.control.addEventListener('change', this.controlChange);
 
         // this.selectChange = this.selectChange.bind(this);
         // this.transformChange = this.transformChange.bind(this);
@@ -63,5 +64,10 @@ export default class OrbitControlsAction extends Action {
 
     controlChange() {
         this.renderView.render();
+    }
+
+    destroy(): void {
+        this.control.removeEventListener('change', this.controlChange);
+        this.control.dispose();
     }
 }

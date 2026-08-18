@@ -23,6 +23,6 @@ export type MsgType = 'error' | 'warning' | 'success';
 
 export type RegisterFn = (name: string, modal: any) => void;
 export type ModalFn = (name: string | false, option?: IModalOption) => Promise<any>;
-export type MsgFn = (type: MsgType, msg: string) => void;
+export type MsgFn = (type: MsgType, msg: string, duration?: number) => void;
 export type ConfirmFn = (config: IConfirmOption) => Promise<any>;
 export type LoadingFn = (config: ILoadingOption | boolean) => void;

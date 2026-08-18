@@ -10,9 +10,11 @@
                 :key="index"
                 :class="{
                     'i-tool-frame': true,
+                    'filtered-out': frameFilterMask?.[index] === false,
                 }"
                 :style="{ width: spanWidth + 'px' }"
             >
+                <span v-if="segmentBoundaries?.[index]" class="segment-boundary"></span>
                 <span
                     :class="['i-tool-span', _status_color(item)]"
                     :style="_style_track(item, index)"
@@ -53,6 +55,7 @@
         modelColor: '#ffffff', // '#90d96c',
         emptyColor: '#303036', //'#c5c8cd',
         errorColor: '#ff3653',
+        syncedColor: '#ff9f00',
         defaultColor: '#4f556c',
         noclassColor: 'grey',
     };
@@ -68,6 +71,9 @@
         primary?: boolean;
         msgTip?: (option: IMsgOption) => void;
         errIndex?: number[];
+        reviewProgress?: boolean[];
+        frameFilterMask?: boolean[];
+        segmentBoundaries?: boolean[];
         activeType?: {
             classType: any;
             modelClass: any;
@@ -124,11 +130,20 @@
     };
     const _style_track = (userData: IUserData, index: number) => {
         const style: CSSProperties = {};
-        const classColor = props.colorMap[userData?.classId ?? ''];
-        if (isError(index)) {
+        if (props.reviewProgress) {
+            style.backgroundColor = props.reviewProgress[index]
+                ? utils.REVIEWED_CORRECT_OBJECT_COLOR
+                : colorConfig.defaultColor;
+        } else if (isError(index)) {
             style.backgroundColor = colorConfig.errorColor;
-        } else if (classColor) {
-            style.backgroundColor = classColor;
+        } else if (userData?.syncDirty === true) {
+            style.backgroundColor = utils.SYNC_DIRTY_OBJECT_COLOR;
+        } else if (userData?.occluded === true) {
+            style.backgroundColor = utils.OCCLUDED_OBJECT_COLOR;
+        } else if (userData?.reviewedCorrectVisible === true) {
+            style.backgroundColor = utils.REVIEWED_CORRECT_OBJECT_COLOR;
+        } else if (userData) {
+            style.backgroundColor = colorConfig.syncedColor;
         }
         // if (index === iState.menuIndex || (iState.menuIndex < 0 && isActive(userData))) {
         //     style.top = '4px';
@@ -225,7 +240,7 @@
         if (index > total) {
             index = total;
         }
-        editor.loadFrame(index - 1);
+        editor.loadFrameForNavigation(index - 1);
     }
     //   async function showMenu(event: MouseEvent, visible: boolean, data: any) {
     //     const { offsetX, offsetY, clientX, clientY, pageY } = event;
@@ -280,6 +295,23 @@
             pointer-events: none;
             border-right: 1px solid #1e1f22;
             transform: translateZ(0);
+
+            &.filtered-out {
+                opacity: 0.2;
+                background: #17181b;
+            }
+
+            .segment-boundary {
+                position: absolute;
+                top: 0;
+                left: -2px;
+                z-index: 8;
+                width: 3px;
+                height: 18px;
+                background: #ffe58f;
+                box-shadow: 0 0 2px #000000;
+                pointer-events: none;
+            }
 
             &.truth-value::after {
                 position: absolute;

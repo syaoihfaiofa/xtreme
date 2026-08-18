@@ -74,16 +74,11 @@ function projectCameraToFisheyeImage(
     target: THREE.Vector3,
     option: ICameraProjectionOption,
 ) {
-    const zForward = -cameraPos.z;
-    if (zForward <= 0.000001) {
-        target.set(Number.NaN, Number.NaN, 2);
-        return false;
-    }
-
-    const x = cameraPos.x / zForward;
-    const y = -cameraPos.y / zForward;
-    const r = Math.sqrt(x * x + y * y);
-    const theta = Math.atan(r);
+    const x = cameraPos.x;
+    const y = -cameraPos.y;
+    const z = -cameraPos.z;
+    const r = Math.hypot(x, y);
+    const theta = Math.atan2(r, z);
     const theta2 = theta * theta;
     const theta4 = theta2 * theta2;
     const theta6 = theta4 * theta2;

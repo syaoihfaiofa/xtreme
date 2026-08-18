@@ -1,8 +1,11 @@
 <template>
     <div class="pc-editor-operation">
-        <Results />
-        <Classification />
-        <Instance />
+        <Discussion v-if="editor.state.modeConfig.name === 'discussion'" />
+        <template v-else>
+            <Results />
+            <Classification />
+            <Instance />
+        </template>
         <!-- <a-collapse v-model:activeKey="state.activeTabs" :bordered="false">
             <a-collapse-panel :showArrow="false" key="classification" header="Classifications">
                 <Classification />
@@ -21,7 +24,10 @@
     import Instance from '../Instance/index.vue';
     // import Instance from './Instance/index.vue';
     import Classification from './Classification/index.vue';
+    import Discussion from '../Discussion/index.vue';
+    import { useInjectEditor } from '../../state';
 
+    const editor = useInjectEditor();
     let state = reactive({
         activeTabs: ['instance', 'classification'],
     });

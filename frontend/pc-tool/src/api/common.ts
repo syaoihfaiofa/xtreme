@@ -14,6 +14,7 @@ import { utils } from 'pc-editor';
 // import { traverseClassification2Arr } from '../utils/classification';
 // import BSError from '../common/BSError';
 import * as THREE from 'three';
+import { IDataSetInfo } from '../type';
 
 let { empty, queryStr, traverseClassification2Arr, traverseClass2Arr } = utils;
 
@@ -33,6 +34,29 @@ export async function saveObject(config: any) {
     });
 
     return keyMap;
+}
+
+export async function syncObject(dataId: string, trackId: string, classId?: string | number) {
+    const params: { dataId: string; trackId: string; classId?: string | number } = { dataId, trackId };
+    if (classId != null && classId !== '') params.classId = classId;
+    return await post('/api/annotate/data/sync', null, { params });
+}
+
+export async function getSyncSegments(
+    dataId: string,
+    trackId: string,
+): Promise<Record<string, number>> {
+    const response = await get<{ data?: Record<string, number> }>(
+        '/api/annotate/data/sync/segments',
+        { dataId, trackId },
+    );
+    return response.data || {};
+}
+
+export async function reviewTrack(dataId: string, trackId: string, reviewedCorrect: boolean) {
+    return await post('/api/annotate/data/review', null, {
+        params: { dataId, trackId, reviewedCorrect },
+    });
 }
 
 export async function getDataObjectBatch(dataIds: string[] | string) {
@@ -67,13 +91,13 @@ export async function getDataObject(dataIds: string[] | string) {
     // let objects = [] as IObject[];
     data.forEach((e: any) => {
         const { dataId, objects, classificationValues } = e;
-        objectsMap[dataId] = objects.map((o: any) => {
+        objectsMap[String(dataId)] = objects.map((o: any) => {
             let { id, sourceId, sourceType, classId } = o;
             return utils.translateToObject(
                 Object.assign({ backId: id, sourceId, sourceType, classId }, o.classAttributes),
             );
         });
-        classificationMap[dataId] = classificationValues.reduce((map: any, c: any) => {
+        classificationMap[String(dataId)] = classificationValues.reduce((map: any, c: any) => {
             return Object.assign(
                 map,
                 utils.saveToClassificationValue(c.classificationAttributes.values),
@@ -248,9 +272,9 @@ export async function getUserInfo() {
     let { data } = await get(url);
     return data;
 }
-export async function getDataSetInfo(datasetId: string) {
+export async function getDataSetInfo(datasetId: string): Promise<IDataSetInfo> {
     let url = `/api/dataset/info/${datasetId}`;
-    let { data } = await get(url);
+    let { data } = await get<{ data: IDataSetInfo }>(url);
     return data;
 }
 

@@ -20,6 +20,17 @@ export default class Edit2DAction extends Action {
     boxTool: Box3DTool;
     //
     clearCall: ClearHandler[] = [];
+    private readonly onRender = () => {
+        this.update();
+    };
+    private readonly onSelect = () => {
+        let selection = this.renderView.pointCloud.selection;
+        if (selection.length === 1 && selection[0] instanceof Object2D) {
+            this.object = selection[0];
+        } else {
+            this.object = null;
+        }
+    };
 
     constructor(renderView: Image2DRenderView) {
         super();
@@ -42,24 +53,18 @@ export default class Edit2DAction extends Action {
     init() {
         this.initRectDrop();
         this.initBoxDrop();
-        this.renderView.addEventListener(Event.RENDER_AFTER, () => {
-            this.update();
-        });
-
-        this.renderView.pointCloud.addEventListener(Event.SELECT, () => {
-            let selection = this.renderView.pointCloud.selection;
-            if (selection.length === 1 && selection[0] instanceof Object2D) {
-                this.object = selection[0];
-            } else {
-                this.object = null;
-            }
-        });
+        this.renderView.addEventListener(Event.RENDER_AFTER, this.onRender);
+        this.renderView.pointCloud.addEventListener(Event.SELECT, this.onSelect);
     }
 
     destroy() {
+        this.renderView.removeEventListener(Event.RENDER_AFTER, this.onRender);
+        this.renderView.pointCloud.removeEventListener(Event.SELECT, this.onSelect);
         this.clearCall.forEach((fn) => fn());
+        this.clearCall = [];
         this.rectTool.destroy();
         this.boxTool.destroy();
+        this.object = null;
     }
 
     initBoxDrop() {

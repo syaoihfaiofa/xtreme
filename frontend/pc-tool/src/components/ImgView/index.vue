@@ -8,7 +8,7 @@
 </template>
 
 <script setup lang="ts">
-    import { onMounted, ref, computed, reactive } from 'vue';
+    import { onBeforeUnmount, onMounted, ref } from 'vue';
     import { Image2DRenderProxy } from 'pc-render';
     import Image2D from './Image2D.vue';
     import { useInjectEditor } from '../../state';
@@ -25,6 +25,9 @@
     // @ts-ignore
     window.renderProxy = renderProxy;
     useProvideProxy(renderProxy);
+    const onScroll = () => {
+        renderProxy.render();
+    };
 
     // let containerHeight = computed(() => {
     //     return (
@@ -36,10 +39,14 @@
     onMounted(() => {
         if (proxy.value && wrap.value) {
             renderProxy.attach(proxy.value);
-            wrap.value.addEventListener('scroll', () => {
-                renderProxy.render();
-            });
+            wrap.value.addEventListener('scroll', onScroll);
         }
+    });
+    onBeforeUnmount(() => {
+        wrap.value?.removeEventListener('scroll', onScroll);
+        renderProxy.destroy();
+        // @ts-ignore
+        if (window.renderProxy === renderProxy) window.renderProxy = undefined;
     });
 </script>
 

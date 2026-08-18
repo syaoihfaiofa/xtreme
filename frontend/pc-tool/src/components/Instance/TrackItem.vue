@@ -10,6 +10,12 @@
                         <span class="track-name" @click.stop="onTrackTool('select')">{{
                             data.name
                         }}</span>
+                        <span
+                            v-if="editor.bsState.reviewMode && data.reviewedCorrect"
+                            class="reviewed-badge"
+                        >
+                            已审阅
+                        </span>
                         <i
                             class="iconfont icon-tixing invisible"
                             v-show="data.invisible"
@@ -141,6 +147,18 @@
         .track-title {
             font-size: 14px;
             color: white;
+        }
+
+        .reviewed-badge {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 0 4px;
+            color: #b7eb8f;
+            background: rgb(73 170 25 / 22%);
+            border: 1px solid rgb(73 170 25 / 65%);
+            border-radius: 3px;
+            font-size: 11px;
+            line-height: 17px;
         }
 
         .ant-collapse-header {

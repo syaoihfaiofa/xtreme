@@ -89,6 +89,9 @@ export default function useTool() {
             let data = await api.getDataSetInfo(datasetId);
             bsState.datasetName = data.name;
             bsState.datasetType = data.type;
+            bsState.syncMode = !!data.syncMode;
+            bsState.inferenceMode = !!data.inferenceMode;
+            bsState.inferenceConfig = data.inferenceConfig || null;
         } catch (error) {
             throw new BSError('', 'load data-set info error', error);
         }

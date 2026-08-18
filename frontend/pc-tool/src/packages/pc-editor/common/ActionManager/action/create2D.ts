@@ -292,7 +292,7 @@ export const projectObject2D = define({
                 let viewId = view.id;
 
                 // isBoxInImage
-                if (utils.isBoxInImage(object, view)) {
+                if (isObjectVisibleInView(view, object)) {
                     if (config.projectPoint8) {
                         if (existMapBox2D[viewId][trackId]) {
                             if (updateFlag) {
@@ -337,6 +337,14 @@ export const projectObject2D = define({
                     editor.cmdManager.execute('delete-object', deleteObjects);
                 if (addObjects.length > 0) editor.cmdManager.execute('add-object', addObjects);
             });
+        }
+
+        function isObjectVisibleInView(view: Image2DRenderView, object: Box) {
+            if (!view.isFisheye()) return utils.isBoxInImage(object, view);
+
+            const lines = view.getFisheyeBoxLines(object);
+            const positions = ([] as THREE.Vector2[]).concat(...lines);
+            return positions.length > 0 && view.isFisheyeBoxVisible(positions);
         }
 
         function updateProjectRect(view: Image2DRenderView, object: Box, target: Rect) {

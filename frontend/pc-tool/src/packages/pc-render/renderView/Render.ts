@@ -24,7 +24,15 @@ export default class Render extends THREE.EventDispatcher {
 
     init() {}
 
-    destroy() {}
+    destroy(): void {
+        if (this.renderTimer) {
+            cancelAnimationFrame(this.renderTimer);
+            this.renderTimer = 0;
+        }
+        Object.values(this.actionMap).forEach((action) => action.destroy());
+        this.actionMap = {};
+        this.actions = [];
+    }
 
     /**
      * @param enabled

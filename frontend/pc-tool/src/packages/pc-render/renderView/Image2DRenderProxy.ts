@@ -61,6 +61,18 @@ export default class Image2DRenderProxy {
         }
     }
 
+    destroy(): void {
+        if (this.renderTimer) {
+            cancelAnimationFrame(this.renderTimer);
+            this.renderTimer = 0;
+        }
+        this.views = [];
+        this.renderer.dispose();
+        this.renderer.forceContextLoss();
+        this.canvas.remove();
+        this.renderer.domElement.remove();
+    }
+
     attach(container: HTMLElement) {
         container.appendChild(this.canvas);
         container.appendChild(this.renderer.domElement);

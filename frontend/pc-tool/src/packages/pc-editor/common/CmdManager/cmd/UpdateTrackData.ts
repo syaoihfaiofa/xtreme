@@ -35,8 +35,8 @@ export default class UpdateTrackData extends CmdBase<ITrackOption, ITrackOption>
         let offsetTime = Math.abs(this.updateTime - cmd.updateTime);
         let valid =
             cmd instanceof UpdateTrackData &&
-            data.trackId === data.trackId &&
-            data.frame === data.frame &&
+            this.data.trackId === cmd.data.trackId &&
+            this.data.frame === cmd.data.frame &&
             offsetTime < 2000;
 
         return valid;

@@ -11,10 +11,12 @@ export class ResourceLoader {
     manual: boolean = false;
     data: IFrame;
     dataResource: DataResource;
+    generation: number;
     promise: Promise<IDataResource> = {} as Promise<IDataResource>;
     constructor(dataResource: DataResource, data: IFrame) {
         this.data = data;
         this.dataResource = dataResource;
+        this.generation = dataResource.generation;
         this.handleProgress = this.handleProgress.bind(this);
     }
     remove() {
@@ -22,9 +24,13 @@ export class ResourceLoader {
             (e) => e.data.id !== this.data.id,
         );
 
-        setTimeout(() => {
-            this.dataResource.load();
-        });
+        if (this.dataResource.isGenerationCurrent(this.generation)) {
+            setTimeout(() => {
+                if (this.dataResource.isGenerationCurrent(this.generation)) {
+                    this.dataResource.load();
+                }
+            });
+        }
     }
     get() {
         return this.promise;
@@ -67,6 +73,11 @@ export class ResourceLoader {
                 config.ground = pointsInfo.ground;
                 config.intensityRange = pointsInfo.intensityRange;
 
+                if (!this.dataResource.isGenerationCurrent(this.generation)) {
+                    this.dataResource.releaseResource(config);
+                    resolve(config);
+                    return;
+                }
                 this.dataResource.setResource(this.data, config);
 
                 console.log(`load resource: ${this.data.id} completed`);
@@ -79,6 +90,10 @@ export class ResourceLoader {
                 });
                 resolve(config);
             } catch (e) {
+                if (!this.dataResource.isGenerationCurrent(this.generation)) {
+                    reject(e);
+                    return;
+                }
                 console.log(`load resource: ${this.data.id} err`);
                 this.data.loadState = 'error';
                 this.remove();
@@ -101,19 +116,25 @@ export class ResourceLoader {
 }
 
 export default class DataResource {
-    loadMax: number = 500;
     loadMode: LoadMode = 'near_2';
     editor: Editor;
     dataMap: Record<string, IDataResource> = {};
     loaders: ResourceLoader[] = [];
     pointsLoader: PCDLoader = new PCDLoader();
+    generation: number = 0;
     constructor(editor: Editor) {
         this.editor = editor;
     }
 
     clear() {
+        this.generation += 1;
+        Object.values(this.dataMap).forEach((resource) => this.releaseResource(resource));
         this.dataMap = {};
         this.loaders = [];
+    }
+
+    isGenerationCurrent(generation: number): boolean {
+        return generation === this.generation;
     }
 
     async loadDataConfig(data: IFrame) {
@@ -198,17 +219,132 @@ export default class DataResource {
     setLoadMode(mode: LoadMode) {
         this.loadMode = mode;
         this.editor.state.config.autoLoad = mode === 'all';
+        this.trimCache();
+    }
+
+    getAutoLoadConfig() {
+        const { frames, config } = this.editor.state;
+        const total = Math.max(1, frames.length);
+        const start = Math.max(0, Math.min(total - 1, (config.autoLoadStartFrame || 1) - 1));
+        const configuredEnd = config.autoLoadEndFrame || total;
+        const end = Math.max(start, Math.min(total - 1, configuredEnd - 1));
+        const maxFrames = Math.max(
+            1,
+            Math.min(end - start + 1, Math.round(config.autoLoadMaxFrames || 80)),
+        );
+        return { start, end, maxFrames };
+    }
+
+    applyAutoLoadConfig() {
+        const { config } = this.editor.state;
+        const { start, end, maxFrames } = this.getAutoLoadConfig();
+        config.autoLoadStartFrame = start + 1;
+        config.autoLoadEndFrame = end + 1;
+        config.autoLoadMaxFrames = maxFrames;
+        this.trimCache();
+        this.load();
+    }
+
+    getEligibleIndices(fromIndex: number, applyTrackFilter: boolean = true): number[] {
+        const { frames } = this.editor.state;
+        const { start, end } = this.getAutoLoadConfig();
+        let indices: number[] = [];
+        for (let index = start; index <= end; index++) indices.push(index);
+
+        if (applyTrackFilter && this.editor.isTrackFrameFilterActive()) {
+            const trackIndices = new Set(
+                this.editor.trackManager.getTrackFrameIndices(this.editor.currentTrack),
+            );
+            indices = indices.filter((index) => trackIndices.has(index));
+        }
+
+        if (this.loadMode === 'near_2') {
+            if (fromIndex < start || fromIndex > end) return [];
+            if (applyTrackFilter && this.editor.isTrackFrameFilterActive()) {
+                indices.sort((a, b) => Math.abs(a - fromIndex) - Math.abs(b - fromIndex));
+                return indices.slice(0, 3);
+            }
+            return indices.filter((index) => Math.abs(index - fromIndex) <= 1);
+        }
+
+        return indices;
+    }
+
+    getTargetIndices(fromIndex: number, applyTrackFilter: boolean = true): number[] {
+        const indices = this.getEligibleIndices(fromIndex, applyTrackFilter).sort((a, b) => {
+            const distance = Math.abs(a - fromIndex) - Math.abs(b - fromIndex);
+            return distance || a - b;
+        });
+        if (this.loadMode === 'all') {
+            return indices.slice(0, this.getAutoLoadConfig().maxFrames);
+        }
+        return indices;
+    }
+
+    isFrameProtected(index: number): boolean {
+        const frame = this.editor.state.frames[index];
+        if (!frame) return true;
+        return (
+            index === this.editor.state.frameIndex ||
+            frame.needSave === true ||
+            this.loaders.some((loader) => loader.data.id === frame.id)
+        );
+    }
+
+    releaseResource(resource: IDataResource) {
+        resource.pointsData = {};
+        resource.viewConfig.forEach((view) => {
+            const image = view.imgObject;
+            if (image) {
+                image.onload = null;
+                image.onerror = null;
+                image.onabort = null;
+                image.src = '';
+            }
+            (view as any).imgObject = undefined;
+        });
+    }
+
+    unloadFrame(index: number): boolean {
+        const frame = this.editor.state.frames[index];
+        if (!frame || this.isFrameProtected(index)) return false;
+        const resource = this.dataMap[frame.id];
+        if (!resource) return false;
+        this.releaseResource(resource);
+        delete this.dataMap[frame.id];
+        if (frame.loadState === 'complete') frame.loadState = '';
+        return true;
+    }
+
+    trimCache(fromIndex: number = this.editor.state.frameIndex) {
+        // Track filtering controls navigation and what to prefetch, but must not
+        // evict resources that were already auto-loaded for other frames.
+        const targetIndices = new Set(this.getTargetIndices(fromIndex, false));
+        const loadedIndices = this.editor.state.frames
+            .map((frame, index) => (this.dataMap[frame.id] ? index : -1))
+            .filter((index) => index >= 0);
+
+        loadedIndices
+            .filter((index) => !targetIndices.has(index))
+            .sort((a, b) => {
+                const distance = Math.abs(b - fromIndex) - Math.abs(a - fromIndex);
+                if (distance) return distance;
+                const aTime = this.dataMap[this.editor.state.frames[a].id]?.time || 0;
+                const bTime = this.dataMap[this.editor.state.frames[b].id]?.time || 0;
+                return aTime - bTime;
+            })
+            .forEach((index) => this.unloadFrame(index));
     }
 
     load(fromIndex?: number) {
         let { frameIndex } = this.editor.state;
         if (this.loaders.length > 0) return;
 
-        let loaderN = Object.keys(this.dataMap).filter((e) => this.dataMap[e]).length;
-        if (loaderN > this.loadMax) return;
+        fromIndex = fromIndex ?? frameIndex;
+        fromIndex = fromIndex < 0 ? 0 : fromIndex;
+        this.trimCache(fromIndex);
 
-        fromIndex = fromIndex || frameIndex;
-        let data = this.getNext(fromIndex < 0 ? 0 : fromIndex);
+        let data = this.getNext(fromIndex);
 
         if (!data) {
             console.log('load complete');
@@ -226,23 +362,11 @@ export default class DataResource {
             hasLoader[e.data.id] = true;
         });
 
-        let nextDataIndex = -1;
-        let maxWeight = -1;
-
-        for (let i = 0; i < frames.length; i++) {
-            let data = frames[i];
-            if (data.loadState !== '') continue;
-
-            let weight = 100000 - i;
-            let isNear2 = Math.abs(i - fromIndex) <= 1;
-            weight = isNear2 ? Infinity : weight;
-            if (this.loadMode === 'all' || (this.loadMode === 'near_2' && isNear2)) {
-                if (weight > maxWeight) {
-                    maxWeight = weight;
-                    nextDataIndex = i;
-                }
-            }
-        }
+        const nextDataIndex =
+            this.getTargetIndices(fromIndex).find((index) => {
+                const data = frames[index];
+                return data?.loadState === '' && !hasLoader[data.id];
+            }) ?? -1;
 
         console.log('nextDataIndex', nextDataIndex);
 

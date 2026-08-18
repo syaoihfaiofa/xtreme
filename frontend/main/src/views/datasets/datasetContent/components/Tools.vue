@@ -5,6 +5,7 @@
       :datasetType="props.datasetType"
       :id="(id as unknown as number)"
       @closeUpload="handleCloseUploadModal"
+      @localImportSuccess="handleLocalImportSuccess"
     />
     <ProgressModal
       @resetMoelResult="emits('resetMoelResult')"
@@ -296,7 +297,17 @@
   </div>
 </template>
 <script lang="ts" setup>
-  import { ref, unref, defineProps, computed, watch, defineEmits, reactive } from 'vue';
+  import {
+    ref,
+    unref,
+    defineProps,
+    computed,
+    watch,
+    defineEmits,
+    reactive,
+    onMounted,
+    onBeforeUnmount,
+  } from 'vue';
   // import emitter from 'tiny-emitter/instance';
   // import { LoadingOutlined } from '@ant-design/icons-vue';
   import UnLock from './UnLock.vue';
@@ -347,8 +358,6 @@
   import DownloadIcon from '/@/assets/svg/dataset/download.svg';
   import { Authority } from '/@/components/Authority';
   import { useGo } from '/@/hooks/web/usePage';
-  import { onMounted } from 'vue';
-
   const go = useGo();
   const makeFrameDisable = ref<boolean>(false);
   const annotateAndModelRun = ref<boolean>(false);
@@ -505,19 +514,25 @@
     resultType: undefined,
     modelId: undefined,
     dataFormat: undefined,
+    autoCreateScene: false,
   });
-  const handleCloseUploadModal = (data, { source, resultType, modelId, dataFormat }) => {
+  const handleCloseUploadModal = (data, { source, resultType, modelId, dataFormat, autoCreateScene }) => {
     if (source == UploadSourceEnum.LOCAL) {
       fileList.value = data;
-      openProgressModal(true, { fileList: fileList.value, source: source });
+      openProgressModal(true, { fileList: fileList.value, source: source, autoCreateScene });
     } else if (source == UploadSourceEnum.URL) {
       uploadUrl.value = data;
-      openProgressModal(true, { uploadUrl: uploadUrl.value, source: source });
+      openProgressModal(true, { uploadUrl: uploadUrl.value, source: source, autoCreateScene });
     }
     progressModalPa.resultType = resultType;
     progressModalPa.modelId = modelId;
     progressModalPa.dataFormat = dataFormat;
+    progressModalPa.autoCreateScene = autoCreateScene;
     closeUploadModal();
+  };
+  const handleLocalImportSuccess = () => {
+    closeUploadModal();
+    reloadList();
   };
   // Reset fileList after ProgressModal closed
   const handleProgressVisible = (visible: boolean) => {
@@ -572,6 +587,11 @@
 
   const exportProgress = ref<any>(0);
   let exportTimer;
+  let isUnmounted = false;
+  onBeforeUnmount(() => {
+    isUnmounted = true;
+    clearTimeout(exportTimer);
+  });
   const exportFunc = async (list) => {
     // Current file
     const exportFileList =
@@ -610,7 +630,9 @@
         }
       };
       function QueryExport() {
-        exportTimer = setTimeout(getStatus, 5000);
+        if (!isUnmounted) {
+          exportTimer = setTimeout(getStatus, 5000);
+        }
       }
       QueryExport();
     } else {

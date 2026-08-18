@@ -21,11 +21,16 @@ import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.core.collection.ListUtil;
 import cn.hutool.core.date.DatePattern;
 import cn.hutool.core.date.TemporalAccessorUtil;
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.thread.ThreadUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.core.util.ZipUtil;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.alibaba.ttl.TtlRunnable;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
@@ -36,8 +41,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.IOException;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -114,6 +123,18 @@ public class DataInfoUseCase {
 
     @Autowired
     private ModelRunRecordUseCase modelRunRecordUseCase;
+
+    @Autowired
+    private SceneLocationImportService sceneLocationImportService;
+
+    @Autowired
+    private SceneLocationDAO sceneLocationDAO;
+
+    @Autowired
+    private UploadDataUseCase uploadDataUseCase;
+
+    @Value("${file.tempPath:/tmp/xtreme1/}")
+    private String tempPath;
 
     @Value("${export.data.version}")
     private String version;
@@ -212,6 +233,217 @@ public class DataInfoUseCase {
         dataInfoLambdaUpdateWrapper.set(DataInfo::getUpdatedBy, userId);
         dataInfoDAO.update(dataInfoLambdaUpdateWrapper);
         return scene.getId();
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public SceneLocationUploadResultBO uploadSceneLocation(Long sceneId, MultipartFile file) {
+        if (ObjectUtil.isNull(sceneId) || ObjectUtil.isNull(file) || file.isEmpty()) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        DataInfo scene = dataInfoDAO.getById(sceneId);
+        if (ObjectUtil.isNull(scene) || Boolean.TRUE.equals(scene.getIsDeleted())) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
+        if (!ItemTypeEnum.SCENE.equals(scene.getType())) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        try {
+            String content = IoUtil.read(file.getInputStream(), StandardCharsets.UTF_8);
+            return sceneLocationImportService.replaceSceneLocation(sceneId, Arrays.asList(content.split("\\r?\\n")));
+        } catch (IOException e) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+    }
+
+    public Map<Long, SceneLocationBO> findPoseByDataIds(Collection<Long> dataIds) {
+        if (CollUtil.isEmpty(dataIds)) {
+            return Map.of();
+        }
+        List<SceneLocation> list = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
+                .in(SceneLocation::getDataId, dataIds));
+        return list.stream().collect(Collectors.toMap(SceneLocation::getDataId, e -> SceneLocationBO.builder()
+                .dataId(e.getDataId())
+                .posX(e.getPosX())
+                .posY(e.getPosY())
+                .posZ(e.getPosZ())
+                .yaw(e.getYaw())
+                .build()));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public SceneResultImportResultBO importSceneResult(Long sceneId, MultipartFile file, Long userId) {
+        if (ObjectUtil.isNull(sceneId) || ObjectUtil.isNull(file) || file.isEmpty()) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        DataInfo scene = dataInfoDAO.getById(sceneId);
+        if (ObjectUtil.isNull(scene) || Boolean.TRUE.equals(scene.getIsDeleted())) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
+        if (!ItemTypeEnum.SCENE.equals(scene.getType())) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sceneId)
+                .eq(DataInfo::getIsDeleted, false));
+        Map<String, Long> nameToId = frames.stream()
+                .collect(Collectors.toMap(DataInfo::getName, DataInfo::getId, (a, b) -> a));
+        File workDir = FileUtil.file(String.format("%s/import_%s", tempPath, IdUtil.fastSimpleUUID()));
+        FileUtil.mkdir(workDir);
+        File unzipDir = FileUtil.file(workDir, "unzip");
+        try {
+            File zipFile = FileUtil.file(workDir, "import.zip");
+            FileUtil.writeFromStream(file.getInputStream(), zipFile);
+            ZipUtil.unzip(zipFile, unzipDir);
+            List<File> resultFiles = FileUtil.loopFiles(unzipDir, -1, null).stream()
+                    .filter(fc -> fc.getName().toUpperCase().endsWith(".JSON")
+                            && fc.getParentFile().getName().equalsIgnoreCase("result"))
+                    .collect(Collectors.toList());
+            StringBuilder errorBuilder = new StringBuilder();
+            List<Long> matchedDataIds = new ArrayList<>();
+            List<DataAnnotationObjectBO> dataAnnotationObjectBOList = new ArrayList<>();
+            for (File resultFile : resultFiles) {
+                String dataName = FileUtil.getPrefix(resultFile);
+                Long dataId = nameToId.get(dataName);
+                if (ObjectUtil.isNull(dataId)) {
+                    continue;
+                }
+                matchedDataIds.add(dataId);
+                DataAnnotationObjectBO template = DataAnnotationObjectBO.builder()
+                        .datasetId(scene.getDatasetId())
+                        .dataId(dataId)
+                        .createdBy(userId)
+                        .createdAt(OffsetDateTime.now())
+                        .sourceId(GROUND_TRUTH)
+                        .build();
+                File searchRoot = resultFile.getParentFile().getParentFile();
+                uploadDataUseCase.handleDataResult(searchRoot, dataName, template, dataAnnotationObjectBOList, errorBuilder);
+            }
+            if (!matchedDataIds.isEmpty()) {
+                dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId, matchedDataIds));
+            }
+            if (!dataAnnotationObjectBOList.isEmpty()) {
+                dataAnnotationObjectDAO.getBaseMapper().insertBatch(
+                        DefaultConverter.convert(dataAnnotationObjectBOList, DataAnnotationObject.class));
+            }
+            return SceneResultImportResultBO.builder()
+                    .totalFiles(resultFiles.size())
+                    .matchedCount(matchedDataIds.size())
+                    .unmatchedCount(resultFiles.size() - matchedDataIds.size())
+                    .objectCount(dataAnnotationObjectBOList.size())
+                    .errorMessage(errorBuilder.toString())
+                    .build();
+        } catch (IOException e) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        } finally {
+            FileUtil.del(workDir);
+        }
+    }
+
+    public String buildStaticGlobalMapHtml(Long sceneId) {
+        DataInfo scene = dataInfoDAO.getById(sceneId);
+        if (ObjectUtil.isNull(scene) || Boolean.TRUE.equals(scene.getIsDeleted())
+                || !ItemTypeEnum.SCENE.equals(scene.getType())) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sceneId)
+                .eq(DataInfo::getIsDeleted, false));
+        if (CollUtil.isEmpty(frames)) {
+            return renderStaticGlobalMap(scene.getName(), new JSONArray(), new JSONArray());
+        }
+        List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        Map<Long, String> frameNameById = frames.stream()
+                .collect(Collectors.toMap(DataInfo::getId, DataInfo::getName));
+        List<SceneLocation> locations = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
+                .in(SceneLocation::getDataId, frameIds));
+        Map<Long, SceneLocation> poseByDataId = locations.stream()
+                .collect(Collectors.toMap(SceneLocation::getDataId, l -> l, (a, b) -> a));
+        JSONArray posesJson = new JSONArray();
+        locations.forEach(location -> {
+            JSONObject pose = new JSONObject();
+            pose.set("frame", frameNameById.get(location.getDataId()));
+            pose.set("x", valueOrZero(location.getPosX()));
+            pose.set("y", valueOrZero(location.getPosY()));
+            pose.set("yaw", valueOrZero(location.getYaw()));
+            posesJson.add(pose);
+        });
+        List<DataAnnotationObject> objects = dataAnnotationObjectDAO.list(
+                Wrappers.lambdaQuery(DataAnnotationObject.class).in(DataAnnotationObject::getDataId, frameIds));
+        JSONArray boxesJson = new JSONArray();
+        Map<String, List<JSONObject>> boxesByTrack = new HashMap<>();
+        for (DataAnnotationObject object : objects) {
+            JSONObject attrs = object.getClassAttributes();
+            if (ObjectUtil.isNull(attrs) || !"STATIC".equals(attrs.getStr("motionMode"))) {
+                continue;
+            }
+            SceneLocation location = poseByDataId.get(object.getDataId());
+            if (ObjectUtil.isNull(location)) {
+                continue;
+            }
+            JSONObject contour = attrs.getJSONObject("contour");
+            JSONObject center = ObjectUtil.isNull(contour) ? null : contour.getJSONObject("center3D");
+            JSONObject size = ObjectUtil.isNull(contour) ? null : contour.getJSONObject("size3D");
+            if (ObjectUtil.isNull(center) || ObjectUtil.isNull(size)) {
+                continue;
+            }
+            JSONObject rotation = contour.getJSONObject("rotation3D");
+            double poseX = valueOrZero(location.getPosX());
+            double poseY = valueOrZero(location.getPosY());
+            double poseYaw = valueOrZero(location.getYaw());
+            double localX = jsonDouble(center, "x");
+            double localY = jsonDouble(center, "y");
+            double worldX = poseX + localX * Math.cos(poseYaw) - localY * Math.sin(poseYaw);
+            double worldY = poseY + localX * Math.sin(poseYaw) + localY * Math.cos(poseYaw);
+            double worldYaw = (ObjectUtil.isNull(rotation) ? 0.0 : jsonDouble(rotation, "z")) + poseYaw;
+            String trackId = StrUtil.blankToDefault(attrs.getStr("trackId"),
+                    attrs.getStr("id", String.valueOf(object.getId())));
+            String className = StrUtil.blankToDefault(attrs.getStr("className"),
+                    attrs.getStr("modelClass", String.valueOf(object.getClassId())));
+            JSONObject box = new JSONObject();
+            box.set("frame", frameNameById.get(object.getDataId()));
+            box.set("trackId", trackId);
+            box.set("trackName", attrs.getStr("trackName"));
+            box.set("classId", object.getClassId());
+            box.set("className", className);
+            box.set("groupId", attrs.getStr("groupId"));
+            box.set("x", worldX);
+            box.set("y", worldY);
+            box.set("yaw", worldYaw);
+            box.set("length", Math.abs(jsonDouble(size, "x")));
+            box.set("width", Math.abs(jsonDouble(size, "y")));
+            boxesJson.add(box);
+            boxesByTrack.computeIfAbsent(trackId, key -> new ArrayList<>()).add(box);
+        }
+        boxesByTrack.forEach((trackId, boxes) -> {
+            double cx = boxes.stream().mapToDouble(b -> b.getDouble("x")).average().orElse(0.0);
+            double cy = boxes.stream().mapToDouble(b -> b.getDouble("y")).average().orElse(0.0);
+            double drift = boxes.stream()
+                    .mapToDouble(b -> Math.hypot(b.getDouble("x") - cx, b.getDouble("y") - cy))
+                    .max().orElse(0.0);
+            boxes.forEach(b -> b.set("drift", drift));
+        });
+        return renderStaticGlobalMap(scene.getName(), posesJson, boxesJson);
+    }
+
+    private String renderStaticGlobalMap(String sceneName, JSONArray poses, JSONArray boxes) {
+        String posesJson = JSONUtil.toJsonStr(poses).replace("</", "<\\/");
+        String boxesJson = JSONUtil.toJsonStr(boxes).replace("</", "<\\/");
+        return "<!doctype html><html><head><meta charset=\"utf-8\"><title>Static Global Map</title><style>body{margin:0;font-family:Arial,sans-serif;background:#f3f5f8;color:#172033}.app{display:grid;grid-template-columns:360px 1fr;height:100vh}aside{background:#fff;border-right:1px solid #dfe5ef;padding:18px;overflow:auto}.viewport{margin:14px;background:#0f172a;border-radius:14px;overflow:hidden;height:calc(100vh - 28px)}svg{width:100%;height:100%;cursor:grab}.muted{color:#64748b;font-size:13px}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px}.card strong{display:block;font-size:20px}input,select,button{width:100%;margin:4px 0;border:1px solid #cbd5e1;border-radius:8px;padding:8px;background:#fff}.info{margin:12px 0;padding:10px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;font-size:13px;white-space:pre-wrap}.legend-item{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:center;font-size:13px;padding:4px 0}.swatch{width:14px;height:14px;border-radius:4px}.box{cursor:pointer}.box:hover{stroke-width:4}.label{pointer-events:none;paint-order:stroke;stroke:#0f172a;stroke-width:3px}.dimmed{opacity:.08}.trajectory{fill:none;stroke:#e2e8f0;stroke-width:2.4;stroke-dasharray:7 7}table{width:100%;border-collapse:collapse;font-size:12px}td,th{border-bottom:1px solid #e2e8f0;padding:6px 4px;text-align:left}.bad{color:#dc2626;font-weight:700}.warn{color:#d97706;font-weight:700}</style></head><body><div class=\"app\"><aside><h2>" + htmlEscape(sceneName) + " Static Global Map</h2><div class=\"muted\">\u6eda\u8f6e\u7f29\u653e\uff0c\u62d6\u62fd\u5e73\u79fb\u3002\u70b9\u51fb box \u67e5\u770b\u8be6\u60c5\u3002\u989c\u8272\u6309\u7c7b\u522b\u663e\u793a\u3002</div><div class=\"stats\"><div class=\"card\"><span>Frames</span><strong id=\"frameCount\">0</strong></div><div class=\"card\"><span>Static Boxes</span><strong id=\"boxCount\">0</strong></div></div><input id=\"search\" placeholder=\"\u641c\u7d22\u7c7b\u522b / trackId / frame\"><select id=\"trackSelect\"><option value=\"\">\u9009\u62e9\u6f02\u79fb track</option></select><button id=\"reset\">\u91cd\u7f6e\u89c6\u56fe</button><button id=\"clear\">\u6e05\u9664\u641c\u7d22</button><div id=\"info\" class=\"info\">\u672a\u9009\u62e9\u76ee\u6807</div><h3>Class Legend</h3><div id=\"legend\"></div><h3>Drift Summary</h3><table><thead><tr><th>class</th><th>trackId</th><th>frames</th><th>drift</th></tr></thead><tbody id=\"summary\"></tbody></table></aside><main><div class=\"viewport\"><svg id=\"map\"><g id=\"layer\"></g></svg></div></main></div><script>const poses=" + posesJson + ";const boxes=" + boxesJson + ";const svg=document.getElementById('map'),layer=document.getElementById('layer'),info=document.getElementById('info');let vb=[0,0,100,100],init=[...vb],drag=false,start=null;const esc=s=>String(s??'');const color=s=>{let h=0;for(const c of esc(s))h=(h*31+c.charCodeAt(0))%360;return `hsl(${h},75%,55%)`};function corners(b){const hx=b.length/2,hy=b.width/2,c=Math.cos(b.yaw),s=Math.sin(b.yaw);return [[-hx,-hy],[hx,-hy],[hx,hy],[-hx,hy]].map(p=>[b.x+p[0]*c-p[1]*s,b.y+p[0]*s+p[1]*c])}function bounds(){let xs=poses.map(p=>p.x),ys=poses.map(p=>p.y);boxes.forEach(b=>corners(b).forEach(p=>{xs.push(p[0]);ys.push(p[1])}));let pad=10;return [Math.min(...xs)-pad,Math.min(...ys)-pad,Math.max(...xs)+pad,Math.max(...ys)+pad]}function sx(x,minX,scale){return (x-minX)*scale}function sy(y,maxY,scale){return (maxY-y)*scale}function render(){document.getElementById('frameCount').textContent=poses.length;document.getElementById('boxCount').textContent=boxes.length;const [minX,minY,maxX,maxY]=bounds();const scale=8;const w=Math.max((maxX-minX)*scale,640),h=Math.max((maxY-minY)*scale,480);vb=[0,0,w,h];init=[...vb];svg.setAttribute('viewBox',vb.join(' '));let html='';html+=`<polyline class=\"trajectory\" points=\"${poses.map(p=>`${sx(p.x,minX,scale)},${sy(p.y,maxY,scale)}`).join(' ')}\"/>`;boxes.forEach((b,i)=>{const cls=b.className||b.classId||'Unknown',col=color(cls),pts=corners(b).map(p=>`${sx(p[0],minX,scale)},${sy(p[1],maxY,scale)}`).join(' '),tx=sx(b.x,minX,scale),ty=sy(b.y,maxY,scale);html+=`<polygon class=\"box\" data-i=\"${i}\" data-text=\"${esc(cls)} ${esc(b.trackId)} ${esc(b.frame)}\" points=\"${pts}\" fill=\"${col}\" fill-opacity=\".16\" stroke=\"${col}\" stroke-width=\"1.5\"></polygon><text class=\"label\" data-text=\"${esc(cls)} ${esc(b.trackId)} ${esc(b.frame)}\" x=\"${tx}\" y=\"${ty}\" font-size=\"10\" fill=\"${col}\">${esc(cls)} | ${esc(b.trackName||b.trackId)}</text>`});layer.innerHTML=html;document.querySelectorAll('.box').forEach(el=>el.onclick=()=>show(boxes[el.dataset.i]));renderLegend();renderSummary();}function show(b){info.textContent=Object.entries(b).map(([k,v])=>`${k}: ${typeof v==='number'?v.toFixed(3):esc(v)}`).join('\\n')}function renderLegend(){const m={};boxes.forEach(b=>{const k=b.className||b.classId||'Unknown';m[k]=(m[k]||0)+1});document.getElementById('legend').innerHTML=Object.entries(m).sort().map(([k,v])=>`<div class=\"legend-item\"><span class=\"swatch\" style=\"background:${color(k)}\"></span><span>${esc(k)}</span><strong>${v}</strong></div>`).join('')}function renderSummary(){const m={};boxes.forEach(b=>{(m[b.trackId]||(m[b.trackId]=[])).push(b)});const rows=Object.entries(m).map(([t,arr])=>[t,arr.length,Math.max(...arr.map(b=>b.drift||0)),arr[0].className||arr[0].classId||'-']).sort((a,b)=>b[2]-a[2]);trackSelect.innerHTML+=rows.map(r=>`<option value=\"${r[0]}\">${r[0]} | ${r[2].toFixed(2)}m</option>`).join('');document.getElementById('summary').innerHTML=rows.map(r=>`<tr><td>${r[3]}</td><td>${r[0]}</td><td>${r[1]}</td><td class=\"${r[2]>=1?'bad':r[2]>=.3?'warn':''}\">${r[2].toFixed(3)} m</td></tr>`).join('')}function setV(){svg.setAttribute('viewBox',vb.join(' '))}function pt(e){const r=svg.getBoundingClientRect();return [vb[0]+(e.clientX-r.left)/r.width*vb[2],vb[1]+(e.clientY-r.top)/r.height*vb[3]]}svg.onwheel=e=>{e.preventDefault();const p=pt(e),f=e.deltaY<0?.85:1.18;vb[0]=p[0]-(p[0]-vb[0])*f;vb[1]=p[1]-(p[1]-vb[1])*f;vb[2]*=f;vb[3]*=f;setV()};svg.onmousedown=e=>{drag=true;start=pt(e)};window.onmouseup=()=>drag=false;window.onmousemove=e=>{if(!drag)return;const p=pt(e);vb[0]-=p[0]-start[0];vb[1]-=p[1]-start[1];setV()};search.oninput=()=>{const q=search.value.toLowerCase();document.querySelectorAll('.box,.label').forEach(el=>el.classList.toggle('dimmed',q&&!el.dataset.text.toLowerCase().includes(q)))};trackSelect.onchange=()=>{const b=boxes.find(x=>x.trackId===trackSelect.value);if(b)show(b)};reset.onclick=()=>{vb=[...init];setV()};clear.onclick=()=>{search.value='';document.querySelectorAll('.dimmed').forEach(e=>e.classList.remove('dimmed'))};render();</script></body></html>";
+    }
+
+    private static double valueOrZero(Double value) {
+        return value == null ? 0.0 : value;
+    }
+
+    private static double jsonDouble(JSONObject obj, String key) {
+        Object value = obj.get(key);
+        return value instanceof Number ? ((Number) value).doubleValue() : 0.0;
+    }
+
+    private static String htmlEscape(String value) {
+        return value == null ? "" : value.replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 
     private String nextSceneName(Long datasetId) {

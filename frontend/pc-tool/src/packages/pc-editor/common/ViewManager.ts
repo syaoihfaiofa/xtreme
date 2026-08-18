@@ -23,6 +23,16 @@ const trackMaterial = new THREE.MeshBasicMaterial({
 export default class ViewManager {
     initResize: boolean = false;
     editor: Editor;
+    private statsFrameId: number = 0;
+    private statsDom?: HTMLElement;
+    private readonly windowResizeHandler = () => {
+        this.editor.pc.renderViews.forEach((view) => {
+            if (view instanceof SideRenderView) {
+                view.fitObject();
+            }
+            view.render();
+        });
+    };
 
     constructor(editor: Editor) {
         this.editor = editor;
@@ -39,26 +49,32 @@ export default class ViewManager {
         stats.dom.style.left = '10px';
         stats.dom.style.top = 'auto';
         document.body.appendChild(stats.dom);
+        this.statsDom = stats.dom;
 
         let frame = () => {
             stats.update();
-            requestAnimationFrame(frame);
+            this.statsFrameId = requestAnimationFrame(frame);
         };
         frame();
     }
 
     handleWindowResize() {
         if (this.initResize) return;
-        window.addEventListener('resize', () => {
-            this.editor.pc.renderViews.forEach((view) => {
-                if (view instanceof SideRenderView) {
-                    view.fitObject();
-                }
-                view.render();
-            });
-            // this.editor.pc.render();
-        });
+        window.addEventListener('resize', this.windowResizeHandler);
         this.initResize = true;
+    }
+
+    destroy(): void {
+        if (this.initResize) {
+            window.removeEventListener('resize', this.windowResizeHandler);
+            this.initResize = false;
+        }
+        if (this.statsFrameId) {
+            cancelAnimationFrame(this.statsFrameId);
+            this.statsFrameId = 0;
+        }
+        this.statsDom?.remove();
+        this.statsDom = undefined;
     }
 
     updateViewAction(view: RenderView) {

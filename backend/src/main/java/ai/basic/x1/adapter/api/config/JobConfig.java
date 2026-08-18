@@ -17,6 +17,7 @@ import org.springframework.data.redis.stream.StreamMessageListenerContainer;
 
 import java.time.Duration;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -63,6 +64,32 @@ public class JobConfig {
                 new LinkedBlockingDeque<>(), r -> {
             Thread thread = new Thread(r);
             thread.setName("similarity-executor" + index.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        });
+        return executor;
+    }
+
+    @Bean(name = "datasetInitializationExecutor")
+    public ExecutorService datasetInitializationExecutor() {
+        AtomicInteger index = new AtomicInteger(1);
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+                new LinkedBlockingDeque<>(), r -> {
+            Thread thread = new Thread(r);
+            thread.setName("dataset-initialization-executor" + index.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        });
+        return executor;
+    }
+
+    @Bean(name = "modelTaskExecutor")
+    public ExecutorService modelTaskExecutor() {
+        AtomicInteger index = new AtomicInteger(1);
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(PROCESSORS, PROCESSORS, 0, TimeUnit.SECONDS,
+                new LinkedBlockingDeque<>(), r -> {
+            Thread thread = new Thread(r);
+            thread.setName("model-task-executor" + index.getAndIncrement());
             thread.setDaemon(true);
             return thread;
         });

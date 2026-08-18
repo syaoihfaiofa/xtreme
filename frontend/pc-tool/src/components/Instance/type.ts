@@ -13,6 +13,7 @@ export interface IItem {
     attrLabel?: string;
     hasAnnotation?: boolean;
     invisible?: boolean;
+    reviewedCorrect?: boolean;
     active: string[];
 }
 

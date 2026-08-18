@@ -1,4 +1,4 @@
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useInjectEditor } from '../../state';
 import { Event, IFrame, StatusType } from 'pc-editor';
 import * as _ from 'lodash';
@@ -29,7 +29,6 @@ export default function useHeader() {
     onMounted(() => {
         editor.addEventListener(Event.RESOURCE_LOAD_COMPLETE, updateName);
     });
-
     let currentFrame = computed(() => {
         let { frameIndex, frames } = editor.state;
         return frames[frameIndex];
@@ -37,8 +36,16 @@ export default function useHeader() {
 
     let onIndexChange = _.debounce(() => {
         console.log('change', dataIndex.value);
-        if (dataIndex.value && dataIndex.value - 1 >= 0) editor.loadFrame(dataIndex.value - 1);
+        if (dataIndex.value && dataIndex.value - 1 >= 0) {
+            editor.loadFrameForNavigation(dataIndex.value - 1).then((loaded) => {
+                if (!loaded) dataIndex.value = state.frameIndex + 1;
+            });
+        }
     }, 200);
+    onBeforeUnmount(() => {
+        editor.removeEventListener(Event.RESOURCE_LOAD_COMPLETE, updateName);
+        onIndexChange.cancel();
+    });
 
     function onIndexBlur() {
         if (!dataIndex.value) dataIndex.value = state.frameIndex + 1;
@@ -66,11 +73,23 @@ export default function useHeader() {
         editor.saveObject();
     }
 
+    function onToggleReviewMode() {
+        editor.setReviewMode(!bsState.reviewMode);
+        editor.showMsg('success', bsState.reviewMode ? '已开启审阅模式' : '已关闭审阅模式');
+    }
+
+    function onMarkTrackCorrect() {
+        editor.markSelectedTrackReviewedCorrect();
+    }
+
     function onPre() {
-        editor.loadFrame(state.frameIndex - 1);
+        editor.navigateFrame(-1);
     }
     function onNext() {
-        editor.loadFrame(state.frameIndex + 1);
+        editor.navigateFrame(1);
+    }
+    function canNavigateFrame(direction: 1 | -1) {
+        return editor.canNavigateFrame(direction);
     }
 
     async function onClose() {
@@ -110,7 +129,7 @@ export default function useHeader() {
     }
 
     async function unlockData() {
-        if (editor.state.modeConfig.name !== 'view') {
+        if (editor.bsState.recordId) {
             await api.unlockRecord(editor.bsState.recordId);
         }
         closeTab();
@@ -158,8 +177,8 @@ export default function useHeader() {
 
     async function onToggleSkip() {
         let { frameIndex, frames } = editor.state;
-        // frame.skipped = !frame.skipped;
-        await editor.saveObject([frames[frameIndex]]);
+        const saved = await editor.saveObject([frames[frameIndex]]);
+        if (!saved) return;
         if (frameIndex < frames.length - 1) {
             await editor.loadFrame(frameIndex + 1);
         } else {
@@ -167,6 +186,14 @@ export default function useHeader() {
         }
     }
     async function onSubmit() {
+        if (editor.dataManager.isInferenceRunning()) {
+            editor.showMsg(
+                'warning',
+                'Dataset inference is running. Submit after the scene labels are refreshed.',
+                8,
+            );
+            return;
+        }
         let { frameIndex, frames, isSeriesFrame } = editor.state;
         const seriesFrameId = editor.bsState.seriesFrameId;
         let frame = frames[frameIndex];
@@ -316,10 +343,13 @@ export default function useHeader() {
         onSave,
         onPre,
         onNext,
+        canNavigateFrame,
         onClose,
         onToggleValid,
         onToggleSkip,
         onSubmit,
         onModify,
+        onToggleReviewMode,
+        onMarkTrackCorrect,
     };
 }

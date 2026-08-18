@@ -38,6 +38,7 @@ const Event = {
     CHECK_UPDATE_INFO: 'check_update_info',
 
     CURRENT_TRACK_CHANGE: 'current_track_change',
+    DISCUSSION_OPEN: 'discussion_open',
 
     RESULT_EXPAND_TOGGLE: 'result_expand_toggle',
     RESIZE: 'resize',

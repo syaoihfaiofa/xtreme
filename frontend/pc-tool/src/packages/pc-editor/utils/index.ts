@@ -8,3 +8,5 @@ export * from './result';
 export * from './point';
 export * from './create';
 export * from './track';
+export * from './iou';
+export * from './motion';

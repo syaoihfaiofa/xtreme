@@ -196,12 +196,33 @@ export const allItems: IItemConfig[] = [
         },
         isDisplay: function (editor: Editor) {
             let state = editor.state;
-            return state.modeConfig.ui[UIType.rumModel] && !state.config.showSingleImgView;
+            return (
+                state.modeConfig.ui[UIType.rumModel] &&
+                !state.config.showSingleImgView
+            );
         },
         isActive: function (editor: Editor) {
             let state = editor.state;
             let dataInfo = state.frames[state.frameIndex];
             return dataInfo && !!dataInfo.model && dataInfo.model.state === 'loading';
+        },
+    },
+    {
+        action: 'deleteProjections',
+        title: ($$) => $$('title_delete_projections'),
+        getIcon: function () {
+            return 'iconfont icon-shanchuicon';
+        },
+        isDisplay: function (editor: Editor) {
+            const state = editor.state;
+            return (
+                state.modeConfig.ui[UIType.rumModel] &&
+                !state.config.showSingleImgView &&
+                state.imgViews.length > 0
+            );
+        },
+        isActive: function () {
+            return false;
         },
     },
 ];

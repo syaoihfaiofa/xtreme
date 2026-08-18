@@ -32,6 +32,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     selectColor: THREE.Color = new THREE.Color(1, 0, 0);
     highlightColor: THREE.Color = new THREE.Color(1, 0, 0);
     private renderTimer: number = 0;
+    private tweenAnimationId: number = 0;
 
     constructor() {
         super();
@@ -83,12 +84,12 @@ export default class PointCloud extends THREE.EventDispatcher {
     }
 
     initTween() {
-        requestAnimationFrame(animate);
-
-        function animate(time: number) {
-            requestAnimationFrame(animate);
+        if (this.tweenAnimationId) return;
+        const animate = (time: number) => {
             TWEEN.update(time);
-        }
+            this.tweenAnimationId = requestAnimationFrame(animate);
+        };
+        this.tweenAnimationId = requestAnimationFrame(animate);
     }
 
     // general *************************************
@@ -240,7 +241,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     }
 
     addRenderView(view: RenderView) {
-        if (this.renderViews.indexOf(view) > 0) return;
+        if (this.renderViews.indexOf(view) >= 0) return;
         view.init();
         this.renderViews.push(view);
     }
@@ -316,5 +317,37 @@ export default class PointCloud extends THREE.EventDispatcher {
     render() {
         if (this.renderTimer) return;
         this.renderTimer = requestAnimationFrame(this._render.bind(this));
+    }
+
+    destroy(): void {
+        if (this.tweenAnimationId) {
+            cancelAnimationFrame(this.tweenAnimationId);
+            this.tweenAnimationId = 0;
+        }
+        if (this.renderTimer) {
+            cancelAnimationFrame(this.renderTimer);
+            this.renderTimer = 0;
+        }
+        [...this.renderViews].forEach((view) => this.removeRenderView(view));
+        const geometries = new Set<THREE.BufferGeometry>();
+        const materials = new Set<THREE.Material>();
+        this.scene.traverse((object) => {
+            const renderObject = object as THREE.Mesh;
+            if (renderObject.geometry instanceof THREE.BufferGeometry) {
+                geometries.add(renderObject.geometry);
+            }
+            const objectMaterial = renderObject.material;
+            if (Array.isArray(objectMaterial)) {
+                objectMaterial.forEach((material) => materials.add(material));
+            } else if (objectMaterial instanceof THREE.Material) {
+                materials.add(objectMaterial);
+            }
+        });
+        geometries.forEach((geometry) => geometry.dispose());
+        materials.forEach((material) => material.dispose());
+        this.scene.clear();
+        this.annotate2D = [];
+        this.selection = [];
+        this.selectionMap = {};
     }
 }

@@ -7,7 +7,7 @@ message.config({
 });
 
 export default function injectMessage(editor: Editor) {
-    editor.showMsg = (type: MsgType, msg: string) => {
-        message[type](msg);
+    editor.showMsg = (type: MsgType, msg: string, duration?: number) => {
+        message[type](msg, duration);
     };
 }

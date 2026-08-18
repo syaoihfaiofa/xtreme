@@ -56,7 +56,9 @@ export default function useSideView(dom: Ref<HTMLDivElement | null>, props: Side
     });
 
     onBeforeUnmount(() => {
+        clearAction();
         view.removeEventListener(Event.RENDER_AFTER, onRender);
+        pc.removeRenderView(view);
     });
     // ************************************
 
@@ -106,9 +108,11 @@ export default function useSideView(dom: Ref<HTMLDivElement | null>, props: Side
     }
 
     function clearAction() {
-        if (actionTimer < 0) return;
-        clearInterval(actionTimer);
-        actionTimer = -1;
+        document.removeEventListener('mouseup', onDocMouseUp);
+        if (actionTimer >= 0) {
+            clearInterval(actionTimer);
+            actionTimer = -1;
+        }
     }
 
     return {
