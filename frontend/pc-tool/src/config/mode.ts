@@ -24,9 +24,17 @@ const view: IModeConfig<IBsUIType, IBsActionName> = {
     actions: toMap<IBsActionName>([...viewActions]),
 };
 
+const discussion: IModeConfig<IBsUIType, IBsActionName> = {
+    name: 'discussion',
+    op: OPType.VIEW,
+    ui: toMap([BsUIType.setting, BsUIType.info]),
+    actions: toMap<IBsActionName>([...viewActions]),
+};
+
 let modes = {
     execute,
     view,
+    discussion,
 };
 
 export type IModeType = keyof typeof modes;

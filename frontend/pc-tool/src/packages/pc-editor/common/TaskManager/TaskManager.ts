@@ -10,4 +10,8 @@ export default class TaskManager {
         this.editor = editor;
         this.createTask = new CreateTask(editor);
     }
+
+    destroy(): void {
+        this.createTask.destroy();
+    }
 }

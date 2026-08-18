@@ -19,6 +19,19 @@ export enum AttrType {
     DROPDOWN = 'DROPDOWN',
     TEXT = 'TEXT',
 }
+
+// Cross-frame sync behavior for a tracked (trackId) object, used when the dataset has
+// "Sync Mode" enabled (see bsState.syncMode). See docs/... sync-mode notes.
+export enum MotionMode {
+    // size + position + rotation identical/locked across all frames of the Scene
+    // (auto propagated to every frame within range of the object).
+    STATIC = 'STATIC',
+    // size locked across frames that already have a box for this track; position/rotation
+    // stay independent per frame (annotator still places/tracks it frame by frame).
+    DYNAMIC_FIXED_SIZE = 'DYNAMIC_FIXED_SIZE',
+    // geometry stays fully independent per frame; only motionMode metadata is propagated.
+    DYNAMIC_VARIABLE_SIZE = 'DYNAMIC_VARIABLE_SIZE',
+}
 export interface ITrackCount {
     object3D: number;
     // 每个2d视图中相应的统计值，有多个2d视图
@@ -77,6 +90,8 @@ export enum SourceType {
     TASK = 'TASK',
     DATA_FLOW = 'DATA_FLOW',
     MODEL = 'MODEL',
+    IMPORTED = 'IMPORTED',
+    INFERENCE = 'INFERENCE',
 }
 
 export interface IResultSource {
@@ -96,6 +111,23 @@ export interface IObjectV2 {
 
     trackId?: string;
     trackName?: string;
+    groupId?: string;
+    motionMode?: MotionMode;
+    syncDistance?: number;
+    syncMaxDisappearGap?: number;
+    syncLocationGapMs?: number;
+    dynamicRangeSyncEnabled?: boolean;
+    dynamicSyncPreviousFrames?: number;
+    dynamicSyncNextFrames?: number;
+    syncPoseSegmentId?: string | number;
+    syncPoseSegmentsInitialized?: boolean;
+    syncUseZ?: boolean;
+    syncYawOffsetDeg?: number;
+    syncXOffsetM?: number;
+    syncYOffsetM?: number;
+    occluded?: boolean;
+    syncDirty?: boolean;
+    reviewedCorrect?: boolean;
     classId?: string;
     className?: string;
     backId?: string;
@@ -126,6 +158,25 @@ export interface IUserData {
     // track id
     trackId?: string;
     trackName?: string;
+    groupId?: string;
+    motionMode?: MotionMode;
+    syncDistance?: number;
+    syncMaxDisappearGap?: number;
+    syncLocationGapMs?: number;
+    dynamicRangeSyncEnabled?: boolean;
+    dynamicSyncPreviousFrames?: number;
+    dynamicSyncNextFrames?: number;
+    syncPoseSegmentId?: string | number;
+    syncPoseSegmentsInitialized?: boolean;
+    syncUseZ?: boolean;
+    syncYawOffsetDeg?: number;
+    syncXOffsetM?: number;
+    syncYOffsetM?: number;
+    occluded?: boolean;
+    syncDirty?: boolean;
+    reviewedCorrect?: boolean;
+    reviewedCorrectVisible?: boolean;
+    manualModified?: boolean;
     isProjection?: boolean;
     // isStandard?: boolean;
     backId?: string;
@@ -225,6 +276,9 @@ export interface IConfig {
     enableShowAttr: boolean;
     // img view info
     filter2DByTrack: boolean;
+    filterFramesByTrack: boolean;
+    filterFramesByComment: boolean;
+    commentFrameIds: string[];
     singleImgViewIndex: number;
     imgRegionIndex: number;
     // tool info
@@ -272,6 +326,9 @@ export interface IConfig {
     limitRect2Image: boolean;
 
     autoLoad: boolean;
+    autoLoadStartFrame: number;
+    autoLoadEndFrame: number;
+    autoLoadMaxFrames: number;
 }
 
 export interface IAnnotationInfo {

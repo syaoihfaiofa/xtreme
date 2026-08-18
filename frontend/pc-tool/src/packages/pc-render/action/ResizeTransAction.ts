@@ -42,6 +42,13 @@ export default class ResizeTransAction extends Action {
     };
 
     renderView: SideRenderView;
+    private readonly onRender = () => {
+        if (!this.isRotating) {
+            this.updateDom();
+        } else {
+            this.rectTool.updateRotation();
+        }
+    };
     constructor(renderView: SideRenderView) {
         super();
         this.renderView = renderView;
@@ -65,18 +72,14 @@ export default class ResizeTransAction extends Action {
     }
 
     destroy() {
+        this.renderView.removeEventListener(Event.RENDER_AFTER, this.onRender);
         this.clearCall.forEach((fn) => fn());
+        this.clearCall = [];
+        this.rectTool.destroy();
     }
 
     initEvent() {
-        this.renderView.addEventListener(Event.RENDER_AFTER, () => {
-            // this.updateDom();
-            if (!this.isRotating) {
-                this.updateDom();
-            } else {
-                this.rectTool.updateRotation();
-            }
-        });
+        this.renderView.addEventListener(Event.RENDER_AFTER, this.onRender);
     }
 
     initDragResize() {

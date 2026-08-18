@@ -391,7 +391,7 @@
         () => {
             pc.renderViews.forEach((view) => {
                 if (view instanceof Image2DRenderView) {
-                    view.renderBox = config.renderProjectBox && state.config.projectMap3d;
+                    view.renderBox = false;
                     view.renderRect = config.renderRect && state.config.projectPoint4;
                     view.renderBox2D = config.renderBox && state.config.projectPoint8;
                     if (view.name === state.config.singleViewPrefix) {

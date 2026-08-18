@@ -13,8 +13,8 @@
         </div>
         <div class="item-wrap data-index" v-if="!state.isSeriesFrame && state.frames.length > 0">
             <LeftOutlined
-                :class="state.frameIndex > 0 && !blocking ? 'icon' : 'icon disable'"
-                @click="state.frameIndex > 0 && !blocking ? onPre() : null"
+                :class="canNavigateFrame(-1) && !blocking ? 'icon' : 'icon disable'"
+                @click="canNavigateFrame(-1) && !blocking ? onPre() : null"
             />
             <a-input-number
                 :disabled="blocking"
@@ -32,19 +32,69 @@
             </span>
             <RightOutlined
                 :class="
-                    state.frameIndex < state.frames.length - 1 && !blocking
+                    canNavigateFrame(1) && !blocking
                         ? 'icon'
                         : 'icon disable'
                 "
-                @click="state.frameIndex < state.frames.length - 1 && !blocking ? onNext() : null"
+                @click="canNavigateFrame(1) && !blocking ? onNext() : null"
             />
+        </div>
+        <div class="review-color-legend">
+            <span class="legend-item">
+                <i style="background-color: #ff9f00"></i>
+                正常
+            </span>
+            <span class="legend-item">
+                <i :style="{ backgroundColor: utils.SYNC_DIRTY_OBJECT_COLOR }"></i>
+                未同步
+            </span>
+            <span class="legend-item">
+                <i :style="{ backgroundColor: utils.OCCLUDED_OBJECT_COLOR }"></i>
+                遮挡
+            </span>
+            <span class="legend-item">
+                <i :style="{ backgroundColor: utils.REVIEWED_CORRECT_OBJECT_COLOR }"></i>
+                审阅正确
+            </span>
+        </div>
+        <div
+            v-if="
+                bsState.inferenceMode &&
+                (bsState.inferenceEnsuring || bsState.inferenceTask || bsState.inferenceRequestError)
+            "
+            class="inference-status"
+            :class="{ failed: !!bsState.inferenceRequestError || bsState.inferenceTask?.status === 'FAILED' }"
+            :title="inferenceStatusText"
+        >
+            {{ inferenceStatusText }}
         </div>
         <div class="item-wrap">
             <!-- Save -->
             <a-button
+                v-if="has(BsUIType.reviewMode)"
+                class="basic-btn review-mode"
+                :type="bsState.reviewMode ? 'primary' : 'default'"
+                :disabled="blocking"
+                size="large"
+                @click="onToggleReviewMode"
+            >
+                <template #icon><CheckCircleOutlined /></template>
+                <div class="title">Review Mode</div>
+            </a-button>
+            <a-button
+                v-if="bsState.reviewMode"
+                class="basic-btn review-correct"
+                :disabled="blocking"
+                size="large"
+                @click="onMarkTrackCorrect"
+            >
+                <template #icon><CheckCircleOutlined /></template>
+                <div class="title">Mark Correct (R)</div>
+            </a-button>
+            <a-button
                 class="basic-btn"
                 v-if="has(BsUIType.flowSave)"
-                :disabled="blocking"
+                :disabled="blocking || inferenceRunning"
                 size="large"
                 :loading="bsState.saving"
                 @click="onSave"
@@ -78,7 +128,7 @@
                     class="basic modify"
                     :disabled="blocking"
                     :loading="bsState.modifying"
-                    v-show="!canEdit()"
+                    v-show="!canEdit() && editor.state.modeConfig.name !== 'discussion'"
                     @click="onModify"
                 >
                     {{ $$('btn-modify') }}
@@ -108,7 +158,7 @@
                     class="basic submit"
                     v-show="canEdit()"
                     :loading="bsState.submitting"
-                    :disabled="blocking"
+                    :disabled="blocking || inferenceRunning"
                     @click="onSubmit"
                 >
                     <template #icon><SaveOutlined /></template>
@@ -131,6 +181,7 @@
         LeftOutlined,
         SaveOutlined,
         CloseOutlined,
+        CheckCircleOutlined,
     } from '@ant-design/icons-vue';
     import { useInjectEditor } from '../../state';
     import useHeader from './useHeader';
@@ -138,6 +189,7 @@
     import useUI from '../../hook/useUI';
     import * as _ from 'lodash';
     import { BsUIType } from '../../config/ui';
+    import { utils } from 'pc-editor';
 
     let {
         $$,
@@ -157,11 +209,26 @@
         onToggleSkip,
         onSubmit,
         onModify,
+        onToggleReviewMode,
+        onMarkTrackCorrect,
     } = useHeader();
     let { has, canEdit } = useUI();
     let { init } = useFlow();
     let editor = useInjectEditor();
     let { state, bsState } = editor;
+    const inferenceRunning = computed(() => editor.dataManager.isInferenceRunning());
+    const inferenceStatusText = computed(() => {
+        if (bsState.inferenceRequestError) return bsState.inferenceRequestError;
+        if (bsState.inferenceEnsuring) return 'Starting dataset inference';
+        const task = bsState.inferenceTask;
+        if (!task) return '';
+        if (task.status === 'FAILED') {
+            return `Dataset inference failed: ${task.errorMessage || 'No error message was returned'}`;
+        }
+        if (task.status === 'SUCCESS') return 'Dataset inference completed';
+        const progress = Number.isFinite(task.progress) ? Math.round(task.progress) : 0;
+        return `Dataset inference ${task.status.toLowerCase()}: ${task.completedFrames}/${task.totalFrames} (${progress}%)`;
+    });
 
     onMounted(() => {
         init();
@@ -172,7 +239,55 @@
     .pc-flow {
         height: 100%;
         display: flex;
+        position: relative;
         justify-content: space-between;
+
+        .review-color-legend {
+            position: absolute;
+            top: 16px;
+            left: 42%;
+            z-index: 1;
+            display: flex;
+            gap: 8px;
+            color: #cdd3da;
+            font-size: 12px;
+            line-height: 16px;
+            transform: translateX(-50%);
+
+            .legend-item {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                white-space: nowrap;
+
+                i {
+                    display: inline-block;
+                    width: 12px;
+                    height: 8px;
+                    border-radius: 2px;
+                }
+            }
+        }
+
+        .inference-status {
+            position: absolute;
+            top: 4px;
+            left: 50%;
+            z-index: 2;
+            max-width: 420px;
+            transform: translateX(-50%);
+            overflow: hidden;
+            color: #91caff;
+            font-size: 12px;
+            line-height: 20px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+
+            &.failed {
+                color: #ff7875;
+            }
+        }
+
         .task-header-info {
             border-radius: 16px;
             height: 28px;

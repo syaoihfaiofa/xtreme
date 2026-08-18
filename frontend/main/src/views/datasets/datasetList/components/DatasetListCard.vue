@@ -2,6 +2,7 @@
   <div :class="`${prefixCls}`">
     <RenameModal @register="renameRegister" :id="itemId" :name="data.name" />
     <DeleteModal @register="deleteRegister" :id="itemId" :name="data.name" />
+    <DatasetSettingsModal @register="settingsRegister" />
     <div
       class="card-content"
       @click="
@@ -92,6 +93,17 @@
                 class="item"
                 @click="
                   (e) => {
+                    handleSettings(e, props.data);
+                  }
+                "
+              >
+                <Icon class="ml-3 mr-2" icon="ant-design:setting-outlined" size="12" />
+                <span class="text-sm">{{ t('business.dataset.settings') }}</span>
+              </div>
+              <div
+                class="item"
+                @click="
+                  (e) => {
                     handleDelete(e, props.data);
                   }
                 "
@@ -132,6 +144,7 @@
   import { ref } from 'vue';
   import RenameModal from './RenameModal.vue';
   import DeleteModal from './DeleteModal.vue';
+  import DatasetSettingsModal from './DatasetSettingsModal.vue';
   import { useModal } from '/@/components/Modal';
   import { defineProps } from 'vue';
   import { useI18n } from '/@/hooks/web/useI18n';
@@ -152,6 +165,7 @@
   import { setDatasetBreadcrumb } from '/@/utils/business';
   const [renameRegister, { openModal: openRenameModal }] = useModal();
   const [deleteRegister, { openModal: openDeleteModal }] = useModal();
+  const [settingsRegister, { openModal: openSettingsModal }] = useModal();
   const { t } = useI18n();
   const { prefixCls } = useDesign('card');
   type Props = {
@@ -216,6 +230,10 @@
     itemId.value = data.id;
     itemName.value = data.name;
     openDeleteModal();
+  };
+  const handleSettings = (e, data: DatasetListItem) => {
+    e.stopPropagation();
+    openSettingsModal(true, { datasetId: data.id });
   };
 </script>
 <style lang="less" scoped>

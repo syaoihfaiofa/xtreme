@@ -30,6 +30,7 @@ import {
     IFrame,
     Const,
     IResultSource,
+    MotionMode,
 } from './type';
 import { IModeType, OPType, IModeConfig } from './config/type';
 import handleHack from './hack';
@@ -41,6 +42,7 @@ import Mustache from 'mustache';
 import BSError from './common/BSError';
 import * as locale from './lang';
 import * as utils from './utils';
+import { getObjectDisplayColor } from './utils/result';
 import { RegisterFn, ModalFn, MsgFn, ConfirmFn, LoadingFn } from './uitype';
 import TaskManager from './common/TaskManager/TaskManager';
 
@@ -111,6 +113,20 @@ export default class Editor extends THREE.EventDispatcher {
         this.blurPage = _.throttle(this.blurPage.bind(this), 40);
     }
 
+    destroy(): void {
+        this.playManager.stop();
+        this.taskManager.destroy();
+        this.dataManager.destroy();
+        this.modelManager.clear();
+        this.dataResource.clear();
+        this.viewManager.destroy();
+        this.hotkeyManager.destroy();
+        this.pc.destroy();
+        this.setFrames([]);
+        this.classMap.clear();
+        (this as any)._listeners = {};
+    }
+
     initEvent() {
         let config = this.state.config;
         this.pc.addEventListener(RenderEvent.SELECT, (data) => {
@@ -160,6 +176,9 @@ export default class Editor extends THREE.EventDispatcher {
             this.currentTrack = trackId;
             this.currentTrackName = trackName;
             this.dispatchEvent({ type: Event.CURRENT_TRACK_CHANGE, data: this.currentTrack });
+            if (this.state.config.autoLoad && this.state.config.filterFramesByTrack) {
+                this.dataResource.load();
+            }
         }
     }
     // locale
@@ -197,8 +216,98 @@ export default class Editor extends THREE.EventDispatcher {
         this.eventSource = '';
     }
 
-    async loadFrame(index: number, showLoading: boolean = true, force: boolean = false) {
+    async loadFrame(
+        index: number,
+        showLoading: boolean = true,
+        force: boolean = false,
+    ): Promise<boolean> {
+        if (!force && !this.isFrameAllowedByActiveFilter(index)) {
+            this.showMsg(
+                'warning',
+                this.isCommentFrameFilterActive()
+                    ? this.lang('commentFrameUnavailable')
+                    : this.lang('selectedTrackFrameUnavailable'),
+            );
+            return false;
+        }
         await this.loadManager.loadFrame(index, showLoading, force);
+        return true;
+    }
+
+    isTrackFrameFilterActive(): boolean {
+        return this.state.config.filterFramesByTrack && !!this.currentTrack;
+    }
+
+    isCommentFrameFilterActive(): boolean {
+        return (
+            this.state.modeConfig.name === 'discussion' &&
+            this.state.config.filterFramesByComment
+        );
+    }
+
+    isFrameAllowedByTrackFilter(index: number): boolean {
+        return (
+            !this.isTrackFrameFilterActive() ||
+            this.trackManager.hasTrackAtFrame(this.currentTrack, index)
+        );
+    }
+
+    isFrameAllowedByActiveFilter(index: number): boolean {
+        if (index < 0 || index >= this.state.frames.length) return false;
+        if (this.isCommentFrameFilterActive()) {
+            return this.state.config.commentFrameIds.includes(
+                String(this.state.frames[index].id),
+            );
+        }
+        return this.isFrameAllowedByTrackFilter(index);
+    }
+
+    getAdjacentFrameIndex(direction: 1 | -1): number {
+        if (this.isCommentFrameFilterActive()) {
+            for (
+                let index = this.state.frameIndex + direction;
+                index >= 0 && index < this.state.frames.length;
+                index += direction
+            ) {
+                if (this.isFrameAllowedByActiveFilter(index)) return index;
+            }
+            return -1;
+        }
+        if (this.isTrackFrameFilterActive()) {
+            return this.trackManager.findTrackFrameIndex(
+                this.currentTrack,
+                this.state.frameIndex,
+                direction,
+            );
+        }
+        const index = this.state.frameIndex + direction;
+        return index >= 0 && index < this.state.frames.length ? index : -1;
+    }
+
+    canNavigateFrame(direction: 1 | -1): boolean {
+        return this.getAdjacentFrameIndex(direction) >= 0;
+    }
+
+    async navigateFrame(direction: 1 | -1, showLoading: boolean = true): Promise<boolean> {
+        const index = this.getAdjacentFrameIndex(direction);
+        if (index < 0) return false;
+        return this.loadFrame(index, showLoading);
+    }
+
+    async loadFrameForNavigation(
+        index: number,
+        showLoading: boolean = true,
+    ): Promise<boolean> {
+        if (!this.isFrameAllowedByActiveFilter(index)) {
+            this.showMsg(
+                'warning',
+                this.isCommentFrameFilterActive()
+                    ? this.lang('commentFrameUnavailable')
+                    : this.lang('selectedTrackFrameUnavailable'),
+            );
+            return false;
+        }
+        return this.loadFrame(index, showLoading);
     }
 
     getCurrentFrame() {
@@ -251,6 +360,7 @@ export default class Editor extends THREE.EventDispatcher {
 
     setFrames(frames: IFrame[]) {
         this.frameMap.clear();
+        this.frameIndexMap.clear();
         this.state.frames = frames;
         frames.forEach((e, index) => {
             this.frameMap.set(e.id + '', e);
@@ -287,17 +397,40 @@ export default class Editor extends THREE.EventDispatcher {
 
             let userData = this.getObjectUserData(obj);
             let classConfig = this.getClassType(userData);
+            let displayColor = getObjectDisplayColor(classConfig?.color, userData);
 
             if (obj instanceof Box) {
                 // obj.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
-                obj.color.setStyle(classConfig ? classConfig.color : '#ffffff');
+                obj.color.setStyle(displayColor);
             } else {
-                obj.color = classConfig ? classConfig.color : '#ffffff';
+                obj.color = displayColor;
             }
 
             // obj.dashed = !!userData.invisibleFlag;
         });
         this.pc.render();
+    }
+
+    markSyncDirtyForTransform(objects: AnnotateObject[] | AnnotateObject, transforms: any | any[]) {
+        if (this.eventSource === 'lidar-fusion-sync') return;
+        if (!Array.isArray(objects)) objects = [objects];
+        let changedObjects: AnnotateObject[] = [];
+        objects.forEach((object, index) => {
+            if (!(object instanceof Box)) return;
+            const transform = Array.isArray(transforms) ? transforms[index] : transforms;
+            const userData = object.userData as IUserData;
+            const motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
+            const dirty =
+                motionMode === MotionMode.STATIC
+                    ? !!(transform?.position || transform?.scale || transform?.rotation)
+                    : motionMode === MotionMode.DYNAMIC_FIXED_SIZE
+                      ? !!transform?.scale
+                      : false;
+            if (!dirty || userData.syncDirty === true) return;
+            userData.syncDirty = true;
+            changedObjects.push(object);
+        });
+        if (changedObjects.length > 0) this.updateObjectRenderInfo(changedObjects);
     }
 
     // set get

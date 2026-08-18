@@ -51,6 +51,9 @@
           :selectedList="selectedList"
           @fetchList="fixedFetchList"
         />
+        <EditSceneModal @register="editSceneRegister" @success="fixedFetchList" />
+        <UploadLocationModal @register="uploadLocationRegister" />
+        <ImportResultModal @register="importResultRegister" @success="fixedFetchList" />
         <Tools
           v-if="info?.type"
           :modelRunResultList="modelRunResultListForDisplay"
@@ -117,6 +120,9 @@
               @handleSingleAnnotate="handleSingleAnnotate"
               @handleAnotateFrame="handleAnotateFrame"
               @handleChangeType="handleChangeType"
+              @handleEditScene="handleEditScene"
+              @handleUploadLocation="handleUploadLocation"
+              @handleImportResult="handleImportResult"
             />
           </ScrollContainer>
         </div>
@@ -384,6 +390,9 @@
   import Icon, { SvgIcon } from '/@/components/Icon';
   import MergeModal from './components/MergeModal.vue';
   import FrameMultipleModal from './components/FrameMultipleModal.vue';
+  import EditSceneModal from './components/EditSceneModal.vue';
+  import UploadLocationModal from './components/UploadLocationModal.vue';
+  import ImportResultModal from './components/ImportResultModal.vue';
   import { handleScroll } from '/@/utils/business/scrollListener';
   import datasetEmpty from '/@/assets/images/dataset/data_empty.png';
   // import WarningModalVue from './components/WarningModal.vue';
@@ -427,6 +436,9 @@
   const { id, dataId } = query;
   const [register, { openModal }] = useModal();
   const [frameRegister, { openModal: openFrameModal }] = useModal();
+  const [editSceneRegister, { openModal: openEditSceneModal }] = useModal();
+  const [uploadLocationRegister, { openModal: openUploadLocationModal }] = useModal();
+  const [importResultRegister, { openModal: openImportResultModal }] = useModal();
   const scrollRef = ref<Nullable<ScrollActionType>>(null);
   const total = ref<number>(0);
   const pageNo = ref<number>(1);
@@ -843,7 +855,25 @@
     }
   };
 
-  const handleSelectAll = () => {
+  const handleSelectAll = async () => {
+    if (type.value === PageTypeEnum.frame && parentIdScene.value) {
+      // Inside an opened Scene: fetch every frame belonging to it (not just the
+      // currently-loaded page) so "select all" + "Models" can run over the whole scene.
+      open();
+      try {
+        const res: DatasetGetResultModel = await datasetApi({
+          pageNo: 1,
+          pageSize: 100000,
+          datasetId: id as string,
+          parentId: parentIdScene.value,
+        });
+        selectedList.value = res.list.filter((item) => !item.lockedBy).map((item) => item.id);
+        message.success(t('business.datasetContent.scene.selectAllAcrossPages'));
+      } finally {
+        close();
+      }
+      return;
+    }
     selectedList.value = list.value.filter((item) => !item.lockedBy).map((item) => item.id);
   };
   const handleUnselectAll = () => {
@@ -940,26 +970,46 @@
     openRunModal(true, {});
   };
 
+  const handleEditScene = (data: DatasetItem) => {
+    openEditSceneModal(true, { id: data.id, name: data.name, detail: data.detail });
+  };
+
+  const handleUploadLocation = (data: DatasetItem) => {
+    openUploadLocationModal(true, { id: data.id });
+  };
+
+  const handleImportResult = (data: DatasetItem) => {
+    openImportResultModal(true, { id: data.id });
+  };
+
   const handleRun = async (
     resultModel: Nullable<ResultsModelParam>,
     _dataModel: Nullable<DataModelParam>,
   ) => {
-    let templist: DatasetItem[] = [];
-    let type = dataTypeEnum.SINGLE_DATA;
-    const data = unref(list).filter((item) => {
-      return unref(selectedList).some((record) => record === item.id);
-    });
-    if (data.some((item) => item.type === dataTypeEnum.SINGLE_DATA)) {
-      templist = data.filter((item) => item.type === dataTypeEnum.SINGLE_DATA);
-    } else {
-      type = dataTypeEnum.FRAME_SERIES;
+    const isInsideScene = type.value === PageTypeEnum.frame;
+    let templist: any[] = [];
+    let operateType = dataTypeEnum.SINGLE_DATA;
+    if (isInsideScene) {
+      // Selection may include ids beyond the currently-loaded page (see handleSelectAll),
+      // so use the selected ids directly instead of matching against the loaded `list`.
+      operateType = dataTypeEnum.SINGLE_DATA;
       templist = selectedList.value;
+    } else {
+      const data = unref(list).filter((item) => {
+        return unref(selectedList).some((record) => record === item.id);
+      });
+      if (data.some((item) => item.type === dataTypeEnum.SINGLE_DATA)) {
+        templist = data.filter((item) => item.type === dataTypeEnum.SINGLE_DATA);
+      } else {
+        operateType = dataTypeEnum.FRAME_SERIES;
+        templist = selectedList.value;
+      }
     }
     // debugger
     const res = await takeRecordByDataModel({
       datasetId: id as unknown as number,
       dataIds: templist.map((item) => item.id || item) as string[],
-      operateItemType: type,
+      operateItemType: operateType,
       modelId: modelId.value as number,
       modelCode: selectOptions.value.filter((item) => item.id === modelId.value)[0].modelCode,
       resultFilterParam: resultModel,

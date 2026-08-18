@@ -8,9 +8,28 @@ from urllib.parse import urlparse
 import numpy as np
 import requests
 
+DEFAULT_MAX_POINT_CLOUD_BYTES = 512 * 1024 * 1024
+DEFAULT_MAX_POINT_CLOUD_POINTS = 10_000_000
+DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+
 
 class PointCloudLoadError(RuntimeError):
     pass
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    raw_value = os.environ.get(name, str(default))
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise PointCloudLoadError(
+            f"{name} must be a positive integer, got {raw_value!r}"
+        ) from exc
+    if value <= 0:
+        raise PointCloudLoadError(
+            f"{name} must be a positive integer, got {raw_value!r}"
+        )
+    return value
 
 
 def load_point_cloud(url_or_path: str) -> np.ndarray:
@@ -24,23 +43,87 @@ def load_point_cloud(url_or_path: str) -> np.ndarray:
     if not url_or_path:
         raise PointCloudLoadError("pointCloudUrl is empty")
 
+    parsed = urlparse(url_or_path)
+    is_remote = parsed.scheme in {"http", "https"}
     path = fetch_to_local(url_or_path)
-    suffix = path.suffix.lower()
-    if suffix == ".pcd":
-        return read_pcd(path)
-    return read_binary_float32(path)
+    try:
+        max_bytes = _positive_env_int(
+            "MAX_POINT_CLOUD_BYTES", DEFAULT_MAX_POINT_CLOUD_BYTES
+        )
+        file_size = path.stat().st_size
+        if file_size > max_bytes:
+            raise PointCloudLoadError(
+                f"point cloud exceeds MAX_POINT_CLOUD_BYTES: "
+                f"url={url_or_path!r}, bytes={file_size}, limit={max_bytes}"
+            )
+
+        suffix = path.suffix.lower()
+        points = read_pcd(path) if suffix == ".pcd" else read_binary_float32(path)
+        max_points = _positive_env_int(
+            "MAX_POINT_CLOUD_POINTS", DEFAULT_MAX_POINT_CLOUD_POINTS
+        )
+        if points.shape[0] > max_points:
+            raise PointCloudLoadError(
+                f"point cloud exceeds MAX_POINT_CLOUD_POINTS: "
+                f"url={url_or_path!r}, points={points.shape[0]}, limit={max_points}"
+            )
+        return points
+    finally:
+        if is_remote:
+            path.unlink(missing_ok=True)
 
 
 def fetch_to_local(url_or_path: str) -> Path:
     parsed = urlparse(url_or_path)
     if parsed.scheme in {"http", "https"}:
-        response = requests.get(url_or_path, timeout=float(os.environ.get("POINT_CLOUD_DOWNLOAD_TIMEOUT", "30")))
-        response.raise_for_status()
+        max_bytes = _positive_env_int(
+            "MAX_POINT_CLOUD_BYTES", DEFAULT_MAX_POINT_CLOUD_BYTES
+        )
         suffix = Path(parsed.path).suffix or ".bin"
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tmp.write(response.content)
-        tmp.close()
-        return Path(tmp.name)
+        temp_path: Path | None = None
+        try:
+            with requests.get(
+                url_or_path,
+                stream=True,
+                timeout=float(
+                    os.environ.get("POINT_CLOUD_DOWNLOAD_TIMEOUT", "30")
+                ),
+            ) as response:
+                response.raise_for_status()
+                content_length = response.headers.get("Content-Length")
+                if content_length:
+                    try:
+                        declared_size = int(content_length)
+                    except ValueError:
+                        declared_size = None
+                    if declared_size is not None and declared_size > max_bytes:
+                        raise PointCloudLoadError(
+                            f"point cloud download exceeds MAX_POINT_CLOUD_BYTES: "
+                            f"url={url_or_path!r}, bytes={declared_size}, limit={max_bytes}"
+                        )
+
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=suffix
+                ) as temp_file:
+                    temp_path = Path(temp_file.name)
+                    downloaded = 0
+                    for chunk in response.iter_content(
+                        chunk_size=DOWNLOAD_CHUNK_BYTES
+                    ):
+                        if not chunk:
+                            continue
+                        downloaded += len(chunk)
+                        if downloaded > max_bytes:
+                            raise PointCloudLoadError(
+                                f"point cloud download exceeds MAX_POINT_CLOUD_BYTES: "
+                                f"url={url_or_path!r}, bytes>{max_bytes}, limit={max_bytes}"
+                            )
+                        temp_file.write(chunk)
+            return temp_path
+        except Exception:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+            raise
     return Path(url_or_path)
 
 

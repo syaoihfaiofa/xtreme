@@ -2,9 +2,10 @@ import { reactive, toRefs, watch } from 'vue';
 import { useInjectEditor } from '../../state';
 import { allItems } from './item';
 import { IActionName } from 'pc-editor';
-import { Image2DRenderView, CreateAction, Box } from 'pc-render';
+import { Image2DRenderView, CreateAction, Box, Object2D } from 'pc-render';
 import { IModelResult, IModel } from 'pc-editor';
 import * as api from '../../api';
+import * as locale from './lang';
 
 let createActions: IActionName[] = [
     'create2DBox',
@@ -25,6 +26,7 @@ export interface IClass {
 }
 export default function useTool() {
     let editor = useInjectEditor();
+    const $$ = editor.bindLocale(locale);
     let innerState = reactive({
         tools: allItems,
     });
@@ -61,10 +63,29 @@ export default function useTool() {
             case 'model':
                 onModel();
                 break;
+            case 'deleteProjections':
+                deleteProjections();
+                break;
             case 'filter2D':
                 onFilter2D();
                 break;
         }
+    }
+
+    function deleteProjections() {
+        const frame = editor.getCurrentFrame();
+        const projections = (editor.dataManager.getFrameObject(frame.id) || []).filter(
+            (object) => object instanceof Object2D && object.userData?.isProjection === true,
+        );
+        if (projections.length === 0) {
+            editor.showMsg('warning', $$('delete_projections_empty'));
+            return;
+        }
+        editor.cmdManager.execute('delete-object', [{ objects: projections, frame }]);
+        editor.showMsg(
+            'success',
+            $$('delete_projections_success', { n: projections.length }),
+        );
     }
 
     function onFilter2D() {

@@ -9,6 +9,8 @@ import ai.basic.x1.adapter.port.dao.*;
 import ai.basic.x1.adapter.port.dao.mybatis.model.*;
 import ai.basic.x1.entity.*;
 import ai.basic.x1.entity.enums.DatasetTypeEnum;
+import ai.basic.x1.entity.enums.ModelCodeEnum;
+import ai.basic.x1.entity.enums.ModelDatasetTypeEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
 import ai.basic.x1.usecase.exception.UsecaseException;
 import ai.basic.x1.util.DecompressionFileUtils;
@@ -16,7 +18,6 @@ import ai.basic.x1.util.DefaultConverter;
 import ai.basic.x1.util.Page;
 import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.core.io.FileUtil;
-import cn.hutool.core.thread.ThreadUtil;
 import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
@@ -25,6 +26,7 @@ import com.alibaba.ttl.TtlRunnable;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,7 +35,9 @@ import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
@@ -53,6 +57,12 @@ public class DatasetUseCase {
 
     @Autowired
     private DatasetClassDAO datasetClassDAO;
+
+    @Autowired
+    private ModelDAO modelDAO;
+
+    @Autowired
+    private ModelClassDAO modelClassDAO;
 
     @Autowired
     private DatasetClassificationDAO datasetClassificationDAO;
@@ -91,7 +101,9 @@ public class DatasetUseCase {
     @Value("${file.tempPath:/tmp/xtreme1/}")
     private String tempPath;
 
-    private static final ExecutorService executorService = ThreadUtil.newExecutor(1);
+    @Autowired
+    @Qualifier("datasetInitializationExecutor")
+    private ExecutorService executorService;
 
     @PostConstruct
     public void init() {
@@ -162,6 +174,13 @@ public class DatasetUseCase {
      * @param bo Dataset information
      */
     public DatasetBO create(DatasetBO bo) {
+        if (bo.getSyncMode() == null) {
+            bo.setSyncMode(false);
+        }
+        if (bo.getInferenceMode() == null) {
+            bo.setInferenceMode(false);
+        }
+        validateInferenceConfig(bo.getType(), bo.getSyncMode(), bo.getInferenceMode(), bo.getInferenceConfig(), null);
         var dataset = DefaultConverter.convert(bo, Dataset.class);
         try {
             datasetDAO.save(dataset);
@@ -180,16 +199,94 @@ public class DatasetUseCase {
      */
     public void update(Long id, DatasetBO updateBO) {
         var datasetBO = findById(id);
+        if (ObjectUtil.isNull(datasetBO)) {
+            throw new UsecaseException(UsecaseCode.DATASET_NOT_FOUND);
+        }
+        Boolean syncMode = ObjectUtil.defaultIfNull(updateBO.getSyncMode(), datasetBO.getSyncMode());
+        Boolean inferenceMode = ObjectUtil.defaultIfNull(updateBO.getInferenceMode(), datasetBO.getInferenceMode());
+        DatasetInferenceConfig inferenceConfig = updateBO.getInferenceMode() == null
+                ? datasetBO.getInferenceConfig() : updateBO.getInferenceConfig();
+        validateInferenceConfig(datasetBO.getType(), syncMode, inferenceMode, inferenceConfig, id);
         datasetBO.setName(updateBO.getName());
-        datasetBO.setDescription(updateBO.getDescription());
+        if (updateBO.getDescription() != null) {
+            datasetBO.setDescription(updateBO.getDescription());
+        }
+        datasetBO.setSyncMode(syncMode);
+        datasetBO.setInferenceMode(inferenceMode);
+        datasetBO.setInferenceConfig(inferenceConfig);
         try {
             var lambdaUpdateWrapper = Wrappers.lambdaUpdate(Dataset.class);
             lambdaUpdateWrapper.eq(Dataset::getId, id);
-            datasetDAO.update(DefaultConverter.convert(datasetBO, Dataset.class), lambdaUpdateWrapper);
+            lambdaUpdateWrapper.set(Dataset::getName, datasetBO.getName())
+                    .set(Dataset::getDescription, datasetBO.getDescription())
+                    .set(Dataset::getSyncMode, datasetBO.getSyncMode())
+                    .set(Dataset::getInferenceMode, datasetBO.getInferenceMode())
+                    .set(Dataset::getInferenceConfig, datasetBO.getInferenceConfig());
+            datasetDAO.update(lambdaUpdateWrapper);
         } catch (DuplicateKeyException e) {
             log.error("Dataset duplicate name", e);
             throw new UsecaseException(UsecaseCode.DATASET_NAME_DUPLICATED);
         }
+    }
+
+    void validateInferenceConfig(DatasetTypeEnum datasetType, Boolean syncMode, Boolean inferenceMode,
+                                 DatasetInferenceConfig config, Long datasetId) {
+        if (!Boolean.TRUE.equals(inferenceMode)) {
+            return;
+        }
+        if (!DatasetTypeEnum.LIDAR_FUSION.equals(datasetType) || !Boolean.TRUE.equals(syncMode)) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                    "inferenceMode requires type=LIDAR_FUSION and syncMode=true");
+        }
+        if (datasetId == null) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                    "inferenceMode must be configured after the dataset and its classes are created");
+        }
+        if (ObjectUtil.isNull(config) || ObjectUtil.isNull(config.getModelId())
+                || CollectionUtil.isEmpty(config.getClassMappings())) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                    "inferenceConfig.modelId and classMappings are required");
+        }
+        if (!isPositive(config.getSyncDistance())
+                || config.getMaxOutsideFrames() == null || config.getMaxOutsideFrames() < 0
+                || !isUnitInterval(config.getAssociationIou())
+                || !isUnitInterval(config.getMinConfidence())) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                    "Invalid inferenceConfig thresholds: syncDistance must be > 0, maxOutsideFrames >= 0, "
+                            + "associationIou and minConfidence must be within [0, 1]");
+        }
+        Model model = modelDAO.getById(config.getModelId());
+        if (ObjectUtil.isNull(model) || !ModelCodeEnum.LIDAR_DETECTION.equals(model.getModelCode())
+                || !(ModelDatasetTypeEnum.LIDAR.equals(model.getDatasetType())
+                || ModelDatasetTypeEnum.LIDAR_FUSION.equals(model.getDatasetType()))) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                    "Configured model is not a compatible point-cloud detection model: modelId=" + config.getModelId());
+        }
+        Set<String> modelClassCodes = modelClassDAO.list(Wrappers.lambdaQuery(ModelClass.class)
+                        .eq(ModelClass::getModelId, config.getModelId()))
+                .stream().map(ModelClass::getCode).collect(Collectors.toSet());
+        Set<Long> datasetClassIds = datasetClassDAO.list(Wrappers.lambdaQuery(DatasetClass.class)
+                        .eq(DatasetClass::getDatasetId, datasetId))
+                .stream().map(DatasetClass::getId).collect(Collectors.toSet());
+        Set<String> mappedCodes = new HashSet<>();
+        for (DatasetInferenceConfig.ClassMapping mapping : config.getClassMappings()) {
+            if (mapping == null || StrUtil.isBlank(mapping.getModelClassCode())
+                    || mapping.getDatasetClassId() == null || mapping.getMotionMode() == null
+                    || !modelClassCodes.contains(mapping.getModelClassCode())
+                    || !datasetClassIds.contains(mapping.getDatasetClassId())
+                    || !mappedCodes.add(mapping.getModelClassCode())) {
+                throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                        "Invalid or duplicate inference class mapping: " + JSONUtil.toJsonStr(mapping));
+            }
+        }
+    }
+
+    private static boolean isPositive(Double value) {
+        return value != null && Double.isFinite(value) && value > 0.0;
+    }
+
+    private static boolean isUnitInterval(Double value) {
+        return value != null && Double.isFinite(value) && value >= 0.0 && value <= 1.0;
     }
 
     /**

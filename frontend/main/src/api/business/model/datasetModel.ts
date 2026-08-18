@@ -28,6 +28,13 @@ export enum dataTypeEnum {
   FRAME_SERIES = 'SCENE',
 }
 
+export enum DataFormatEnum {
+  XTREME1 = 'XTREME1',
+  COCO = 'COCO',
+  KITTI = 'KITTI',
+  NUSCENES = 'NUSCENES',
+}
+
 export enum SortFieldEnum {
   NAME = 'NAME',
   CREATED_AT = 'CREATED_AT',
@@ -41,8 +48,40 @@ export type ListParams = BasicPageParams;
 export type CreateParams = {
   name: string;
   type: datasetTypeEnum;
+  syncMode?: boolean;
+  inferenceMode?: boolean;
+  inferenceConfig?: DatasetInferenceConfig;
   description?: string | null;
 };
+
+export enum MotionMode {
+  STATIC = 'STATIC',
+  DYNAMIC_FIXED_SIZE = 'DYNAMIC_FIXED_SIZE',
+  DYNAMIC_VARIABLE_SIZE = 'DYNAMIC_VARIABLE_SIZE',
+}
+
+export interface DatasetClassMapping {
+  modelClassCode: string;
+  datasetClassId: number;
+  motionMode: MotionMode;
+}
+
+export interface DatasetInferenceConfig {
+  modelId: number;
+  syncDistance: number;
+  maxOutsideFrames: number;
+  associationIou: number;
+  minConfidence: number;
+  classMappings: DatasetClassMapping[];
+}
+
+export interface UpdateDatasetParams {
+  id: string | number;
+  name: string;
+  syncMode?: boolean;
+  inferenceMode?: boolean;
+  inferenceConfig?: DatasetInferenceConfig;
+}
 
 export type InsertUploadDataParams = {
   datasetId: number;
@@ -162,6 +201,7 @@ export interface DatasetItem {
   content: content[];
   type: dataTypeEnum;
   name: string;
+  detail?: Nullable<string>;
   lockedBy: Nullable<string>;
   datasetName?: string;
   splitType: string;
@@ -176,12 +216,15 @@ export interface DatasetListItem {
   deletedAt: number;
   description: string;
   desensitizingStatus: number;
-  id: 2;
+  id: number;
   isDeleted: boolean;
   isSensitive: number;
   itemCount: number;
   name: string;
   type: datasetTypeEnum;
+  syncMode?: boolean;
+  inferenceMode?: boolean;
+  inferenceConfig?: DatasetInferenceConfig;
   updatedAt: string;
   updatedBy: number;
   annotatedCount: number;
@@ -271,6 +314,13 @@ export interface UploadParams {
   resultType?: string;
   modelId?: number;
   dataFormat?: string;
+  autoCreateScene?: boolean;
+}
+
+export interface LocalDirectoryImportParams {
+  localPath: string;
+  datasetId: string;
+  autoCreateScene?: boolean;
 }
 
 export enum UploadStatusEnum {

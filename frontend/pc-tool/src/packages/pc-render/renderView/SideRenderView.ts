@@ -59,6 +59,30 @@ export default class SideRenderView extends Render {
     boxInvertMatrix: THREE.Matrix4 = new THREE.Matrix4();
     zoom: number = 1;
     cameraOffset: THREE.Vector3 = new THREE.Vector3();
+    private readonly onSelect = () => {
+        let object = this.pointCloud.selection.find((annotate) => annotate instanceof Box);
+        if (object) {
+            this.enableFit = true;
+            this.zoom = 1;
+            this.fitObject(object as Box);
+        } else {
+            this.object = null;
+        }
+        this.render();
+    };
+    private readonly onObjectTransform = (e: any) => {
+        let object = e.data.object;
+        if (
+            object &&
+            object instanceof THREE.Object3D &&
+            object === this.object &&
+            this.needFit &&
+            this.enableFit
+        ) {
+            this.fitObject();
+            this.render();
+        }
+    };
 
     constructor(container: HTMLDivElement, pointCloud: PointCloud, config = {} as any) {
         super(config.name || '');
@@ -111,31 +135,8 @@ export default class SideRenderView extends Render {
     }
 
     initEvent() {
-        this.pointCloud.addEventListener(Event.SELECT, () => {
-            let object = this.pointCloud.selection.find((annotate) => annotate instanceof Box);
-            if (object) {
-                this.enableFit = true;
-                this.zoom = 1;
-                this.fitObject(object as Box);
-            } else {
-                this.object = null;
-            }
-            this.render();
-        });
-
-        this.pointCloud.addEventListener(Event.OBJECT_TRANSFORM, (e) => {
-            let object = e.data.object;
-            if (
-                object &&
-                object instanceof THREE.Object3D &&
-                object === this.object &&
-                this.needFit &&
-                this.enableFit
-            ) {
-                this.fitObject();
-                this.render();
-            }
-        });
+        this.pointCloud.addEventListener(Event.SELECT, this.onSelect);
+        this.pointCloud.addEventListener(Event.OBJECT_TRANSFORM, this.onObjectTransform);
     }
 
     setAxis(axis: axisType) {
@@ -330,5 +331,19 @@ export default class SideRenderView extends Render {
         this.updateProjectRect();
         // console.log('renderFrame');
         // this.updateDom();
+    }
+
+    destroy(): void {
+        super.destroy();
+        this.pointCloud.removeEventListener(Event.SELECT, this.onSelect);
+        this.pointCloud.removeEventListener(Event.OBJECT_TRANSFORM, this.onObjectTransform);
+        this.pointCloud.scene.remove(this.camera);
+        this.cameraHelper?.dispose();
+        this.renderer.dispose();
+        this.renderer.forceContextLoss();
+        this.renderer.domElement.remove();
+        this.object = null;
+        // @ts-ignore
+        if (window.subView === this) window.subView = undefined;
     }
 }

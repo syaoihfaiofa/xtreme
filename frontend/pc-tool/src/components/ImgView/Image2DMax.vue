@@ -22,7 +22,7 @@
             /></span>
             <span class="name"
                 ><span class="file-name limit" :title="getFileName()">{{ getFileName() }}</span> -
-                {{ state.config.singleImgViewIndex }}</span
+                {{ state.config.singleImgViewIndex }}（[/]切换视角）</span
             >
             <span
                 :class="
@@ -119,11 +119,17 @@
         initResize(container.value as any);
         handleContext(container.value as any);
         // initZoom();
+        window.addEventListener('keydown', onKeyDown);
     });
 
     onBeforeUnmount(() => {
         clearContext();
+        window.removeEventListener('keydown', onKeyDown);
         view.removeEventListener(Event.RENDER_AFTER, onRender);
+        editor.removeEventListener(EditorEvent.RESIZE, updateSize);
+        updateSize.cancel();
+        if (container.value) interact(container.value).unset();
+        pc.removeRenderView(view);
         // view.removeEventListener(Event.CONTAINER_TRANSFORM, updateContainerTransform);
     });
     function onRender() {
@@ -253,7 +259,7 @@
 
     function update() {
         // let info = get2DInfo(state.singleImgView.imgIndex);
-        view.renderBox = state.config.projectMap3d && state.config.renderProjectBox;
+        view.renderBox = false;
         view.setOptions(state.imgViews[state.config.singleImgViewIndex]);
         view.renderId = `${state.config.imgViewPrefix}-${state.config.singleImgViewIndex}`;
     }
@@ -274,6 +280,21 @@
 
     function offsetImgIndex(offset: 1 | -1) {
         state.config.singleImgViewIndex += offset;
+    }
+
+    function cycleImgIndex(offset: 1 | -1) {
+        const length = state.imgViews.length;
+        if (length <= 0) return;
+        state.config.singleImgViewIndex =
+            (state.config.singleImgViewIndex + offset + length) % length;
+    }
+
+    function onKeyDown(event: KeyboardEvent) {
+        if (!state.config.showSingleImgView || !canOperate()) return;
+        if (event.key !== '[' && event.key !== ']') return;
+        event.preventDefault();
+        event.stopPropagation();
+        cycleImgIndex(event.key === ']' ? 1 : -1);
     }
 </script>
 

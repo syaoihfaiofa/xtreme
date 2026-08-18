@@ -11,8 +11,12 @@
                 <div class="track-tooltip-row">
                     <label>{{ editor.lang('trackDirection') }}</label>
                     <a-radio-group v-model:value="direction" size="small">
-                        <a-radio-button value="FORWARD">{{ editor.lang('trackForward') }}</a-radio-button>
-                        <a-radio-button value="BACKWARD">{{ editor.lang('trackBackward') }}</a-radio-button>
+                        <a-radio-button value="FORWARD" :disabled="forwardFrameN === 0">{{
+                            editor.lang('trackForward')
+                        }}</a-radio-button>
+                        <a-radio-button value="BACKWARD" :disabled="backwardFrameN === 0">{{
+                            editor.lang('trackBackward')
+                        }}</a-radio-button>
                     </a-radio-group>
                 </div>
                 <div class="track-tooltip-row">
@@ -25,6 +29,10 @@
                         <a-radio-button value="copy">{{ editor.lang('trackCopy') }}</a-radio-button>
                         <a-radio-button v-if="!noModelTrack" value="model">{{ editor.lang('trackModel') }}</a-radio-button>
                     </a-radio-group>
+                </div>
+                <div class="track-tooltip-row" v-if="method === 'model' && !noModelTrack">
+                    <label>{{ editor.lang('trackUseZ') }}</label>
+                    <a-checkbox v-model:checked="useZ" />
                 </div>
                 <a-button size="small" type="primary" block style="margin-top: 8px" @click="onRun">
                     {{ editor.lang('trackRun') }}
@@ -43,7 +51,7 @@
     </a-popover>
 </template>
 <script lang="ts" setup>
-    import { computed, ref } from 'vue';
+    import { computed, ref, watch } from 'vue';
     import { useInjectEditor } from '../../state';
     import { IBottomState } from './useTimeLine';
 
@@ -55,25 +63,47 @@
     const visible = ref(false);
     const direction = ref<'FORWARD' | 'BACKWARD'>('FORWARD');
     const frameN = ref(1);
-    const method = ref<'copy' | 'model'>('copy');
-
     const noModelTrack = computed(() => !!props.state._config.noModelTrack);
+    // Model tracking (location.txt-compensated propagation) is the primary workflow, so
+    // default to it whenever it's available instead of making the user switch every time.
+    const method = ref<'copy' | 'model'>(noModelTrack.value ? 'copy' : 'model');
+    const useZ = ref(true);
 
-    const maxFrameN = computed(() => {
+    const forwardFrameN = computed(() => {
         const { frameIndex, frames } = editor.state;
-        if (direction.value === 'FORWARD') {
-            return frames.length - frameIndex - 1;
+        return Math.max(0, frames.length - frameIndex - 1);
+    });
+    const backwardFrameN = computed(() => Math.max(0, editor.state.frameIndex));
+    const maxFrameN = computed(() =>
+        direction.value === 'FORWARD' ? forwardFrameN.value : backwardFrameN.value,
+    );
+
+    watch(visible, (open) => {
+        if (!open) return;
+        if (direction.value === 'FORWARD' && forwardFrameN.value === 0) {
+            direction.value = 'BACKWARD';
+        } else if (direction.value === 'BACKWARD' && backwardFrameN.value === 0) {
+            direction.value = 'FORWARD';
         }
-        return frameIndex;
+        frameN.value = Math.max(1, Math.min(frameN.value, maxFrameN.value));
+    });
+
+    watch(maxFrameN, (maximum) => {
+        if (maximum > 0 && frameN.value > maximum) frameN.value = maximum;
     });
 
     function onRun() {
+        if (maxFrameN.value === 0) {
+            editor.showMsg('warning', editor.lang('track-no-data'));
+            return;
+        }
         const object = editor.pc.selection.length > 0 ? 'select' : 'all';
         editor.dataManager.track({
             method: method.value,
             object,
             direction: direction.value,
             frameN: frameN.value,
+            useZ: useZ.value,
         });
         visible.value = false;
     }

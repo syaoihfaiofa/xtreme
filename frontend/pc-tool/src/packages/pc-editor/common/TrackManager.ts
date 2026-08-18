@@ -19,6 +19,7 @@ export default class TrackManager {
     trackMap: Map<string, Partial<IUserData>> = new Map();
 
     trackInfo: Map<string, ITrackCount> = new Map();
+    trackFrameIndexMap: Map<string, Set<number>> = new Map();
     constructor(editor: Editor) {
         this.editor = editor;
     }
@@ -26,6 +27,7 @@ export default class TrackManager {
     clear() {
         this.trackMap.clear();
         this.trackInfo.clear();
+        this.trackFrameIndexMap.clear();
     }
 
     // basic
@@ -48,14 +50,9 @@ export default class TrackManager {
     }
 
     updateTrackData(trackId: string, object: Partial<IUserData>) {
-        // console.log(trackId, object, frame);
-
         const trackObject = this.getTrackObject(trackId);
-        // console.log(trackId, trackObject, object);
+        if (!trackObject) return;
         Object.assign(trackObject, object || {});
-        // this.editor.dispatchEvent({ type: Event.TRACK_OBJECT_CHANGE, data: { trackId } });
-
-        // this.editor.frameChange(frame);
     }
 
     updateTrackId() {
@@ -70,9 +67,11 @@ export default class TrackManager {
 
         if (!Array.isArray(objects)) objects = [objects];
 
+        const touchedTrackIds = new Set<string>();
         objects.forEach((obj) => {
             const userData = obj.userData as IUserData;
             const trackId = userData.trackId || '';
+            touchedTrackIds.add(trackId);
             if (!this.trackInfo.has(trackId)) {
                 this.trackInfo.set(trackId, {
                     object3D: 0,
@@ -96,6 +95,7 @@ export default class TrackManager {
 
             info.count++;
         });
+        touchedTrackIds.forEach((trackId) => this.refreshTrackFrameIndex(trackId, frame));
     }
 
     removeTrackCount(objects: AnnotateObject | AnnotateObject[], frame: IFrame) {
@@ -133,6 +133,35 @@ export default class TrackManager {
             if (info.count <= 0) {
                 this.trackInfo.delete(trackId);
             }
+            this.refreshTrackFrameIndex(trackId, frame);
+        });
+    }
+
+    private refreshTrackFrameIndex(trackId: string, frame: IFrame): void {
+        if (!trackId) return;
+        const frameIndex = this.editor.state.frames.findIndex((item) => item.id === frame.id);
+        if (frameIndex < 0) return;
+        const objects = this.editor.dataManager.getFrameObject(frame.id) || [];
+        const hasTrackBox = objects.some(
+            (object) => object instanceof Box && object.userData.trackId === trackId,
+        );
+        let frameIndices = this.trackFrameIndexMap.get(trackId);
+        if (!frameIndices) {
+            frameIndices = new Set<number>();
+            this.trackFrameIndexMap.set(trackId, frameIndices);
+        }
+        if (hasTrackBox) frameIndices.add(frameIndex);
+        else frameIndices.delete(frameIndex);
+        if (frameIndices.size === 0) this.trackFrameIndexMap.delete(trackId);
+    }
+
+    rebuildTrackCountCaches(): void {
+        this.trackInfo.clear();
+        this.trackFrameIndexMap.clear();
+        if (!this.editor.state.isSeriesFrame) return;
+        this.editor.state.frames.forEach((frame) => {
+            const objects = this.editor.dataManager.getFrameObject(frame.id) || [];
+            if (objects.length > 0) this.addTrackCount(objects, frame);
         });
     }
 
@@ -173,6 +202,45 @@ export default class TrackManager {
         });
         return trackListMap;
     }
+
+    getTrackFrameIndices(trackId?: string): number[] {
+        if (!trackId) return [];
+        const cached = this.trackFrameIndexMap.get(trackId);
+        if (cached && cached.size > 0) {
+            return Array.from(cached).sort((left, right) => left - right);
+        }
+        const trackFrames = this.getTrackObjectMap(trackId)[trackId] || [];
+        const indices: number[] = [];
+        trackFrames.forEach((objects, index) => {
+            if (objects?.length > 0) indices.push(index);
+        });
+        return indices;
+    }
+
+    hasTrackAtFrame(trackId: string | undefined, frameIndex: number): boolean {
+        if (!trackId || frameIndex < 0 || frameIndex >= this.editor.state.frames.length) {
+            return false;
+        }
+        const frame = this.editor.state.frames[frameIndex];
+        const objects = this.editor.dataManager.getFrameObject(frame.id) || [];
+        return objects.some((object) => object.userData.trackId === trackId);
+    }
+
+    findTrackFrameIndex(
+        trackId: string | undefined,
+        fromIndex: number,
+        direction: 1 | -1,
+    ): number {
+        const indices = this.getTrackFrameIndices(trackId);
+        if (direction > 0) {
+            return indices.find((index) => index > fromIndex) ?? -1;
+        }
+        for (let index = indices.length - 1; index >= 0; index--) {
+            if (indices[index] < fromIndex) return indices[index];
+        }
+        return -1;
+    }
+
     splitTrackObject(config: {
         trackId: string;
         start: number;
@@ -191,6 +259,7 @@ export default class TrackManager {
         // const objects: AnnotateObject[] = [];
         const splitFrames = frames.slice(config.start, config.end);
         const splitObject = this.getObjects(config.trackId, splitFrames)[0];
+        if (!splitObject) return;
         const splitUserData = splitObject.userData as IUserData;
 
         const trackObject: Partial<IUserData> = {
@@ -264,9 +333,9 @@ export default class TrackManager {
         }
 
         const checkClassType = () => {
-            const aType = (trackObjects.find((item) => !!item) || [])[0]?.userData.classType;
-            const bType = (targetObjects.find((item) => !!item) || [])[0]?.userData.classType;
-            return aType === bType;
+            const aUserData = (trackObjects.find((item) => !!item) || [])[0]?.userData;
+            const bUserData = (targetObjects.find((item) => !!item) || [])[0]?.userData;
+            return utils.sameAnnotationClass(aUserData, bUserData);
         };
 
         if (!checkClassType()) {
@@ -402,11 +471,12 @@ export default class TrackManager {
             const userData = this.editor.getObjectUserData(obj);
             const classId = userData.classId || '';
             const classConfig = this.editor.getClassType(classId);
+            const displayColor = utils.getObjectDisplayColor(classConfig?.color, userData);
             if (obj instanceof Box) {
                 // obj.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
-                obj.color.setStyle(classConfig ? classConfig.color : '#ffffff');
+                obj.color.setStyle(displayColor);
             } else if (obj instanceof Object2D) {
-                obj.color = classConfig ? classConfig.color : '#ffffff';
+                obj.color = displayColor;
             }
 
             // obj.dashed = !!userData.invisibleFlag || bsObject.isHolder;

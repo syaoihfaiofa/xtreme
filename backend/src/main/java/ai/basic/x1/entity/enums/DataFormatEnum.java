@@ -12,5 +12,13 @@ public enum DataFormatEnum {
     /**
      * COCO
      */
-    COCO
+    COCO,
+    /**
+     * KITTI 3D object detection
+     */
+    KITTI,
+    /**
+     * nuScenes v1.0 dataset
+     */
+    NUSCENES
 }

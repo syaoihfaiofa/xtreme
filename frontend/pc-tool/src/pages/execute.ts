@@ -20,7 +20,7 @@ export function execute(): IPageHandler {
     // datasetId=30093&dataId=352734&type=readOnly
 
     async function init() {
-        let { state, bsState } = editor;
+        let { bsState } = editor;
         if (!bsState.query.recordId) {
             editor.showMsg('error', editor.lang('invalid-query'));
             return;
@@ -43,11 +43,6 @@ export function execute(): IPageHandler {
                 // load model
                 loadModels(),
             ]);
-            if (state.isSeriesFrame) {
-                await editor.loadManager.loadAllObjects();
-                // await editor.loadManager.loadAllClassification();
-            }
-            // load first data
             await editor.loadFrame(0, false);
             await focusObject();
         } catch (error: any) {

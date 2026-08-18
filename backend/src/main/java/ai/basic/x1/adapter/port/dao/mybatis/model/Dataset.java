@@ -1,7 +1,9 @@
 package ai.basic.x1.adapter.port.dao.mybatis.model;
 
 import ai.basic.x1.entity.enums.DatasetTypeEnum;
+import ai.basic.x1.entity.DatasetInferenceConfig;
 import com.baomidou.mybatisplus.annotation.*;
+import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -36,6 +38,19 @@ public class Dataset implements Serializable {
      * Dataset type LIDAR_FUSION,LIDAR_BASIC,IMAGE
      */
     private DatasetTypeEnum type;
+
+    /**
+     * Whether cross-frame static/dynamic object sync is enabled (only meaningful for LIDAR_FUSION)
+     */
+    private Boolean syncMode;
+
+    /**
+     * Whether automatic scene inference and tracking is enabled.
+     */
+    private Boolean inferenceMode;
+
+    @TableField(value = "inference_config", typeHandler = JacksonTypeHandler.class)
+    private DatasetInferenceConfig inferenceConfig;
 
     /**
      * Dataset description

@@ -16,6 +16,7 @@ export default class SelectAction extends Action {
     private _clickValid: boolean = false;
     private _mouseDownPos: THREE.Vector2 = new THREE.Vector2();
     private raycaster: THREE.Raycaster = new THREE.Raycaster();
+    private clickHandler: _.DebouncedFunc<(event: MouseEvent) => void>;
 
     constructor(renderView: MainRenderView | Image2DRenderView) {
         super();
@@ -25,7 +26,10 @@ export default class SelectAction extends Action {
         this.onMouseDown = this.onMouseDown.bind(this);
         this.onMouseUp = this.onMouseUp.bind(this);
         // this.onDBLClick = this.onDBLClick.bind(this);
-        this.onClick = _.debounce(this.onClick.bind(this), 500, { leading: true, trailing: false });
+        this.clickHandler = _.debounce(this.onClick.bind(this), 500, {
+            leading: true,
+            trailing: false,
+        });
     }
     init() {
         let dom = this.renderView.container;
@@ -35,7 +39,17 @@ export default class SelectAction extends Action {
         dom.addEventListener('mousedown', this.onMouseDown);
         dom.addEventListener('mouseup', this.onMouseUp);
         // dom.addEventListener('dblclick', this.onDBLClick);
-        dom.addEventListener('click', this.onClick);
+        dom.addEventListener('click', this.clickHandler);
+    }
+
+    destroy(): void {
+        const dom = this.renderView.container;
+        dom.removeEventListener('mousedown', this.onMouseDown);
+        dom.removeEventListener('mouseup', this.onMouseUp);
+        dom.removeEventListener('click', this.clickHandler);
+        this.clickHandler.cancel();
+        this._mouseDown = false;
+        this._clickValid = false;
     }
 
     onDBLClick(event: MouseEvent) {

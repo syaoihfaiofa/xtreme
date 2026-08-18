@@ -25,6 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
@@ -197,6 +198,27 @@ public class DataInfoController extends BaseDatasetController {
     @PostMapping("splitScene")
     public void splitScene(@RequestBody @Validated DataSplitSceneDTO dto, @LoggedUser LoggedUserDTO userDTO) {
         dataInfoUsecase.splitScene(dto.getDatasetId(), dto.getSceneIds(), userDTO.getId());
+    }
+
+    @PostMapping("uploadSceneLocation/{sceneId}")
+    public SceneLocationUploadResultDTO uploadSceneLocation(@PathVariable Long sceneId,
+                                                            @RequestParam("file") MultipartFile file) {
+        return DefaultConverter.convert(dataInfoUsecase.uploadSceneLocation(sceneId, file),
+                SceneLocationUploadResultDTO.class);
+    }
+
+    @PostMapping("importSceneResult/{sceneId}")
+    public SceneResultImportResultDTO importSceneResult(@PathVariable Long sceneId,
+                                                        @RequestParam("file") MultipartFile file,
+                                                        @LoggedUser LoggedUserDTO userDTO) {
+        return DefaultConverter.convert(
+                dataInfoUsecase.importSceneResult(sceneId, file, userDTO.getId()),
+                SceneResultImportResultDTO.class);
+    }
+
+    @GetMapping(value = "staticGlobalMap/{sceneId}", produces = "text/html;charset=UTF-8")
+    public String staticGlobalMap(@PathVariable Long sceneId) {
+        return dataInfoUsecase.buildStaticGlobalMapHtml(sceneId);
     }
 
     @GetMapping("generatePresignedUrl")

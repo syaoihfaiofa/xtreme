@@ -15,6 +15,79 @@
                     />
                 </span>
             </a-tooltip>
+            <a-popover
+                v-model:open="autoLoadSettingsOpen"
+                trigger="click"
+                placement="topLeft"
+                overlayClassName="autoload-settings-popover"
+            >
+                <template #content>
+                    <div class="autoload-settings-content">
+                        <div class="autoload-settings-title">
+                            {{ editor.lang('autoLoadSettings') }}
+                        </div>
+                        <div class="autoload-settings-total">
+                            {{ editor.lang('autoLoadTotalFrames', { n: total }) }}
+                        </div>
+                        <div class="autoload-settings-row">
+                            <label>{{ editor.lang('autoLoadStartFrame') }}</label>
+                            <a-input-number
+                                v-model:value="autoLoadStartFrame"
+                                :min="1"
+                                :max="total"
+                                :precision="0"
+                                size="small"
+                            />
+                        </div>
+                        <div class="autoload-settings-row">
+                            <label>{{ editor.lang('autoLoadEndFrame') }}</label>
+                            <a-input-number
+                                v-model:value="autoLoadEndFrame"
+                                :min="1"
+                                :max="total"
+                                :precision="0"
+                                size="small"
+                            />
+                        </div>
+                        <div class="autoload-settings-row">
+                            <label>{{ editor.lang('autoLoadMaxFrames') }}</label>
+                            <a-input-number
+                                v-model:value="autoLoadMaxFrames"
+                                :min="1"
+                                :max="total"
+                                :precision="0"
+                                size="small"
+                            />
+                        </div>
+                        <a-button type="primary" size="small" block @click="applyAutoLoadSettings">
+                            {{ editor.lang('autoLoadApply') }}
+                        </a-button>
+                    </div>
+                </template>
+                <a-tooltip placement="top">
+                    <template #title>{{ editor.lang('autoLoadSettings') }}</template>
+                    <a-button class="autoload-settings-button" size="small">
+                        <template #icon><SettingOutlined /></template>
+                    </a-button>
+                </a-tooltip>
+            </a-popover>
+            <span class="track-frame-filter-label">{{ editor.lang('selectedTrackFrames') }}</span>
+            <a-tooltip placement="top">
+                <template #title>
+                    {{
+                        editor.currentTrack
+                            ? editor.lang('selectedTrackFramesTip')
+                            : editor.lang('selectedTrackFramesNoTarget')
+                    }}
+                </template>
+                <span @keydown.capture="(e) => e.stopPropagation()">
+                    <a-switch
+                        :checked="config.filterFramesByTrack"
+                        @change="onTrackFrameFilterChange"
+                        style="margin-right: 10px"
+                    />
+                </span>
+            </a-tooltip>
             <div v-show="disable" class="over-not-allowed"></div>
         </div>
         <div class="bar-center">
@@ -179,11 +252,17 @@
 <script lang="ts" setup>
     import * as _ from 'lodash';
     import { ref, computed, watch, reactive } from 'vue';
+    import { Event } from 'pc-editor';
 
     import useUI from '../../hook/useUI';
     import { ITrackAction, IBottomState } from './useTimeLine';
 
-    import { StepForwardOutlined, StepBackwardOutlined, CopyOutlined } from '@ant-design/icons-vue';
+    import {
+        StepForwardOutlined,
+        StepBackwardOutlined,
+        CopyOutlined,
+        SettingOutlined,
+    } from '@ant-design/icons-vue';
     import { useInjectEditor } from '../../state';
     import toolTipTrack from './toolTipTrack.vue';
     import toolTipMerge from './toolTipMerge.vue';
@@ -198,6 +277,10 @@
         // autoLoad: false,
         frameIndex: editor.state.frameIndex + 1,
     });
+    const autoLoadSettingsOpen = ref(false);
+    const autoLoadStartFrame = ref(1);
+    const autoLoadEndFrame = ref(Math.max(1, editor.state.frames.length));
+    const autoLoadMaxFrames = ref(80);
     const autoLoadSwitch = ref<HTMLElement>();
     const emit = defineEmits(['onTrackAction', 'updateTrackLine']);
 
@@ -211,13 +294,31 @@
     );
 
     const isPreDisabled = computed(() => {
-        return editor.state.frameIndex <= 0 || disable.value;
+        void props.state.trackTargetLine.trackId;
+        return !editor.canNavigateFrame(-1) || disable.value;
     });
     const isNextDisabled = computed(() => {
-        return editor.state.frameIndex >= editor.state.frames.length - 1 || disable.value;
+        void props.state.trackTargetLine.trackId;
+        return !editor.canNavigateFrame(1) || disable.value;
     });
     const total = computed(() => {
         return editor.state.frames.length;
+    });
+    watch(autoLoadSettingsOpen, (open) => {
+        if (!open) return;
+        const frameTotal = Math.max(1, editor.state.frames.length);
+        autoLoadStartFrame.value = Math.max(
+            1,
+            Math.min(frameTotal, config.autoLoadStartFrame || 1),
+        );
+        autoLoadEndFrame.value = Math.max(
+            autoLoadStartFrame.value,
+            Math.min(frameTotal, config.autoLoadEndFrame || frameTotal),
+        );
+        autoLoadMaxFrames.value = Math.max(
+            1,
+            Math.min(frameTotal, config.autoLoadMaxFrames || 80),
+        );
     });
 
     type IBarAction =
@@ -245,8 +346,41 @@
         autoLoadSwitch.value?.blur();
         onAction('AutoLoad');
     }
+    function applyAutoLoadSettings() {
+        const frameTotal = Math.max(1, editor.state.frames.length);
+        const start = Math.max(1, Math.min(frameTotal, Math.round(autoLoadStartFrame.value || 1)));
+        const end = Math.max(
+            start,
+            Math.min(frameTotal, Math.round(autoLoadEndFrame.value || frameTotal)),
+        );
+        autoLoadStartFrame.value = start;
+        autoLoadEndFrame.value = end;
+        const maxFrames = Math.max(
+            1,
+            Math.min(end - start + 1, Math.round(autoLoadMaxFrames.value || 80)),
+        );
+        autoLoadMaxFrames.value = maxFrames;
+        config.autoLoadStartFrame = start;
+        config.autoLoadEndFrame = end;
+        config.autoLoadMaxFrames = maxFrames;
+        editor.dataResource.applyAutoLoadConfig();
+        autoLoadSettingsOpen.value = false;
+        editor.showMsg('success', editor.lang('autoLoadSettingsApplied'));
+    }
+    function onTrackFrameFilterChange(checked: boolean) {
+        config.filterFramesByTrack = checked;
+        editor.dispatchEvent({
+            type: Event.CURRENT_TRACK_CHANGE,
+            data: editor.currentTrack,
+        });
+        if (config.autoLoad) {
+            editor.dataResource.load();
+        }
+        if (checked && !editor.currentTrack) {
+            editor.showMsg('warning', editor.lang('selectedTrackFramesNoTarget'));
+        }
+    }
     function onAction(action: IBarAction) {
-        const { frames } = editor.state;
         switch (action) {
             case 'AutoLoad':
                 editor.dataResource.setLoadMode(config.autoLoad ? 'near_2' : 'all');
@@ -263,12 +397,10 @@
                 rePlay();
                 break;
             case 'PreFrame':
-                iState.frameIndex = Math.max(1, Math.min(frames.length, iState.frameIndex - 1));
-                changeFrameIndex('Previous');
+                editor.navigateFrame(-1);
                 break;
             case 'NextFrame':
-                iState.frameIndex = Math.max(1, Math.min(frames.length, iState.frameIndex + 1));
-                changeFrameIndex('Next');
+                editor.navigateFrame(1);
                 break;
             case 'Play':
                 play();
@@ -290,14 +422,15 @@
         if (editor.playManager.playing) {
             editor.playManager.stop();
         }
-        await editor.loadFrame(props.state.playStart, false);
+        await editor.loadFrameForNavigation(props.state.playStart, false);
         play();
     }
 
     function play() {
         const { frames, frameIndex } = editor.state;
         const pState = props.state;
-        const nextData = frames[frameIndex + 1];
+        const nextIndex = editor.getAdjacentFrameIndex(1);
+        const nextData = frames[nextIndex];
         if (!nextData || nextData.loadState !== 'complete') {
             editor.showMsg('warning', editor.lang('noPlayData'));
             return;
@@ -311,7 +444,9 @@
     const changeFrameIndex = _.debounce((method: 'Input' | 'Next' | 'Previous') => {
         const beforeIndex = editor.state.frameIndex;
         if (!iState.frameIndex) iState.frameIndex = 1;
-        editor.loadFrame(iState.frameIndex - 1);
+        editor.loadFrameForNavigation(iState.frameIndex - 1).then((loaded) => {
+            if (!loaded) iState.frameIndex = editor.state.frameIndex + 1;
+        });
         // editor.reportManager.reportChangeFrame(method, beforeIndex + 1);
         // frameIndexChange(iState.frameIndex);
     }, 300);
@@ -341,6 +476,16 @@
             position: relative;
             align-items: center;
             height: 100%;
+        }
+
+        .track-frame-filter-label {
+            display: inline-block;
+            padding-right: 8px;
+        }
+
+        .autoload-settings-button {
+            margin-right: 10px;
+            padding: 0 6px;
         }
 
         .bar-right {
@@ -414,6 +559,39 @@
             &.icon {
                 margin-right: 5px;
                 margin-left: 8px;
+            }
+        }
+    }
+
+    .autoload-settings-popover {
+        .autoload-settings-content {
+            width: 220px;
+        }
+
+        .autoload-settings-title {
+            margin-bottom: 2px;
+            font-weight: 600;
+        }
+
+        .autoload-settings-total {
+            margin-bottom: 10px;
+            color: #8c8c8c;
+            font-size: 12px;
+        }
+
+        .autoload-settings-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+
+            > label {
+                margin-right: 8px;
+                font-size: 12px;
+            }
+
+            .ant-input-number {
+                width: 92px;
             }
         }
     }

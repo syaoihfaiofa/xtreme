@@ -25,27 +25,93 @@ export default class DataManager {
     // object
     dataMap: Map<string, AnnotateObject[]> = new Map();
     hasMap: Map<string, Map<string, AnnotateObject>> = new Map();
+    private displayCacheFrameKey?: string;
+    private displayCacheFrameIndex?: number;
+
     constructor(editor: Editor) {
         this.editor = editor;
         this.initEvent();
     }
 
+    private normalizeFrameId(frameId: string | number): string {
+        return String(frameId);
+    }
+
+    private clearDisplayCache(): void {
+        this.displayCacheFrameKey = undefined;
+        this.displayCacheFrameIndex = undefined;
+    }
+
+    private dedupeFrameObjectsByTrackId(objects: AnnotateObject[]): AnnotateObject[] {
+        const keptByTrack = new Map<string, AnnotateObject>();
+        const withoutTrack: AnnotateObject[] = [];
+        objects.forEach((object) => {
+            if (!(object instanceof Box)) {
+                withoutTrack.push(object);
+                return;
+            }
+            const trackId = object.userData?.trackId;
+            if (!trackId) {
+                withoutTrack.push(object);
+                return;
+            }
+            const existing = keptByTrack.get(trackId);
+            if (!existing) {
+                keptByTrack.set(trackId, object);
+                return;
+            }
+            const existingBackId = (existing.userData as IUserData).backId;
+            const newBackId = (object.userData as IUserData).backId;
+            if (!existingBackId && newBackId) {
+                keptByTrack.set(trackId, object);
+            }
+        });
+        return [...withoutTrack, ...keptByTrack.values()];
+    }
+
+    private buildDisplayAnnotate3D(
+        objects: AnnotateObject[],
+        filterMap: ReturnType<DataManager['getActiveFilter']>,
+        withoutTaskId: string,
+    ): { annotate2D: Object2D[]; annotate3D: Box[] } {
+        const annotate2D: Object2D[] = [];
+        const annotate3D: Box[] = [];
+        objects.forEach((object) => {
+            const userData = object.userData as Required<IUserData>;
+            const sourceId = userData.sourceId || withoutTaskId;
+            const valid = filterMap.all || filterMap.source[sourceId];
+            if (!valid) return;
+            if (object instanceof Box) {
+                object.parent = this.editor.pc.annotate3D;
+                annotate3D.push(object);
+            } else if (object instanceof Object2D) {
+                annotate2D.push(object);
+            }
+        });
+        return { annotate2D, annotate3D };
+    }
+
     hasObject(uuid: string, frame?: IFrame): boolean {
         frame = frame || this.editor.getCurrentFrame();
-        let frameMap = this.hasMap.get(frame.id);
+        const frameKey = this.normalizeFrameId(frame.id);
+        const frameMap = this.hasMap.get(frameKey);
         return !!frameMap && frameMap.has(uuid);
     }
 
     setHasMap(uuid: string, object: AnnotateObject, frame?: IFrame) {
         frame = frame || this.editor.getCurrentFrame();
-        let frameMap = this.hasMap.get(frame.id);
-        if (!frameMap) frameMap = new Map();
+        const frameKey = this.normalizeFrameId(frame.id);
+        let frameMap = this.hasMap.get(frameKey);
+        if (!frameMap) {
+            frameMap = new Map();
+            this.hasMap.set(frameKey, frameMap);
+        }
         frameMap.set(uuid, object);
     }
 
     removeHasMap(uuid: string, frame?: IFrame) {
         frame = frame || this.editor.getCurrentFrame();
-        let frameMap = this.hasMap.get(frame.id);
+        const frameMap = this.hasMap.get(this.normalizeFrameId(frame.id));
         if (frameMap) frameMap.delete(uuid);
     }
 
@@ -59,11 +125,23 @@ export default class DataManager {
         frame = frame || this.editor.getCurrentFrame();
         let allObjects = this.getFrameObject(frame.id) || [];
 
-        objects.forEach((e) => {
-            if (this.hasObject(e.uuid, frame)) return;
-            allObjects.push(e);
-            this.setHasMap(e.uuid, e, frame);
-            this.editor.trackManager.updateObjectRenderInfo(e);
+        objects.forEach((object) => {
+            if (this.hasObject(object.uuid, frame)) return;
+            if (object instanceof Box && object.userData?.trackId) {
+                const trackId = object.userData.trackId;
+                const duplicateIndex = allObjects.findIndex(
+                    (item) =>
+                        item instanceof Box && (item.userData as IUserData).trackId === trackId,
+                );
+                if (duplicateIndex >= 0) {
+                    const removed = allObjects[duplicateIndex];
+                    this.removeHasMap(removed.uuid, frame);
+                    allObjects.splice(duplicateIndex, 1);
+                }
+            }
+            allObjects.push(object);
+            this.setHasMap(object.uuid, object, frame);
+            this.editor.trackManager.updateObjectRenderInfo(object);
         });
 
         frame.needSave = true;
@@ -176,13 +254,19 @@ export default class DataManager {
             }
         });
 
+        this.editor.markSyncDirtyForTransform(objects, datas);
         this.onAnnotatesChange(objects, frame, { type: 'transform', datas });
     }
 
     initEvent() {}
 
-    clear() {
+    clear(): void {
         this.dataMap.clear();
+        this.hasMap.clear();
+    }
+
+    destroy(): void {
+        this.clear();
     }
 
     onAnnotatesChange(
@@ -212,8 +296,8 @@ export default class DataManager {
     onAnnotatesAdd(objects: AnnotateObject[], frame?: IFrame) {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
+        this.clearDisplayCache();
         this.editor.pc.render();
-        console.log('onAnnotatesAdd', { objects, frame });
         this.editor.trackManager.addTrackCount(objects, frame);
         this.editor.dispatchEvent({ type: Event.ANNOTATE_ADD, data: { objects, frame } });
     }
@@ -221,63 +305,67 @@ export default class DataManager {
     onAnnotatesRemove(objects: AnnotateObject[], frame?: IFrame) {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
+        this.clearDisplayCache();
         this.editor.pc.render();
-        console.log('onAnnotatesRemove', { objects, frame });
         this.editor.trackManager.removeTrackCount(objects, frame);
         this.editor.dispatchEvent({ type: Event.ANNOTATE_REMOVE, data: { objects, frame } });
     }
 
     setFrameObject(frameId: string, objects: AnnotateObject[]) {
-        let frame = this.editor.getFrame(frameId);
-        objects.forEach((e) => {
-            (e as any).frame = frame;
+        const frameKey = this.normalizeFrameId(frameId);
+        const frame = this.editor.getFrame(frameId);
+        const normalizedObjects = this.dedupeFrameObjectsByTrackId(objects);
+        normalizedObjects.forEach((object) => {
+            (object as any).frame = frame;
         });
-        this.dataMap.set(frameId, objects);
+        this.dataMap.set(frameKey, normalizedObjects);
+        this.clearDisplayCache();
     }
 
     getFrameObject(frameId: string) {
-        return this.dataMap.get(frameId);
+        return this.dataMap.get(this.normalizeFrameId(frameId));
     }
 
     loadDataFromManager() {
-        let frame = this.editor.getCurrentFrame();
+        const frame = this.editor.getCurrentFrame();
+        const frameKey = this.normalizeFrameId(frame.id);
+        const frameIndex = this.editor.state.frameIndex;
+        if (
+            this.displayCacheFrameKey === frameKey &&
+            this.displayCacheFrameIndex === frameIndex
+        ) {
+            return;
+        }
 
-        console.log('loadDataFromManager', this.editor.state.frameIndex);
+        let objects = this.getFrameObject(frameKey) || [];
+        const dedupedObjects = this.dedupeFrameObjectsByTrackId(objects);
+        if (dedupedObjects.length !== objects.length) {
+            objects = dedupedObjects;
+            this.setFrameObject(frameKey, objects);
+            const rebuiltHasMap = new Map<string, AnnotateObject>();
+            objects.forEach((object) => rebuiltHasMap.set(object.uuid, object));
+            this.hasMap.set(frameKey, rebuiltHasMap);
+        }
 
-        let objects = this.getFrameObject(frame.id) || [];
-        let {
+        const {
             config: { withoutTaskId },
         } = this.editor.state;
-        // console.log(config, config.dataId, objects);
 
         if (this.editor.needUpdateFilter) this.setFilterFromData();
 
-        let filterMap = this.getActiveFilter();
-        // console.log('filterMap', filterMap);
-        let annotate2D = [] as Object2D[];
-        let annotate3D = [] as Box[];
-        // let filterObjects = [] as AnnotateObject[];
-        objects.forEach((e) => {
-            let userData = e.userData as Required<IUserData>;
+        const filterMap = this.getActiveFilter();
+        const { annotate2D, annotate3D } = this.buildDisplayAnnotate3D(
+            objects,
+            filterMap,
+            withoutTaskId,
+        );
 
-            let sourceId = userData.sourceId || withoutTaskId;
-            let valid = filterMap.all || filterMap.source[sourceId];
-            if (!valid) return;
-
-            if (e instanceof Box) {
-                e.parent = this.editor.pc.annotate3D;
-                annotate3D.push(e);
-            } else if (e instanceof Object2D) annotate2D.push(e);
-
-            // filterObjects.push(e);
-        });
-
-        // this.editor.pc.addObject(annotate3D);
         this.editor.pc.annotate2D = annotate2D;
         this.editor.pc.annotate3D.children = annotate3D;
         this.editor.dispatchEvent({ type: Event.ANNOTATE_LOAD });
         this.editor.pc.render();
-        // this.editor.updateIDCounter();
+        this.displayCacheFrameKey = frameKey;
+        this.displayCacheFrameIndex = frameIndex;
     }
 
     setFilterFromData() {
@@ -408,6 +496,7 @@ export default class DataManager {
         _targetObjects: any[],
         _trackIdName: Record<string, string>,
         _onComplete?: () => void,
+        _useZ?: boolean,
     ) {}
     copyForward() {
         return this.track({
@@ -430,6 +519,7 @@ export default class DataManager {
         object: 'select' | 'all';
         direction: 'BACKWARD' | 'FORWARD';
         frameN: number;
+        useZ?: boolean;
     }) {
         let editor = this.editor;
         let { frameIndex, frames } = editor.state;
@@ -465,7 +555,7 @@ export default class DataManager {
         };
         let ids = getToDataId();
         if (ids.length === 0) {
-            // editor.showMsg('warning', props.state.$$('warnEmptyTarget'));
+            editor.showMsg('warning', editor.lang('track-no-data'));
             return;
         }
 
@@ -480,7 +570,7 @@ export default class DataManager {
             editor.showMsg('success', editor.lang('copy-ok'));
             this.gotoNext(ids[0]);
         } else {
-            await this.modelTrack(ids, objects, option.direction);
+            await this.modelTrack(ids, objects, option.direction, option.useZ ?? true);
         }
     }
     gotoNext(dataId: string) {
@@ -495,6 +585,7 @@ export default class DataManager {
         toIds: string[],
         objects: AnnotateObject[],
         direction: 'BACKWARD' | 'FORWARD',
+        useZ = true,
     ) {
         let editor = this.editor;
         let { frameIndex, frames } = editor.state;
@@ -532,6 +623,6 @@ export default class DataManager {
 
         this.runModelTrack(curId, toIds, direction, targetObjects, trackIdName, () => {
             this.gotoNext(toIds[0]);
-        });
+        }, useZ);
     }
 }

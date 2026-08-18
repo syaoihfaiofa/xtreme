@@ -114,6 +114,9 @@ function getDefaultConfig(): IConfig {
         enableShowAttr: false,
         //
         filter2DByTrack: false,
+        filterFramesByTrack: false,
+        filterFramesByComment: false,
+        commentFrameIds: [],
         singleImgViewIndex: 0,
         imgRegionIndex: -1,
         //
@@ -128,7 +131,7 @@ function getDefaultConfig(): IConfig {
         // project
         projectPoint4: true,
         projectPoint8: true,
-        projectMap3d: true,
+        projectMap3d: false,
         // config
         pointSize: 0.1,
         heightRange: [-10000, 10000],
@@ -158,7 +161,7 @@ function getDefaultConfig(): IConfig {
         renderRect: true,
         // renderProjectRect: true,
         renderBox: true,
-        renderProjectBox: true,
+        renderProjectBox: false,
         renderProjectPoint: false,
         //
         FILTER_ALL: 'All',
@@ -169,5 +172,9 @@ function getDefaultConfig(): IConfig {
         withoutTaskId: withoutTaskId,
         boxMethod: 'AI',
         autoLoad: false,
+        autoLoadStartFrame: 1,
+        // 0 means the last frame of the current scene.
+        autoLoadEndFrame: 0,
+        autoLoadMaxFrames: 80,
     };
 }

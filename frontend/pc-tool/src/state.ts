@@ -1,4 +1,4 @@
-import { provide, inject, reactive } from 'vue';
+import { provide, inject, onBeforeUnmount, reactive } from 'vue';
 import { IBSState } from './type';
 import Editor from './common/Editor';
 import { initRegistry } from './registry';
@@ -20,6 +20,11 @@ export function useProvideEditor() {
 
     provide(bsContext, editor);
     provide(stateContext, editor.state);
+    onBeforeUnmount(() => {
+        editor.destroy();
+        // @ts-ignore
+        if (window.editor === editor) window.editor = undefined;
+    });
 
     return editor;
 }
@@ -48,6 +53,13 @@ export function getDefault(): IBSState {
         },
         datasetName: '',
         datasetType: '',
+        syncMode: false,
+        inferenceMode: false,
+        inferenceConfig: null,
+        inferenceEnsuring: false,
+        inferenceTask: null,
+        inferenceRequestError: '',
+        reviewMode: false,
         datasetId: '',
         recordId: '',
     };

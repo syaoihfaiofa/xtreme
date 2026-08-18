@@ -32,10 +32,6 @@ export function view(): IPageHandler {
             await loadDataSetInfo();
             await loadUserInfo();
             await Promise.all([loadDateSetClassification(), loadClasses(), loadDataInfo()]);
-            if (state.isSeriesFrame) {
-                await editor.loadManager.loadAllObjects();
-                // await editor.loadManager.loadAllClassification();
-            }
             await editor.loadFrame(0, false);
         } catch (error: any) {
             editor.handleErr(new BSError('', editor.lang('load-error'), error));
@@ -75,7 +71,7 @@ export function view(): IPageHandler {
             skipped: false,
         };
 
-        editor.state.frames = [data];
+        editor.setFrames([data]);
     }
 
     function onAction(action: IAction) {}

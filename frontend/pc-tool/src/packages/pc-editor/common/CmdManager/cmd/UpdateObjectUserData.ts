@@ -62,7 +62,7 @@ export default class UpdateObjectUserData extends CmdBase<
         let offsetTime = Math.abs(this.updateTime - cmd.updateTime);
         let valid =
             cmd instanceof UpdateObjectUserData &&
-            data.objects === data.objects &&
+            this.data.objects === cmd.data.objects &&
             !Array.isArray(data.data) &&
             offsetTime < 1000;
 

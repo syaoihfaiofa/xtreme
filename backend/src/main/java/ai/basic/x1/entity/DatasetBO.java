@@ -35,6 +35,15 @@ public class DatasetBO {
     private DatasetTypeEnum type;
 
     /**
+     * Whether cross-frame static/dynamic object sync is enabled (only meaningful for LIDAR_FUSION)
+     */
+    private Boolean syncMode;
+
+    private Boolean inferenceMode;
+
+    private DatasetInferenceConfig inferenceConfig;
+
+    /**
      * Dataset description
      */
     private String description;

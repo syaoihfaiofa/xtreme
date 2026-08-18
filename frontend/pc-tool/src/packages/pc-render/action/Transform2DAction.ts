@@ -10,6 +10,7 @@ export default class Transform2DAction extends Action {
     static actionName: string = 'transform-2d';
     renderView: Image2DRenderView;
     container: HTMLDivElement;
+    private documentCleanups = new Set<() => void>();
     constructor(renderView: Image2DRenderView) {
         super();
 
@@ -52,13 +53,20 @@ export default class Transform2DAction extends Action {
             containerMatrix.multiplyMatrices(matrix, startMatrix);
             this.onRender();
         }, 40);
-        function onDocUp() {
+        let onDocUp: () => void;
+        const cleanup = () => {
             document.removeEventListener('mousemove', onDocMove);
             document.removeEventListener('mouseup', onDocUp);
-        }
+            onDocMove.cancel();
+            this.documentCleanups.delete(cleanup);
+        };
+        onDocUp = () => {
+            cleanup();
+        };
 
         document.addEventListener('mousemove', onDocMove);
         document.addEventListener('mouseup', onDocUp);
+        this.documentCleanups.add(cleanup);
     }
 
     onZoom(e: WheelEvent) {
@@ -87,5 +95,10 @@ export default class Transform2DAction extends Action {
         containerMatrix.identity();
         this.onRender();
     }
-    destroy() {}
+    destroy(): void {
+        this.container.removeEventListener('wheel', this.onZoom);
+        this.container.removeEventListener('mousedown', this.onMousedown);
+        this.documentCleanups.forEach((cleanup) => cleanup());
+        this.documentCleanups.clear();
+    }
 }

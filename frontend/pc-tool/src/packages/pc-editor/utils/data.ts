@@ -3,6 +3,11 @@ import { IUserData, IFrame, Const, Editor, IObject } from 'pc-editor';
 import { convertObject2Annotate } from './result';
 import * as THREE from 'three';
 import { setIdInfo } from './create';
+import { sameAnnotationClass } from './track';
+
+function boxTrackClassKey(userData: { trackId?: string; classId?: unknown; classType?: string }): string {
+    return `${userData.trackId || ''}::${userData.classId ?? userData.classType ?? ''}`;
+}
 
 export function copyData(editor: Editor, copyId: string, toIds: string[], objects: Box[]) {
     // let { dataManager, editor, state } = tool;
@@ -24,7 +29,7 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
         let oldMap = {} as Record<string, Box>;
         oldObjects.forEach((e: AnnotateObject) => {
             if (!(e instanceof Box)) return;
-            oldMap[e.userData.trackId] = e;
+            oldMap[boxTrackClassKey(e.userData)] = e;
         });
 
         let addOption = { objects: [], frame: frame } as {
@@ -36,11 +41,26 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
             let userData = annotate.userData as Required<IUserData>;
 
             let trackId = userData.trackId;
-            let object = oldMap[trackId];
+            let object = oldMap[boxTrackClassKey(userData)];
 
             if (object) {
                 let updateData = object.userData as IUserData;
                 updateData.trackName = userData.trackName;
+                updateData.groupId = userData.groupId;
+                updateData.motionMode = userData.motionMode;
+                updateData.syncDistance = userData.syncDistance;
+                updateData.syncMaxDisappearGap = userData.syncMaxDisappearGap;
+                updateData.syncLocationGapMs = userData.syncLocationGapMs;
+                updateData.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled;
+                updateData.dynamicSyncPreviousFrames = userData.dynamicSyncPreviousFrames;
+                updateData.dynamicSyncNextFrames = userData.dynamicSyncNextFrames;
+                updateData.syncPoseSegmentId = userData.syncPoseSegmentId;
+                updateData.syncPoseSegmentsInitialized = userData.syncPoseSegmentsInitialized;
+                updateData.syncUseZ = userData.syncUseZ;
+                updateData.syncYawOffsetDeg = userData.syncYawOffsetDeg;
+                updateData.syncXOffsetM = userData.syncXOffsetM;
+                updateData.syncYOffsetM = userData.syncYOffsetM;
+                updateData.occluded = userData.occluded === true;
                 // updateData.resultType = userData.resultType;
                 // updateData.isStandard = userData.isStandard;
                 updateData.classType = userData.classType;
@@ -105,7 +125,7 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
 
     let curObjectMap = {} as Record<string, Box>;
     objects.forEach((e) => {
-        if (e instanceof Box) curObjectMap[e.userData.trackId] = e;
+        if (e instanceof Box) curObjectMap[boxTrackClassKey(e.userData)] = e;
     });
 
     let updateDatas = { objects: [], data: [] } as { objects: AnnotateObject[]; data: IUserData[] };
@@ -122,7 +142,7 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
         let existMap = {} as Record<string, Box>;
         let existObjects = editor.dataManager.getFrameObject(frame.id) || [];
         existObjects.forEach((e) => {
-            if (e instanceof Box) existMap[e.userData.trackId] = e;
+            if (e instanceof Box) existMap[boxTrackClassKey(e.userData)] = e;
         });
 
         let addOption = { objects: [], frame: frame } as {
@@ -133,7 +153,7 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
         let trackObjects = objectsMap[dataId] || [];
         trackObjects.forEach((e: IObject) => {
             let trackId = (e as any).trackId;
-            let oldObject = existMap[trackId];
+            let oldObject = existMap[boxTrackClassKey(e as any)];
 
             if (oldObject) {
                 let oldUserData = editor.getObjectUserData(oldObject);
@@ -158,11 +178,34 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
                 updateTrans.objects.push(oldObject);
                 updateTrans.transforms.push(transform);
             } else {
-                const curObject = curObjectMap[trackId];
+                const curObject = curObjectMap[boxTrackClassKey(e as any)];
+                if (!curObject || !sameAnnotationClass(e as any, curObject.userData)) {
+                    const object = convertObject2Annotate([e], editor)[0];
+                    editor.updateObjectRenderInfo(object);
+                    setIdInfo(editor, object.userData);
+                    addOption.objects.push(object);
+                    return;
+                }
                 let userData = editor.getObjectUserData(curObject);
 
                 e.trackId = userData.trackId;
                 e.trackName = userData.trackName;
+                e.groupId = userData.groupId;
+                e.motionMode = userData.motionMode;
+                e.syncDistance = userData.syncDistance;
+                e.syncMaxDisappearGap = userData.syncMaxDisappearGap;
+                e.syncLocationGapMs = userData.syncLocationGapMs;
+                e.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled;
+                e.dynamicSyncPreviousFrames = userData.dynamicSyncPreviousFrames;
+                e.dynamicSyncNextFrames = userData.dynamicSyncNextFrames;
+                e.syncPoseSegmentId = userData.syncPoseSegmentId;
+                e.syncPoseSegmentsInitialized = userData.syncPoseSegmentsInitialized;
+                e.syncUseZ = userData.syncUseZ;
+                e.syncYawOffsetDeg = userData.syncYawOffsetDeg;
+                e.syncXOffsetM = userData.syncXOffsetM;
+                e.syncYOffsetM = userData.syncYOffsetM;
+                e.occluded = userData.occluded === true;
+                e.reviewedCorrect = userData.reviewedCorrect === true;
                 e.classType = userData.classType;
                 e.classId = userData.classId;
                 // e.resultType = userData.resultType;
@@ -193,8 +236,8 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
             editor.cmdManager.execute('update-object-user-data', updateDatas);
         }
 
-        // if (updateTrans.objects.length > 0) {
-        //     editor.cmdManager.execute('update-transform-batch', updateTrans);
-        // }
+        if (updateTrans.objects.length > 0) {
+            editor.cmdManager.execute('update-transform-batch', updateTrans);
+        }
     });
 }

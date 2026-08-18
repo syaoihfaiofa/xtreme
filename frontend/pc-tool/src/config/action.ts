@@ -38,6 +38,17 @@ export const generalActions: IBsActionName[] = [
     // 'filter2DByTrack',
 ];
 
+export const readonlyActions: IBsActionName[] = [
+    'nextFrame',
+    'preFrame',
+    'toggleClassView',
+    'toggleShowAnnotation',
+    'toggleShowLabel',
+    'toggleShowMeasure',
+    'pickObject',
+    'resultExpandToggle',
+];
+
 export const executeActions: IBsActionName[] = [
     ...sideActions,
     ...generalActions,
@@ -57,7 +68,7 @@ export const executeActions: IBsActionName[] = [
 ];
 
 export const viewActions: IBsActionName[] = [
-    ...generalActions,
+    ...readonlyActions,
     ...viewHelperActions,
     'focusObject',
 ];

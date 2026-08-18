@@ -5,6 +5,7 @@ export const BsUIType = {
     //
     rumModel: 'rumModel',
     flowSave: 'flowSave',
+    reviewMode: 'reviewMode',
 };
 export type IBsUIType = keyof typeof BsUIType;
 export const allUI = Object.keys(BsUIType) as IBsUIType[];
@@ -23,4 +24,5 @@ export const executeUI = [
     BsUIType.translate,
     BsUIType.rumModel,
     BsUIType.flowSave,
+    BsUIType.reviewMode,
 ] as IBsUIType[];

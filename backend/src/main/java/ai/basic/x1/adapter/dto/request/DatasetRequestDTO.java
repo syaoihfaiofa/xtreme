@@ -2,6 +2,7 @@ package ai.basic.x1.adapter.dto.request;
 
 
 import ai.basic.x1.adapter.api.annotation.valid.ValidStringEnum;
+import ai.basic.x1.entity.DatasetInferenceConfig;
 import ai.basic.x1.entity.enums.DatasetTypeEnum;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -41,6 +42,12 @@ public class DatasetRequestDTO {
      * Dataset description
      */
     private String description;
+
+    private Boolean syncMode;
+
+    private Boolean inferenceMode;
+
+    private DatasetInferenceConfig inferenceConfig;
 
     public interface GroupInsert extends Default {
     }

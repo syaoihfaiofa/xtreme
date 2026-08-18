@@ -1,4 +1,4 @@
-import { IAttr, ResultType, ResultStatus, IClassType } from 'pc-editor';
+import { IAttr, ResultType, ResultStatus, IClassType, MotionMode } from 'pc-editor';
 import { AnnotateType } from 'pc-render';
 
 export interface IInstanceItem {
@@ -43,6 +43,25 @@ export interface IState {
     objectId: string;
     trackId: string;
     trackName: string;
+    groupId: string;
+    sourceType: string;
+    occluded: boolean;
+    reviewedCorrect: boolean;
+    sensorDistance: number;
+    motionMode: MotionMode | '';
+    syncDistance: number;
+    syncMaxDisappearGap: number;
+    syncLocationGapMs: number;
+    dynamicRangeSyncEnabled: boolean;
+    dynamicSyncPreviousFrames: number;
+    dynamicSyncNextFrames: number;
+    syncPoseSegmentId?: string | number;
+    syncPoseSegmentsInitialized?: boolean;
+    syncUseZ: boolean;
+    syncYawOffsetDeg: number;
+    syncXOffsetM: number;
+    syncYOffsetM: number;
+    syncing: boolean;
     trackVisible: boolean;
     isStandard: boolean;
     resultType: ResultType | '';

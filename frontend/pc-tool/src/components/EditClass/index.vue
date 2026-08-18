@@ -30,7 +30,177 @@
                             </span>
                         </div>
                     </div>
+                    <div v-if="state.sourceType === 'INFERENCE'" class="inference-source">
+                        {{ $$('inference-source') }}
+                    </div>
+                    <div v-if="!state.isBatch" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sensor-distance') }}</span>
+                        <span>{{ state.sensorDistance.toFixed(2) }} m</span>
+                    </div>
+                    <div class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('group-id') }}</span>
+                        <a-input
+                            v-model:value="state.groupId"
+                            allow-clear
+                            placeholder="group id"
+                            @change="onGroupIdChange"
+                        />
+                    </div>
+                    <a-checkbox
+                        v-model:checked="state.occluded"
+                        style="margin: 8px 0"
+                        @change="onOccludedChange"
+                    >
+                        {{ $$('occluded') }}
+                    </a-checkbox>
+                    <a-checkbox
+                        v-if="editor.bsState.reviewMode"
+                        v-model:checked="state.reviewedCorrect"
+                        style="margin: 8px 0"
+                        @change="onReviewedCorrectChange"
+                    >
+                        Review Correct (Track)
+                    </a-checkbox>
                     <ObjectClass @change="onClassChange" :state="state" />
+                </a-collapse-panel>
+
+                <a-collapse-panel v-show="editor.bsState.syncMode" key="motion">
+                    <template #header="{ isActive }">
+                        <span class="item-header">
+                            <span class="title1">{{ $$('motion-mode') }}</span>
+                        </span>
+                    </template>
+                    <a-select
+                        v-model:value="state.motionMode"
+                        :options="motionModeOptions"
+                        style="width: 100%"
+                        @change="onMotionModeChange"
+                    />
+                    <div v-if="isDynamicMotionMode" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('dynamic-range-sync') }}</span>
+                        <a-switch
+                            v-model:checked="state.dynamicRangeSyncEnabled"
+                            @change="onDynamicRangeSyncEnabledChange"
+                        />
+                    </div>
+                    <template v-if="isDynamicMotionMode && state.dynamicRangeSyncEnabled">
+                        <div class="sync-distance-row">
+                            <span class="sync-distance-label">
+                                {{ $$('dynamic-sync-previous-frames') }}
+                            </span>
+                            <a-input-number
+                                v-model:value="state.dynamicSyncPreviousFrames"
+                                :min="0"
+                                :step="1"
+                                :precision="0"
+                                style="width: 100%"
+                                @change="onDynamicSyncPreviousFramesChange"
+                            />
+                        </div>
+                        <div class="sync-distance-row">
+                            <span class="sync-distance-label">
+                                {{ $$('dynamic-sync-next-frames') }}
+                            </span>
+                            <a-input-number
+                                v-model:value="state.dynamicSyncNextFrames"
+                                :min="0"
+                                :step="1"
+                                :precision="0"
+                                style="width: 100%"
+                                @change="onDynamicSyncNextFramesChange"
+                            />
+                        </div>
+                    </template>
+                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sync-distance') }}</span>
+                        <a-input-number
+                            v-model:value="state.syncDistance"
+                            :min="0.1"
+                            :step="1"
+                            :precision="1"
+                            addon-after="m"
+                            style="width: 100%"
+                            @change="onSyncDistanceChange"
+                        />
+                    </div>
+                    <a-checkbox
+                        v-if="
+                            state.motionMode === 'STATIC' ||
+                            (isDynamicMotionMode && state.dynamicRangeSyncEnabled)
+                        "
+                        v-model:checked="state.syncUseZ"
+                        style="margin-top: 8px"
+                        @change="onSyncUseZChange"
+                    >
+                        {{ $$('sync-use-z') }}
+                    </a-checkbox>
+                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sync-yaw-offset') }}</span>
+                        <a-input-number
+                            v-model:value="state.syncYawOffsetDeg"
+                            :step="0.1"
+                            :precision="2"
+                            addon-after="deg"
+                            style="width: 100%"
+                            @change="onSyncYawOffsetChange"
+                        />
+                    </div>
+                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sync-x-offset') }}</span>
+                        <a-input-number
+                            v-model:value="state.syncXOffsetM"
+                            :step="0.05"
+                            :precision="3"
+                            addon-after="m"
+                            style="width: 100%"
+                            @change="(value) => onSyncXYOffsetChange('x', value)"
+                        />
+                    </div>
+                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sync-y-offset') }}</span>
+                        <a-input-number
+                            v-model:value="state.syncYOffsetM"
+                            :step="0.05"
+                            :precision="3"
+                            addon-after="m"
+                            style="width: 100%"
+                            @change="(value) => onSyncXYOffsetChange('y', value)"
+                        />
+                    </div>
+                    <a-button
+                        type="primary"
+                        block
+                        :loading="state.syncing"
+                        style="margin-top: 8px"
+                        @click="onSyncClick"
+                    >
+                        {{ $$('sync-now') }}
+                    </a-button>
+                    <div class="sync-tip">{{ $$('sync-now-tip') }}</div>
+                    <div class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sync-location-gap') }}</span>
+                        <a-input-number
+                            v-model:value="state.syncLocationGapMs"
+                            :min="1"
+                            :step="1"
+                            :precision="0"
+                            addon-after="ms"
+                            style="width: 100%"
+                            @change="onSyncLocationGapMsChange"
+                        />
+                    </div>
+                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('sync-max-disappear-gap') }}</span>
+                        <a-input-number
+                            v-model:value="state.syncMaxDisappearGap"
+                            :min="0"
+                            :step="1"
+                            :precision="0"
+                            addon-after="frames"
+                            style="width: 100%"
+                            @change="onSyncMaxDisappearGapChange"
+                        />
+                    </div>
                 </a-collapse-panel>
 
                 <a-collapse-panel v-show="state.attrs.length > 0" key="attribute">
@@ -75,7 +245,7 @@
     } from '@ant-design/icons-vue';
     import * as _ from 'lodash';
     import * as locale from './lang';
-    import { Const } from 'pc-editor';
+    import { Const, MotionMode, utils } from 'pc-editor';
 
     import ObjectItem from './ObjectItem.vue';
     import ObjectClass from './ObjectClass.vue';
@@ -115,6 +285,7 @@
         ];
         return data;
     });
+    let motionModeOptions = computed(() => utils.getMotionModeOptions($$));
 
     // function onStatusChange(e: any) {
     //     editor.blurPage();
@@ -132,6 +303,20 @@
         control,
         onAttChange,
         onClassChange,
+        onGroupIdChange,
+        onOccludedChange,
+        onReviewedCorrectChange,
+        onMotionModeChange,
+        onSyncDistanceChange,
+        onSyncMaxDisappearGapChange,
+        onSyncLocationGapMsChange,
+        onDynamicRangeSyncEnabledChange,
+        onDynamicSyncPreviousFramesChange,
+        onDynamicSyncNextFramesChange,
+        onSyncUseZChange,
+        onSyncYawOffsetChange,
+        onSyncXYOffsetChange,
+        onSyncClick,
         onInstanceRemove,
         onToggleObjectsVisible,
         onRemoveObjects,
@@ -141,6 +326,11 @@
         onToggleTrackVisible,
         // toggleStandard,
     } = useEditClass();
+    let isDynamicMotionMode = computed(
+        () =>
+            state.motionMode === MotionMode.DYNAMIC_FIXED_SIZE ||
+            state.motionMode === MotionMode.DYNAMIC_VARIABLE_SIZE,
+    );
     defineExpose({
         update,
     });
@@ -217,6 +407,17 @@
             }
         }
 
+        .inference-source {
+            display: inline-block;
+            padding: 3px 8px;
+            margin: 6px 0;
+            color: #1f1f1f;
+            font-size: 12px;
+            font-weight: 500;
+            background: #ff9f1c;
+            border-radius: 3px;
+        }
+
         .item-header {
             height: 40px;
             display: flex;
@@ -249,6 +450,24 @@
             font-size: 12px;
             line-height: 20px;
             color: #bfbfbf;
+        }
+
+        .sync-tip {
+            color: #999;
+            font-size: 12px;
+            line-height: 18px;
+            margin-top: 6px;
+        }
+
+        .sync-distance-row {
+            margin-top: 8px;
+        }
+
+        .sync-distance-label {
+            color: #999;
+            display: block;
+            font-size: 12px;
+            margin-bottom: 4px;
         }
 
         .copy {

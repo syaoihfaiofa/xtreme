@@ -2,6 +2,11 @@ import { datasetTypeEnum } from './datasetModel';
 import { BasicPageParams, BasicFetchResult } from '/@/api/model/baseModel';
 
 /** Models List Start */
+export enum ModelType {
+  DETECTION = 'DETECTION',
+  TRACKING = 'TRACKING',
+}
+
 /** list item */
 export interface ModelListItem {
   id: number;
@@ -13,13 +18,19 @@ export interface ModelListItem {
   enable: boolean;
   description: Nullable<string>;
   scenario: Nullable<string>;
-  classes: Nullable<any[]>;
+  classes: Nullable<ModelClassItem[]>;
   createdAt: Date;
   createdBy: string | number;
   creatorName: string;
   datasetType: datasetTypeEnum;
+  modelType: ModelType;
   isInteractive: boolean;
   img: string;
+}
+
+export interface ModelClassItem {
+  name: string;
+  code: string;
 }
 /** list request params */
 export interface GetModelParams extends BasicPageParams {
@@ -72,6 +83,7 @@ export interface DataModelParam {
   isExcludeModelData: boolean;
   splitType?: string;
   annotationStatus?: string;
+  sceneIds?: number[];
 }
 export interface ResultsModelParam {
   minConfidence: number;
@@ -85,6 +97,56 @@ export interface runModelRunParams {
   modelId: number;
   resultFilterParam: Nullable<ResultsModelParam>;
   dataFilterParam: Nullable<DataModelParam>;
+}
+
+export type InferenceMotionMode =
+  | 'STATIC'
+  | 'DYNAMIC_FIXED_SIZE'
+  | 'DYNAMIC_VARIABLE_SIZE';
+
+export interface InferenceClassMapping {
+  modelClassCode: string;
+  datasetClassId: number;
+  motionMode: InferenceMotionMode;
+}
+
+export interface InferenceRunParams {
+  datasetId: number;
+  modelId: number;
+  sceneIds: number[];
+  startFrameNo?: number;
+  endFrameNo?: number;
+  syncDistance: number;
+  maxOutsideFrames: number;
+  associationIou: number;
+  minConfidence: number;
+  useZ: boolean;
+  classMappings: InferenceClassMapping[];
+}
+
+export type SceneInferenceRunStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'SUCCEEDED'
+  | 'FAILED';
+
+export interface SceneInferenceRunItem {
+  id: number;
+  datasetId: number;
+  sceneId: number;
+  startFrameNo?: number;
+  endFrameNo?: number;
+  sceneName?: string;
+  configHash: string;
+  configSnapshot: Omit<InferenceRunParams, 'datasetId' | 'sceneIds'>;
+  status: SceneInferenceRunStatus;
+  progress: number;
+  totalFrames: number;
+  completedFrames: number;
+  error: Nullable<string>;
+  affectedDataIds: number[];
+  createdAt: string;
+  updatedAt: string;
 }
 /** Runs End */
 
@@ -122,4 +184,5 @@ export interface ModelDataCountParams {
   isExcludeModelData: boolean;
   splitType?: string;
   annotationStatus?: string;
+  sceneIds?: string;
 }

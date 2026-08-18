@@ -195,10 +195,11 @@ export default function useInstance() {
         let curFrame = editor.getCurrentFrame();
         const _data = Array.isArray(datas) ? datas[0] : datas;
         if (type === 'userData') {
-            if ('trackId' in _data || 'classType' in _data) {
+            if ('trackId' in _data || 'classType' in _data || 'reviewedCorrect' in _data) {
                 updateListFlag = true;
             }
         }
+        if (type === 'reviewMode') updateListFlag = true;
         if (type === 'visible') {
             updateListFlag = true;
         }
@@ -340,6 +341,9 @@ export default function useInstance() {
                 trackMap[trackMapId] = trackItem;
             }
 
+            if (userData.reviewedCorrect === true) {
+                trackMap[trackMapId].reviewedCorrect = true;
+            }
             trackMap[trackMapId].data.push(item);
         });
 

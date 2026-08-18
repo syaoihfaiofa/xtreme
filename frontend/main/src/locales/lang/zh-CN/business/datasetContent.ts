@@ -133,4 +133,30 @@ export default {
     // TODO:
     forceUnlock: '强制解锁',
   },
+  scene: {
+    edit: '编辑',
+    editScene: '编辑场景',
+    detail: '详情',
+    runModelOnScene: '对场景内所有图片运行模型',
+    selectAllAcrossPages: '已选中该场景内的所有帧',
+    location: '定位',
+    uploadLocation: '上传定位文件',
+    uploadLocationTip:
+      '上传 location.txt，每行格式为"<帧名>: x y z yaw"，用于记录每一帧的传感器位姿，跟踪时会用它来补偿传感器自身的运动。',
+    locationFileTypeError: '仅支持 .txt 文件',
+    locationUploadSuccess: '定位文件上传成功，匹配帧数：',
+    locationUploadFail: '定位文件上传失败',
+    exportWithRawData: '同时导出原始数据文件（点云 / 图片 / location.txt）',
+    exportLabelsOnly:
+      '仅导出标签：不包含点云、图片和标定文件。导出的 ZIP 包内含标签格式说明文档。',
+    exportUseEgoZ: 'nuScenes ego_pose 使用 location.txt 中每帧的 ego Z',
+    importResult: '导入标签',
+    importResultTip:
+      '请先选中一个场景，再上传一个 zip 文件，结构与导出的标注结果一致（每帧对应一个 result/<帧名>.json）。系统会按文件名匹配到已有的帧，并作为标注结果导入。',
+    importResultSelectScene: '请先选中一个场景',
+    importResultDropText: '点击或将 zip 文件拖拽到此处，为该场景导入标签',
+    importResultSuccess: '导入完成，匹配帧数：',
+    importResultFail: '标签导入失败',
+    importResultFileTypeError: '仅支持 .zip 文件',
+  },
 };

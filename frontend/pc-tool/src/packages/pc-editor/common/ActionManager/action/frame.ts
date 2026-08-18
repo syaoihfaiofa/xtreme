@@ -7,10 +7,7 @@ export const nextFrame = define({
     //     return editor.state.isSeriesFrame;
     // },
     execute(editor: Editor) {
-        // editor.tool
-        const { frameIndex } = editor.state;
-        let toIndex = frameIndex + 1;
-        editor.loadFrame(toIndex);
+        editor.navigateFrame(1);
     },
 });
 export const preFrame = define({
@@ -18,8 +15,6 @@ export const preFrame = define({
     //     return editor.state.isSeriesFrame;
     // },
     execute(editor: Editor) {
-        const { frameIndex } = editor.state;
-        let toIndex = frameIndex - 1;
-        editor.loadFrame(toIndex);
+        editor.navigateFrame(-1);
     },
 });

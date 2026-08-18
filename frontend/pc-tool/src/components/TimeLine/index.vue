@@ -18,6 +18,12 @@
                         {{ getTitle(iState.trackTargetLine) || editor.lang('selectObject') }}</span
                     >
                 </div>
+                <div
+                    v-if="editor.bsState.reviewMode"
+                    class="i-line-height i-label review-progress-label"
+                >
+                    Review
+                </div>
                 <div v-show="iState.trackAction">
                     <div v-if="iState.trackList.length > 0" class="i-line-height i-label"></div>
                     <div>
@@ -39,6 +45,7 @@
                     :frames="editor.state.frames"
                     :status="iState.annotationStatus"
                     :config="iState.frameConfig"
+                    :frame-filter-mask="iState.trackFrameMask"
                 />
                 <!-- 当前追终对象 -->
                 <TrackLine
@@ -52,7 +59,25 @@
                     :annotates="iState.annotationStatus"
                     :spanWidth="iState.frameConfig.spanWidth"
                     :activeType="iState.activeType"
+                    :frame-filter-mask="iState.trackFrameMask"
+                    :segment-boundaries="iState.segmentBoundaries"
                 />
+                <div
+                    v-if="editor.bsState.reviewMode"
+                    class="i-line-height review-progress-line"
+                    :style="{ width: iState.reviewProgress.length * iState.frameConfig.spanWidth + 'px' }"
+                >
+                    <span
+                        v-for="(reviewed, index) in iState.reviewProgress"
+                        :key="index"
+                        class="review-progress-frame"
+                        :class="{
+                            reviewed,
+                            'filtered-out': !iState.trackFrameMask[index],
+                        }"
+                        :style="{ width: iState.frameConfig.spanWidth + 'px' }"
+                    ></span>
+                </div>
                 <!-- 操作提示 -->
                 <div v-if="iState.trackAction && iState.trackList.length > 0">
                     <div class="i-line-height">
@@ -77,6 +102,7 @@
                             :colorMap="iState.colorMap"
                             :spanWidth="iState.frameConfig.spanWidth"
                             :activeType="iState.activeType"
+                            :frame-filter-mask="iState.trackFrameMask"
                         />
                     </div>
                 </div>
@@ -230,8 +256,40 @@
             overflow: hidden;
         }
 
+        .review-progress-label {
+            height: 8px;
+            padding-left: 32px;
+            color: #8c8c8c;
+            font-size: 10px;
+            line-height: 8px;
+        }
+
+        .review-progress-line {
+            display: inline-flex;
+            height: 8px;
+            vertical-align: top;
+
+            .review-progress-frame {
+                display: inline-block;
+                height: 100%;
+                box-sizing: border-box;
+                border-right: 1px solid #1e1f22;
+                background: #303036;
+
+                &.reviewed {
+                    background: #49aa19;
+                }
+
+                &.filtered-out {
+                    background: #1e1f22;
+                    opacity: 0.35;
+                }
+            }
+        }
+
         .i-head {
             // padding-left: 200px;
+            position: relative;
         }
 
         .i-body {

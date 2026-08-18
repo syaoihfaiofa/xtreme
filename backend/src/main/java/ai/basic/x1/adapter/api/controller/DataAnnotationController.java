@@ -8,6 +8,7 @@ import ai.basic.x1.adapter.dto.response.DataAnnotationResultDTO;
 import ai.basic.x1.entity.DataAnnotationClassificationBO;
 import ai.basic.x1.entity.DataAnnotationObjectBO;
 import ai.basic.x1.usecase.DataAnnotationUseCase;
+import ai.basic.x1.usecase.TrackSyncUseCase;
 import ai.basic.x1.util.DefaultConverter;
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjectUtil;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 import javax.validation.groups.Default;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -30,6 +32,9 @@ public class DataAnnotationController {
 
     @Autowired
     DataAnnotationUseCase dataAnnotationUseCase;
+
+    @Autowired
+    private TrackSyncUseCase trackSyncUseCase;
 
     @PostMapping("save")
     public List<DataAnnotationObjectResponseDTO> save(@Validated @RequestBody ObjectResultDTO objectResultDTO) {
@@ -48,6 +53,23 @@ public class DataAnnotationController {
     @GetMapping("listByDataIds")
     public List<DataAnnotationResultDTO> listByDataIds(@RequestParam List<Long> dataIds) {
         return DefaultConverter.convert(dataAnnotationUseCase.findByDataIds(dataIds), DataAnnotationResultDTO.class);
+    }
+
+    @PostMapping("sync")
+    public void sync(@RequestParam Long dataId, @RequestParam String trackId,
+                     @RequestParam(required = false) Long classId) {
+        trackSyncUseCase.syncByDataIdAndTrackId(dataId, trackId, classId);
+    }
+
+    @GetMapping("sync/segments")
+    public Map<Long, Integer> syncSegments(@RequestParam Long dataId, @RequestParam String trackId) {
+        return trackSyncUseCase.findPoseSegments(dataId, trackId);
+    }
+
+    @PostMapping("review")
+    public void review(@RequestParam Long dataId, @RequestParam String trackId,
+                       @RequestParam boolean reviewedCorrect) {
+        trackSyncUseCase.setReviewedCorrectByDataIdAndTrackId(dataId, trackId, reviewedCorrect);
     }
 
     private List<DataAnnotationClassificationDTO> convertToDataAnnotation(ObjectResultDTO objectResultDTO) {

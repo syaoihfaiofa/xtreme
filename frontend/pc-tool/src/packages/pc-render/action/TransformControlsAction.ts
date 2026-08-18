@@ -10,8 +10,7 @@ import * as _ from 'lodash';
 export default class TransformControlsAction extends Action {
     static actionName: string = 'transform-control';
     renderView: MainRenderView;
-    // control: TransformControls;
-    control: any;
+    control: TransformControls;
     constructor(renderView: MainRenderView) {
         super();
 
@@ -70,5 +69,15 @@ export default class TransformControlsAction extends Action {
             data: { object: this.control.object },
         });
         // this.renderView.pointCloud.render();
+    }
+
+    destroy(): void {
+        this.control.removeEventListener('change', this.controlChange);
+        this.control.removeEventListener('objectChange', this.controlObjectChange);
+        this.control.removeEventListener('dragging-changed', this.draggingChange);
+        this.renderView.pointCloud.removeEventListener(Event.SELECT, this.selectChange);
+        this.control.detach();
+        this.renderView.pointCloud.scene.remove(this.control);
+        this.control.dispose();
     }
 }

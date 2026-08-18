@@ -139,4 +139,31 @@ export default {
     searchPlaceholder: 'Search by occupants’ name',
     forceUnlock: 'Force Unlock',
   },
+  scene: {
+    edit: 'Edit',
+    editScene: 'Edit Scene',
+    detail: 'Detail',
+    runModelOnScene: 'Run Model on all frames',
+    selectAllAcrossPages: 'All frames in this scene have been selected',
+    location: 'Location',
+    uploadLocation: 'Upload Location',
+    uploadLocationTip:
+      'Upload a location.txt with per-frame ego pose (one line per frame: "<frame name>: x y z yaw"). Matched frames will use it to improve tracking.',
+    locationFileTypeError: 'Only .txt files are supported',
+    locationUploadSuccess: 'Location uploaded. Matched frames:',
+    locationUploadFail: 'Failed to upload location file',
+    exportWithRawData:
+      'Include raw source files (point cloud / images / location.txt) in the export',
+    exportLabelsOnly:
+      'Labels only: point clouds, images, and calibration files will not be included. The exported ZIP includes a format guide describing the label layout.',
+    exportUseEgoZ: 'Use per-frame ego Z from location.txt in nuScenes ego_pose',
+    importResult: 'Import Labels',
+    importResultTip:
+      'Select a scene first, then upload a zip with the same structure as an exported result (a "result/<frame name>.json" file per frame). Objects will be matched to existing frames by file name and imported as the annotation result.',
+    importResultSelectScene: 'Please select a scene first',
+    importResultDropText: 'Click or drag a zip file here to import labels for this scene',
+    importResultSuccess: 'Import finished. Matched frames:',
+    importResultFail: 'Failed to import labels',
+    importResultFileTypeError: 'Only .zip files are supported',
+  },
 };
