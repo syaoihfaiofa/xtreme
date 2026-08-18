@@ -284,8 +284,16 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.pointN = obj.pointN || 0;
         createUtils.setIdInfo(editor, userData);
         if (objType === ObjectType.TYPE_3D_BOX || objType === ObjectType.TYPE_3D) {
+            if (!obj.center3D || !obj.size3D) {
+                console.warn('skip invalid 3D object without center3D/size3D', obj);
+                return;
+            }
             position.set(obj.center3D.x, obj.center3D.y, obj.center3D.z);
-            rotation.set(obj.rotation3D.x, obj.rotation3D.y, obj.rotation3D.z);
+            rotation.set(
+                obj.rotation3D?.x || 0,
+                obj.rotation3D?.y || 0,
+                obj.rotation3D?.z || 0,
+            );
             scale.set(obj.size3D.x, obj.size3D.y, obj.size3D.z);
 
             let box = createUtils.createAnnotate3D(editor, position, scale, rotation, userData);
@@ -297,6 +305,10 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             bindInfo(box, obj);
             annotates.push(box);
         } else if (objType === ObjectType.TYPE_2D_RECT || objType === ObjectType.TYPE_RECT) {
+            if (!Array.isArray(obj.points) || obj.points.length === 0) {
+                console.warn('skip invalid 2D rect without points', obj);
+                return;
+            }
             let bbox = getBBox(obj.points as any);
             center.set((bbox.xMax + bbox.xMin) / 2, (bbox.yMax + bbox.yMin) / 2);
             size.set(bbox.xMax - bbox.xMin, bbox.yMax - bbox.yMin);
@@ -307,6 +319,10 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             bindInfo(rect, obj);
             annotates.push(rect);
         } else if (objType === ObjectType.TYPE_2D_BOX || objType === ObjectType.TYPE_BOX2D) {
+            if (!Array.isArray(obj.points) || obj.points.length < 8) {
+                console.warn('skip invalid 2D box without enough points', obj);
+                return;
+            }
             let positions1 = [] as THREE.Vector2[];
             let positions2 = [] as THREE.Vector2[];
             obj.points.forEach((e: any, index: number) => {

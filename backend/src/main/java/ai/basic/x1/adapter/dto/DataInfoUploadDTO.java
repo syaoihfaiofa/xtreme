@@ -60,4 +60,9 @@ public class DataInfoUploadDTO {
     @ValidStringEnum(message = "dataFormat must be one of XTREME1,COCO", enumClass = DataFormatEnum.class)
     private String dataFormat;
 
+    /**
+     * Group imported root-level point-cloud frames into one scene after upload
+     */
+    private Boolean autoCreateScene;
+
 }

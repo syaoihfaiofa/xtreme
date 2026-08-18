@@ -236,9 +236,7 @@ public class TrackSyncUseCase {
         }
         List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
 
-        Map<Long, Pose> poseByDataId = new HashMap<>();
-        var locations = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class).in(SceneLocation::getDataId, frameIds));
-        locations.forEach(l -> poseByDataId.put(l.getDataId(), new Pose(l.getPosX(), l.getPosY(), l.getPosZ(), l.getYaw())));
+        Map<Long, Pose> poseByDataId = buildPoseByDataId(sceneId, frames, frameIds);
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
         Map<Long, Integer> segmentByDataId = buildSegmentByDataId(sceneId, frames, locationGapMs);
 
@@ -292,6 +290,7 @@ public class TrackSyncUseCase {
         }
 
         if (MOTION_STATIC.equals(motionMode)) {
+            requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
             double syncYawOffset = Math.toRadians(getDouble(attrs, "syncYawOffsetDeg"));
@@ -302,6 +301,7 @@ public class TrackSyncUseCase {
                     existingRows.duplicateObjectIds, reachableFrameIds, maxDisappearGap, segmentByDataId,
                     locationGapMs, segmentsInitialized);
         } else if (dynamicRangeSyncEnabled) {
+            requireScenePose(poseByDataId, source.getDataId());
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
             syncDynamicRange(
                     source,
@@ -711,6 +711,77 @@ public class TrackSyncUseCase {
             byDataId.put(obj.getDataId(), preferred);
         }
         return new ExistingRows(byDataId, duplicateObjectIds, duplicateDataIdByObjectId);
+    }
+
+    private static void requireScenePose(Map<Long, Pose> poseByDataId, Long sourceDataId) {
+        if (CollUtil.isEmpty(poseByDataId) || !poseByDataId.containsKey(sourceDataId)) {
+            throw new IllegalStateException(
+                    "Sync requires scene location data. Upload location/location.txt or re-upload the scene zip.");
+        }
+    }
+
+    private Map<Long, Pose> buildPoseByDataId(Long sceneId, List<DataInfo> frames, List<Long> frameIds) {
+        Map<Long, Pose> poseByDataId = new HashMap<>();
+        var samples = sceneLocationSampleDAO.list(Wrappers.lambdaQuery(SceneLocationSample.class)
+                .eq(SceneLocationSample::getSceneId, sceneId)
+                .orderByAsc(SceneLocationSample::getTimestampNs));
+
+        if (CollUtil.isNotEmpty(samples)) {
+            List<LocationPoseInterpolator.TimestampedPoseSample> sortedSamples =
+                    LocationPoseInterpolator.toSortedSamples(samples);
+            int interpolatedCount = 0;
+            int missingTimestampCount = 0;
+            List<Map<String, Object>> samplePoses = new ArrayList<>();
+            for (DataInfo frame : frames) {
+                Long timestampNs = SceneLocationImportService.parseTimestampNs(frame.getName());
+                if (timestampNs == null) {
+                    missingTimestampCount++;
+                    continue;
+                }
+                double[] pose = LocationPoseInterpolator.interpolatePose(timestampNs, sortedSamples);
+                if (pose == null) {
+                    continue;
+                }
+                poseByDataId.put(frame.getId(), new Pose(pose[0], pose[1], pose[2], pose[3]));
+                interpolatedCount++;
+                if (samplePoses.size() < 3) {
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("dataId", frame.getId());
+                    entry.put("frameName", frame.getName());
+                    entry.put("timestampNs", timestampNs);
+                    entry.put("x", pose[0]);
+                    entry.put("y", pose[1]);
+                    entry.put("z", pose[2]);
+                    entry.put("yaw", pose[3]);
+                    samplePoses.add(entry);
+                }
+            }
+            // #region agent log
+            Map<String, Object> logData = new HashMap<>();
+            logData.put("sceneId", sceneId);
+            logData.put("poseSource", "sample_interpolation");
+            logData.put("sampleCount", samples.size());
+            logData.put("interpolatedCount", interpolatedCount);
+            logData.put("missingTimestampCount", missingTimestampCount);
+            logData.put("samplePoses", samplePoses);
+            SyncPoseDebugLog.log("H1", "buildPoseByDataId from samples", logData);
+            // #endregion
+            return poseByDataId;
+        }
+
+        var locations = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
+                .in(SceneLocation::getDataId, frameIds));
+        locations.forEach(location -> poseByDataId.put(
+                location.getDataId(),
+                new Pose(location.getPosX(), location.getPosY(), location.getPosZ(), location.getYaw())));
+        // #region agent log
+        Map<String, Object> logData = new HashMap<>();
+        logData.put("sceneId", sceneId);
+        logData.put("poseSource", "scene_location_table");
+        logData.put("tableCount", locations.size());
+        SyncPoseDebugLog.log("H2", "buildPoseByDataId fallback to table", logData);
+        // #endregion
+        return poseByDataId;
     }
 
     private Map<Long, Integer> buildSegmentByDataId(Long sceneId, List<DataInfo> frames, int locationGapMs) {

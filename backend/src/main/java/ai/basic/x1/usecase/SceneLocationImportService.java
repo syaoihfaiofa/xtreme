@@ -45,12 +45,16 @@ public class SceneLocationImportService {
         List<LocationSample> samples = parseResult.samples;
 
         List<SceneLocation> locations = new ArrayList<>();
+        List<LocationPoseInterpolator.TimestampedPoseSample> sortedSamples = toInterpolatorSamples(parseResult.samples);
         for (DataInfo frame : frames) {
             Long frameTimestampNs = parseTimestampNs(frame.getName());
-            if (frameTimestampNs == null || samples.isEmpty()) {
+            if (frameTimestampNs == null || sortedSamples.isEmpty()) {
                 continue;
             }
-            double[] pose = interpolatePose(frameTimestampNs, samples);
+            double[] pose = LocationPoseInterpolator.interpolatePose(frameTimestampNs, sortedSamples);
+            if (pose == null) {
+                continue;
+            }
             locations.add(SceneLocation.builder()
                     .dataId(frame.getId())
                     .posX(pose[0])
@@ -147,44 +151,14 @@ public class SceneLocationImportService {
         return new ParseResult(totalLines, invalidCount, samples);
     }
 
-    private static double[] interpolatePose(long timestampNs, List<LocationSample> sorted) {
-        int index = Collections.binarySearch(
-                sorted,
-                new LocationSample(timestampNs, 0, 0, 0, 0),
-                Comparator.comparingLong(sample -> sample.timestampNs));
-        if (index >= 0) {
-            LocationSample sample = sorted.get(index);
-            return new double[]{sample.x, sample.y, sample.z, sample.yaw};
+    private static List<LocationPoseInterpolator.TimestampedPoseSample> toInterpolatorSamples(
+            List<LocationSample> samples) {
+        List<LocationPoseInterpolator.TimestampedPoseSample> sorted = new ArrayList<>(samples.size());
+        for (LocationSample sample : samples) {
+            sorted.add(new LocationPoseInterpolator.TimestampedPoseSample(
+                    sample.timestampNs, sample.x, sample.y, sample.z, sample.yaw));
         }
-        int insertionPoint = -(index + 1);
-        if (insertionPoint <= 0) {
-            LocationSample sample = sorted.get(0);
-            return new double[]{sample.x, sample.y, sample.z, sample.yaw};
-        }
-        if (insertionPoint >= sorted.size()) {
-            LocationSample sample = sorted.get(sorted.size() - 1);
-            return new double[]{sample.x, sample.y, sample.z, sample.yaw};
-        }
-        LocationSample previous = sorted.get(insertionPoint - 1);
-        LocationSample next = sorted.get(insertionPoint);
-        long span = next.timestampNs - previous.timestampNs;
-        double fraction = span == 0 ? 0.0 : (double) (timestampNs - previous.timestampNs) / span;
-        return new double[]{
-                previous.x + (next.x - previous.x) * fraction,
-                previous.y + (next.y - previous.y) * fraction,
-                previous.z + (next.z - previous.z) * fraction,
-                previous.yaw + normalizeAngleDiff(next.yaw - previous.yaw) * fraction
-        };
-    }
-
-    private static double normalizeAngleDiff(double difference) {
-        double result = difference % (2 * Math.PI);
-        if (result <= -Math.PI) {
-            result += 2 * Math.PI;
-        } else if (result > Math.PI) {
-            result -= 2 * Math.PI;
-        }
-        return result;
+        return sorted;
     }
 
     private static final class ParseResult {
@@ -214,4 +188,5 @@ public class SceneLocationImportService {
             this.yaw = yaw;
         }
     }
+
 }

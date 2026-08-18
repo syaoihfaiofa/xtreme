@@ -3,6 +3,7 @@ package ai.basic.x1.usecase;
 import ai.basic.x1.entity.DataAnnotationClassificationBO;
 import ai.basic.x1.entity.DataAnnotationObjectBO;
 import ai.basic.x1.entity.DataAnnotationResultBO;
+import cn.hutool.core.collection.CollUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -47,6 +48,9 @@ public class DataAnnotationUseCase {
     }
 
     public List<DataAnnotationResultBO> findByDataIds(List<Long> dataIds) {
+        if (CollUtil.isEmpty(dataIds)) {
+            return List.of();
+        }
         List<DataAnnotationClassificationBO> dataAnnotationClassificationBOs = dataAnnotationClassificationUseCase.findByDataIds(dataIds);
         List<DataAnnotationObjectBO> dataAnnotationObjectBOs = dataAnnotationObjectUseCase.findByDataIds(dataIds,true,List.of());
         List<DataAnnotationResultBO> results = new ArrayList<>();

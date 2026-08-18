@@ -70,6 +70,7 @@
     modelId?: number;
     resultType?: string;
     dataFormat?: string;
+    autoCreateScene?: boolean;
   }>();
   const emits = defineEmits(['fetchList']);
 
@@ -214,6 +215,7 @@
                 resultType: props.resultType as string,
                 modelId: props.modelId as number,
                 dataFormat: props.dataFormat as string,
+                autoCreateScene: props.autoCreateScene,
               };
 
               const serialNumbers = await uploadDatasetApi(
@@ -341,6 +343,7 @@
           resultType: props.resultType as string,
           modelId: props.modelId as number,
           dataFormat: props.dataFormat as string,
+          autoCreateScene: props.autoCreateScene,
         };
         // get serialNumbers
         const serialNumbers = await uploadDatasetApi(uploadParams, fileItem.controller.signal);

@@ -26,13 +26,35 @@ export default class BusinessManager extends BaseBusinessManager {
         }
         let cameraConfig = fileConfig.find((e) => regConfig.test(e.dirName)) as IFileConfig;
 
-        // no camera config
-        let cameraInfo = [];
-        if (cameraConfig) {
-            cameraInfo = await api.getUrl(cameraConfig.url);
+        if (!cameraConfig) {
+            const seriesFrameId = this.editor.bsState.seriesFrameId;
+            if (seriesFrameId) {
+                try {
+                    const sceneFile = await api.getDataFile(String(seriesFrameId));
+                    cameraConfig = sceneFile.configs.find((e) => regConfig.test(e.dirName)) as IFileConfig;
+                } catch (error) {
+                    console.warn('load scene camera config failed', error);
+                }
+            }
         }
 
-        let info = utils.createViewConfig(fileConfig, cameraInfo);
+        // no camera config
+        let cameraInfo: any[] | Record<string, any> = [];
+        if (cameraConfig) {
+            try {
+                cameraInfo = await api.getUrl(cameraConfig.url);
+            } catch (error) {
+                console.warn('load camera config json failed', error);
+                cameraInfo = [];
+            }
+        }
+        if (!Array.isArray(cameraInfo)) {
+            cameraInfo = utils.normalizeCameraInfoList(cameraInfo || {});
+        } else {
+            cameraInfo = utils.normalizeCameraInfoList(cameraInfo);
+        }
+
+        let info = utils.createViewConfig(fileConfig, cameraInfo as any[]);
         let config: IDataResource = {
             pointsUrl: info.pointsUrl,
             pointsData: {},
@@ -54,14 +76,31 @@ export default class BusinessManager extends BaseBusinessManager {
         return valueMap;
     }
 
-    async getFrameObject(frame: IFrame | IFrame[]): Promise<{
+    async getFrameObject(frame: IFrame | IFrame[] | string | number): Promise<{
         objectsMap: Record<string, IObject[]>;
         classificationMap: Record<string, IObject[]>;
         queryTime: string;
     }> {
-        let data = await api.getDataObjectBatch(
-            Array.isArray(frame) ? frame.map((e) => e.id) : frame.id,
-        );
+        let dataIds: string[] | string;
+        if (Array.isArray(frame)) {
+            if (frame.length === 0) {
+                throw new Error('No frames to load annotation objects');
+            }
+            dataIds = frame.map((item) => {
+                if (item.id == null || item.id === '') {
+                    throw new Error('Frame id is missing in batch frame list');
+                }
+                return String(item.id);
+            });
+        } else if (typeof frame === 'string' || typeof frame === 'number') {
+            dataIds = frame;
+        } else {
+            if (frame.id == null || frame.id === '') {
+                throw new Error('Frame id is missing');
+            }
+            dataIds = frame.id;
+        }
+        let data = await api.getDataObjectBatch(dataIds);
         return data;
     }
 }

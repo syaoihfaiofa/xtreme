@@ -79,4 +79,9 @@ public class DataInfoUploadBO {
      */
     private DataFormatEnum dataFormat;
 
+    /**
+     * Group imported root-level point-cloud frames into one scene after upload
+     */
+    private Boolean autoCreateScene;
+
 }

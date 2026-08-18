@@ -516,7 +516,7 @@
     dataFormat: undefined,
     autoCreateScene: false,
   });
-  const handleCloseUploadModal = (data, { source, resultType, modelId, dataFormat, autoCreateScene }) => {
+  const handleCloseUploadModal = (data, { source, resultType, modelId, dataFormat, autoCreateScene = false }) => {
     if (source == UploadSourceEnum.LOCAL) {
       fileList.value = data;
       openProgressModal(true, { fileList: fileList.value, source: source, autoCreateScene });

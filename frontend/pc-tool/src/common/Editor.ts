@@ -440,9 +440,9 @@ export default class Editor extends BaseEditor {
                     ? `已向前同步 ${normalizedPreviousFrames} 帧，向后同步 ${normalizedNextFrames} 帧`
                     : '已同步到全场景',
             );
-        } catch (e) {
+        } catch (e: any) {
             console.warn('sync-mode propagation failed', e);
-            this.showMsg('error', '同步失败');
+            this.showMsg('error', e?.message || '同步失败');
         } finally {
             this.showLoading(false);
         }
