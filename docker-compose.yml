@@ -20,7 +20,11 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./deploy/mysql/custom.cnf:/etc/mysql/conf.d/custom.cnf
-      - ./deploy/mysql/migration:/docker-entrypoint-initdb.d
+      # Ordered migrations via docker-init (do not mount migration/ directly into
+      # docker-entrypoint-initdb.d — MySQL runs those scripts in filename order and
+      # can execute V19 before V16/V17/V18).
+      - ./deploy/mysql/migration:/migrations:ro
+      - ./deploy/mysql/docker-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: '/usr/bin/mysql --user=xtreme1 --password=Rc4K3L6f --execute "SHOW DATABASES;"'
       interval: 10s
