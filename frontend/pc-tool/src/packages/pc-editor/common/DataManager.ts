@@ -1,5 +1,5 @@
 import { IObject, IFrame, IModelResult } from '../type';
-import { AnnotateObject, Box, Rect, Box2D, ITransform, Object2D } from 'pc-render';
+import { AnnotateObject, Box, GroundPolygon, GroundPolyline, Rect, Box2D, ITransform, Object2D } from 'pc-render';
 import Editor from '../Editor';
 import { Event as EditorEvent } from 'pc-editor';
 // import * as api from '../api';
@@ -73,17 +73,19 @@ export default class DataManager {
         objects: AnnotateObject[],
         filterMap: ReturnType<DataManager['getActiveFilter']>,
         withoutTaskId: string,
-    ): { annotate2D: Object2D[]; annotate3D: Box[] } {
+    ): { annotate2D: Object2D[]; annotate3D: Array<Box | GroundPolygon | GroundPolyline> } {
         const annotate2D: Object2D[] = [];
-        const annotate3D: Box[] = [];
+        const annotate3D: Array<Box | GroundPolygon | GroundPolyline> = [];
         objects.forEach((object) => {
             const userData = object.userData as Required<IUserData>;
             const sourceId = userData.sourceId || withoutTaskId;
             const valid = filterMap.all || filterMap.source[sourceId];
             if (!valid) return;
-            if (object instanceof Box) {
+            // 3D annotations are Three.js objects. Do not restrict this to Box:
+            // parking slots and future LiDAR shapes must survive a frame reload too.
+            if (object instanceof THREE.Object3D) {
                 object.parent = this.editor.pc.annotate3D;
-                annotate3D.push(object);
+                annotate3D.push(object as Box | GroundPolygon | GroundPolyline);
             } else if (object instanceof Object2D) {
                 annotate2D.push(object);
             }
@@ -258,6 +260,18 @@ export default class DataManager {
         this.onAnnotatesChange(objects, frame, { type: 'transform', datas });
     }
 
+    setGroundPolygonPoints(
+        object: GroundPolygon | GroundPolyline,
+        points: THREE.Vector3[],
+        frame?: IFrame,
+    ): void {
+        object.setPoints(points);
+        this.onAnnotatesChange([object], frame, {
+            type: 'transform',
+            points3D: object.points3D.map((point) => point.clone()),
+        });
+    }
+
     initEvent() {}
 
     clear(): void {
@@ -362,6 +376,11 @@ export default class DataManager {
 
         this.editor.pc.annotate2D = annotate2D;
         this.editor.pc.annotate3D.children = annotate3D;
+        const currentObjects = new Set<AnnotateObject>([...annotate2D, ...annotate3D]);
+        const validSelection = this.editor.pc.selection.filter((object) => currentObjects.has(object));
+        if (validSelection.length !== this.editor.pc.selection.length) {
+            this.editor.pc.selectObject(validSelection);
+        }
         this.editor.dispatchEvent({ type: Event.ANNOTATE_LOAD });
         this.editor.pc.render();
         this.displayCacheFrameKey = frameKey;

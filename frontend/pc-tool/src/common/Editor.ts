@@ -2,7 +2,7 @@ import { Editor as BaseEditor, IFrame, SourceType, MotionMode, Event, OPType } f
 import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
-import { Box } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline } from 'pc-render';
 import * as THREE from 'three';
 import hotkeys from 'hotkeys-js';
 import * as api from '../api';
@@ -372,11 +372,19 @@ export default class Editor extends BaseEditor {
      */
     async syncSelectedTrack() {
         if (this.state.modeConfig.op !== OPType.EXECUTE) return;
-        let box = this.pc.selection.find((e) => e instanceof Box) as Box | undefined;
+        let box = this.pc.selection.find(
+            (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline,
+        ) as Box | GroundPolygon | GroundPolyline | undefined;
         if (!box) {
             const currentObjects = this.dataManager.getFrameObject(this.getCurrentFrame().id) || [];
-            box = currentObjects.find((e) => e instanceof Box && this.pc.selection.includes(e)) as
+            box = currentObjects.find(
+                (e) =>
+                    (e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline) &&
+                    this.pc.selection.includes(e),
+            ) as
                 | Box
+                | GroundPolygon
+                | GroundPolyline
                 | undefined;
         }
         if (!box) {
@@ -388,8 +396,10 @@ export default class Editor extends BaseEditor {
             this.showMsg('warning', '该对象没有追踪ID');
             return;
         }
-        let motionMode =
-            box.userData?.motionMode || utils.getDefaultMotionMode(box.userData?.classType);
+        const isStaticGroundShape = box instanceof GroundPolygon || box instanceof GroundPolyline;
+        let motionMode = isStaticGroundShape
+            ? MotionMode.STATIC
+            : box.userData?.motionMode || utils.getDefaultMotionMode(box.userData?.classType);
         if (!SYNCABLE_MOTION_MODES.includes(motionMode)) {
             this.showMsg('warning', '该对象的运动模式不支持同步');
             return;

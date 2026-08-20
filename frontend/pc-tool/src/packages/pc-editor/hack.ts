@@ -16,6 +16,8 @@ import {
     Box2D,
     Object2D,
     Box,
+    GroundPolygon,
+    GroundPolyline,
 } from 'pc-render';
 import * as _ from 'lodash';
 
@@ -41,6 +43,12 @@ export default function hack(editor: Editor) {
 }
 
 function hackSideView(editor: Editor, view: SideRenderView) {
+    view.onGroundPolygonPointsChange = (object: GroundPolygon, points: THREE.Vector3[]) => {
+        editor.cmdManager.execute('update-ground-polygon-points', { object, points });
+    };
+    view.onGroundPolylinePointsChange = (object: GroundPolyline, points: THREE.Vector3[]) => {
+        editor.cmdManager.execute('update-ground-polyline-points', { object, points });
+    };
     let action = view.getAction('resize-translate') as ResizeTransAction;
     // let updateChange = action.updateChange;
     if (action) {

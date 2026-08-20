@@ -29,6 +29,14 @@ public enum ToolTypeEnum {
     /**
      * CUBOID
      */
-    CUBOID
+    CUBOID,
+    /**
+     * Four-point ground parking footprint for LiDAR Fusion.
+     */
+    PARKING_SLOT,
+    /**
+     * Ground polyline curb wall for LiDAR Fusion.
+     */
+    CURB_WALL
     
 }

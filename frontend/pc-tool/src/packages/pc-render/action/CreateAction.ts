@@ -14,6 +14,8 @@ type ICallback = (data: any) => void;
 const TypePoints = {
     'points-1': 1,
     'points-3': 3,
+    'points-4': 4,
+    polyline: Infinity,
     'box-2': 4,
     box: 2,
 };
@@ -25,6 +27,7 @@ interface IStartOption {
     trackLine?: boolean;
     startClick?: boolean;
     startMouseDown?: boolean;
+    endOnDoubleClick?: boolean;
 }
 
 export default class CreateAction extends Action {
@@ -38,6 +41,7 @@ export default class CreateAction extends Action {
     startClick: boolean = true;
     startMouseDown: boolean = false;
     trackLine: boolean = false;
+    endOnDoubleClick: boolean = false;
     callback: ICallback | undefined | null = null;
     onChange: ICallback | undefined | null = null;
     constructor(renderView: MainRenderView) {
@@ -65,6 +69,7 @@ export default class CreateAction extends Action {
         this.onMouseDown = this.onMouseDown.bind(this);
         this.onMouseUp = this.onMouseUp.bind(this);
         this.onMouseMove = this.onMouseMove.bind(this);
+        this.onDoubleClick = this.onDoubleClick.bind(this);
 
         this.drawBox = _.throttle(this.drawBox.bind(this), 30);
         this.drawPoint3 = _.throttle(this.drawPoint3.bind(this), 30);
@@ -79,6 +84,7 @@ export default class CreateAction extends Action {
         this.canvas.addEventListener('mousedown', this.onMouseDown);
         this.canvas.addEventListener('mouseup', this.onMouseUp);
         this.canvas.addEventListener('mousemove', this.onMouseMove);
+        this.canvas.addEventListener('dblclick', this.onDoubleClick);
     }
 
     destroy() {
@@ -86,6 +92,7 @@ export default class CreateAction extends Action {
         this.canvas.removeEventListener('mousedown', this.onMouseDown);
         this.canvas.removeEventListener('mouseup', this.onMouseUp);
         this.canvas.removeEventListener('mousemove', this.onMouseMove);
+        this.canvas.removeEventListener('dblclick', this.onDoubleClick);
     }
 
     start(option: IStartOption, callback: ICallback, onChange?: ICallback) {
@@ -96,12 +103,14 @@ export default class CreateAction extends Action {
             trackLine = false,
             startClick = true,
             startMouseDown = false,
+            endOnDoubleClick = false,
         } = option;
 
         this.drawType = type;
         this.trackLine = trackLine;
         this.startClick = startClick;
         this.startMouseDown = startMouseDown;
+        this.endOnDoubleClick = endOnDoubleClick;
         // this.toggle(true);
         this.callback = callback;
         this.onChange = onChange;
@@ -252,6 +261,8 @@ export default class CreateAction extends Action {
         switch (this.drawType) {
             case 'points-1':
             case 'points-3':
+            case 'points-4':
+            case 'polyline':
                 // console.time('test-3');
 
                 this.drawPoint3(pos);
@@ -296,7 +307,15 @@ export default class CreateAction extends Action {
     onClick(event: MouseEvent) {
         event.stopPropagation();
         if (!this.enabled || !this.startClick) return;
+        if (this.endOnDoubleClick && event.detail > 1) return;
         this.handleMouse(event);
+    }
+    onDoubleClick(event: MouseEvent) {
+        event.stopPropagation();
+        if (!this.enabled || !this.endOnDoubleClick) return;
+        if (this.points.length < 2) return;
+        this.end();
+        this.handleCallback();
     }
 
     handleMouse(event: MouseEvent) {

@@ -4,6 +4,10 @@ import {
     Image2DRenderView,
     Box,
     Box2D,
+    GroundPolygon,
+    GroundPolyline,
+    ProjectedPolygon,
+    ProjectedPolyline,
     AnnotateObject,
     utils,
 } from 'pc-render';
@@ -244,22 +248,30 @@ export const projectObject2D = define({
         let deleteObjects: AnnotateObject[] = [];
         if (!config.projectPoint4 && !config.projectPoint8) return;
 
-        let annotate3D = editor.pc.getAnnotate3D();
+        let annotate3D = editor.pc.getAnnotate3D() as Array<Box | GroundPolygon | GroundPolyline>;
         let annotate2D = editor.pc.getAnnotate2D();
         let views = editor.pc.renderViews.filter((e) =>
             e.name.startsWith(`${config.imgViewPrefix}`),
         ) as Image2DRenderView[];
 
         // 映射选中的Box
-        if (selectFlag && selection.length === 1 && selection[0] instanceof Box) {
-            annotate3D = [selection[0]];
+        if (
+            selectFlag &&
+            selection.length === 1 &&
+            (selection[0] instanceof Box ||
+                selection[0] instanceof GroundPolygon ||
+                selection[0] instanceof GroundPolyline)
+        ) {
+            annotate3D = [selection[0] as Box | GroundPolygon | GroundPolyline];
         }
 
         let existMapRect = {} as Record<string, Record<string, Rect>>;
         let existMapBox2D = {} as Record<string, Record<string, Box2D>>;
+        let existMapParking = {} as Record<string, Record<string, ProjectedPolygon>>;
         views.forEach((view) => {
             existMapRect[view.id] = {} as Record<string, Rect>;
             existMapBox2D[view.id] = {} as Record<string, Box2D>;
+            existMapParking[view.id] = {} as Record<string, ProjectedPolygon>;
         });
         annotate2D.forEach((object) => {
             let viewId = object.viewId;
@@ -281,6 +293,13 @@ export const projectObject2D = define({
             ) {
                 existMapBox2D[viewId][userData.trackId] = object;
             }
+            if (
+                object instanceof ProjectedPolygon &&
+                existMapParking[viewId] &&
+                userData.trackId
+            ) {
+                existMapParking[viewId][userData.trackId] = object;
+            }
         });
 
         let updateN = 0;
@@ -290,6 +309,39 @@ export const projectObject2D = define({
             let trackId = userData.trackId as string;
             views.forEach((view) => {
                 let viewId = view.id;
+                if (object instanceof GroundPolyline) {
+                    const points = object.points3D.map((point) => {
+                        const projected = view.worldToImg(point.clone());
+                        return new THREE.Vector2(projected.x, projected.y);
+                    });
+                    if (points.length >= 2) {
+                        const projection = new ProjectedPolyline(points);
+                        projection.viewId = viewId;
+                        projection.userData = { ...userData, isProjection: true };
+                        setIdInfo(editor, projection.userData);
+                        projection.uuid = projection.userData.id as string;
+                        projection.color = `#${object.color.getHexString()}`;
+                        addObjects.push(projection);
+                    }
+                    return;
+                }
+                if (object instanceof GroundPolygon) {
+                    const projection = createParkingProjection(view, object);
+                    if (projection) {
+                        const existing = existMapParking[viewId][trackId];
+                        if (existing && updateFlag) {
+                            existing.setPoints(projection.points);
+                            existing.openingDirection.copy(projection.openingDirection);
+                            existing.edgePoints = projection.edgePoints;
+                            updateN++;
+                        } else if (!existing && createFlag) {
+                            addObjects.push(projection);
+                        }
+                    } else if (existMapParking[viewId][trackId]) {
+                        deleteObjects.push(existMapParking[viewId][trackId]);
+                    }
+                    return;
+                }
 
                 // isBoxInImage
                 if (isObjectVisibleInView(view, object)) {
@@ -345,6 +397,47 @@ export const projectObject2D = define({
             const lines = view.getFisheyeBoxLines(object);
             const positions = ([] as THREE.Vector2[]).concat(...lines);
             return positions.length > 0 && view.isFisheyeBoxVisible(positions);
+        }
+
+        function createParkingProjection(
+            view: Image2DRenderView,
+            object: GroundPolygon,
+        ): ProjectedPolygon | null {
+            const points = object.points3D.map((point) => {
+                const projected = view.worldToImg(point.clone());
+                return new THREE.Vector2(projected.x, projected.y);
+            });
+            const visible = points.some(
+                (point) =>
+                    Number.isFinite(point.x) &&
+                    Number.isFinite(point.y) &&
+                    point.x >= 0 &&
+                    point.x <= view.imgSize.x &&
+                    point.y >= 0 &&
+                    point.y <= view.imgSize.y,
+            );
+            if (!visible) return null;
+            const rearCenter = points[1].clone().add(points[2]).multiplyScalar(0.5);
+            const openingCenter = points[0].clone().add(points[3]).multiplyScalar(0.5);
+            const projection = new ProjectedPolygon(points, openingCenter.sub(rearCenter).normalize());
+            if (view.isFisheye()) {
+                projection.edgePoints = object.points3D.map((point, index) => {
+                    const next = object.points3D[(index + 1) % 4];
+                    return Array.from({ length: 9 }, (_, sampleIndex) => {
+                        const localPoint = point.clone().lerp(next, sampleIndex / 8);
+                        const projected = view.worldToImg(localPoint);
+                        return new THREE.Vector2(projected.x, projected.y);
+                    });
+                });
+            }
+            projection.viewId = view.id;
+            projection.userData = {
+                ...object.userData,
+                isProjection: true,
+                parkingOpeningEdge: 'P3_P0',
+            };
+            projection.color = `#${object.color.getHexString()}`;
+            return projection;
         }
 
         function updateProjectRect(view: Image2DRenderView, object: Box, target: Rect) {

@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import MainRenderView from '../renderView/MainRenderView';
 import Image2DRenderView from '../renderView/Image2DRenderView';
 import { Rect, Box2D, Object2D, AnnotateObject } from '../objects';
+import Box from '../objects/Box';
+import GroundPolygon from '../objects/GroundPolygon';
+import GroundPolyline from '../objects/GroundPolyline';
 import { Event } from '../config';
 import Action from './Action';
 import { get } from '../utils/tempVar';
@@ -111,7 +114,7 @@ export default class SelectAction extends Action {
         const intersects = this.raycaster.intersectObjects(annotate3D);
         // console.log(intersects);
         if (intersects.length > 0) {
-            return intersects[0].object;
+            return this.resolveAnnotateRoot(intersects[0].object);
             // this.selectObject(intersects[0].object as any);
         }
     }
@@ -128,7 +131,10 @@ export default class SelectAction extends Action {
         // tempPos.x = ((pos.x + 1) / 2) * imgSize.x;
         // tempPos.y = ((-pos.y + 1) / 2) * imgSize.y;
 
-        if (!findObject && (renderView.renderRect || renderView.renderBox2D)) {
+        if (
+            !findObject &&
+            (renderView.renderRect || renderView.renderBox2D || renderView.renderProjectedGround)
+        ) {
             let annotate2D = renderView.get2DObject();
             let obj;
             for (let i = annotate2D.length - 1; i >= 0; i--) {
@@ -148,7 +154,7 @@ export default class SelectAction extends Action {
             this.raycaster.setFromCamera(projectPos, this.renderView.camera);
 
             let intersects = this.raycaster.intersectObjects(annotate3D);
-            findObject = intersects.length > 0 ? intersects[0].object : null;
+            findObject = intersects.length > 0 ? this.resolveAnnotateRoot(intersects[0].object) : null;
         }
 
         return findObject;
@@ -156,6 +162,21 @@ export default class SelectAction extends Action {
 
     selectObject(object?: AnnotateObject) {
         this.renderView.pointCloud.selectObject(object);
+    }
+
+    private resolveAnnotateRoot(object: THREE.Object3D): AnnotateObject | undefined {
+        let current: THREE.Object3D | null = object;
+        while (current) {
+            if (
+                current instanceof Box ||
+                current instanceof GroundPolygon ||
+                current instanceof GroundPolyline
+            ) {
+                return current;
+            }
+            current = current.parent;
+        }
+        return undefined;
     }
 
     getProjectImgPos(pos: THREE.Vector2, target?: THREE.Vector2) {

@@ -3,7 +3,7 @@ import SideRenderView, { axisUpInfo } from '../renderView/SideRenderView';
 import Action from './Action';
 import { ITransform, AnnotateType } from '../type';
 import { Event } from '../config';
-import { Box } from '../objects';
+import { Box, GroundPolygon, GroundPolyline } from '../objects';
 import { IRectEvent, RectTool, ClearHandler } from '../common/BasicSvg';
 
 // type DragHandler = (offsetLocal: THREE.Vector3, offsetCamera: THREE.Vector2) => ITransform | null;
@@ -32,6 +32,7 @@ export default class ResizeTransAction extends Action {
     // rotatable: boolean = true;
     isRotating: boolean = false;
     rotation: number = 0;
+    private groundShapeStartPoints: THREE.Vector3[] = [];
     rectTool: RectTool = {} as RectTool;
     clearCall: ClearHandler[] = [];
     editConfig: IEditConfig = {
@@ -164,7 +165,12 @@ export default class ResizeTransAction extends Action {
             axis,
             camera: { left, right },
         } = this.renderView;
-        if (!this.isEnable() || !object) {
+        if (
+            !this.isEnable() ||
+            !(object instanceof Box) &&
+                !(object instanceof GroundPolygon) &&
+                !(object instanceof GroundPolyline)
+        ) {
             this.rectTool.hide();
             this.renderView.container.style.cursor = 'default';
             return;
@@ -173,29 +179,43 @@ export default class ResizeTransAction extends Action {
         const scaleSize = (right - left) / this.renderView.container.clientWidth;
         let scale = object.scale.clone().divideScalar(scaleSize);
         this.renderView.container.style.cursor = 'grab';
+        const isGroundShape = object instanceof GroundPolygon || object instanceof GroundPolyline;
+        this.rectTool.setOption({
+            lineStyle: {
+                stroke: isGroundShape ? 'transparent' : '#ffffff',
+                'stroke-dasharray': 0,
+            },
+        });
         //   debugger
         let rightTop = this.renderView.projectRect.max.clone();
         let leftBottom = this.renderView.projectRect.min.clone();
 
-        rightTop = this.renderView.cameraToCanvas(rightTop);
-        leftBottom = this.renderView.cameraToCanvas(leftBottom);
+        rightTop = this.renderView.cameraSpaceToCanvas(rightTop);
+        leftBottom = this.renderView.cameraSpaceToCanvas(leftBottom);
 
         const center = tempV2_1;
         const size = tempV2_2;
         // console.log(object.scale.x,object.scale.y,object.scale.z)
         center.set((leftBottom.x + rightTop.x) / 2, (leftBottom.y + rightTop.y) / 2);
-        switch (axis) {
-            case '-x':
-            case 'x':
-                size.set(scale.y, scale.z);
-                break;
-            case 'y':
-            case '-y':
-                size.set(scale.x, scale.z);
-                break;
-            case 'z':
-                size.set(scale.y, scale.x);
-                break;
+        if (isGroundShape) {
+            size.set(
+                Math.abs(rightTop.x - leftBottom.x),
+                Math.abs(rightTop.y - leftBottom.y),
+            );
+        } else {
+            switch (axis) {
+                case '-x':
+                case 'x':
+                    size.set(scale.y, scale.z);
+                    break;
+                case 'y':
+                case '-y':
+                    size.set(scale.x, scale.z);
+                    break;
+                case 'z':
+                    size.set(scale.y, scale.x);
+                    break;
+            }
         }
 
         // size.set(Math.abs(leftBottom.x - rightTop.x), Math.abs(leftBottom.y - rightTop.y));
@@ -327,6 +347,9 @@ export default class ResizeTransAction extends Action {
             const { object } = this.renderView;
             if (!object) return;
             starQuat.setFromEuler(object.rotation);
+            if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+                this.groundShapeStartPoints = object.points3D.map((point) => point.clone());
+            }
             this.renderView.needFit = false;
         };
         const onRotate = (e: IRectEvent) => {
@@ -337,6 +360,39 @@ export default class ResizeTransAction extends Action {
             if (offsetAngle === undefined) return;
             this.rotation = offsetAngle;
             this.isRotating = true;
+            if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+                const center = this.groundShapeStartPoints
+                    .reduce((sum, point) => sum.add(point), new THREE.Vector3())
+                    .multiplyScalar(1 / this.groundShapeStartPoints.length);
+                const rotationAxis = tempV3_1.set(0, 0, 0);
+                switch (this.renderView.axis) {
+                    case 'z':
+                        rotationAxis.z = 1;
+                        break;
+                    case 'x':
+                        rotationAxis.x = 1;
+                        break;
+                    case '-x':
+                        rotationAxis.x = -1;
+                        break;
+                    case 'y':
+                        rotationAxis.y = 1;
+                        break;
+                    case '-y':
+                        rotationAxis.y = -1;
+                        break;
+                }
+                const rotation = new THREE.Matrix4().makeRotationAxis(rotationAxis, offsetAngle);
+                const points = this.groundShapeStartPoints.map((point) =>
+                    point.clone().sub(center).applyMatrix4(rotation).add(center),
+                );
+                if (object instanceof GroundPolygon) {
+                    this.renderView.onGroundPolygonPointsChange?.(object, points);
+                } else {
+                    this.renderView.onGroundPolylinePointsChange?.(object, points);
+                }
+                return;
+            }
             let axisDir = tempV3_1.set(0, 0, 0);
             let axis = this.renderView.axis;
             switch (axis) {

@@ -12,6 +12,8 @@ export enum ToolTypeEnum {
   KEY_POINT = 'KEY_POINT',
   SEGMENTATION = 'SEGMENTATION',
   CUBOID = 'CUBOID',
+  PARKING_SLOT = 'PARKING_SLOT',
+  CURB_WALL = 'CURB_WALL',
 }
 
 export interface ClassListParams extends BasicPageParams {

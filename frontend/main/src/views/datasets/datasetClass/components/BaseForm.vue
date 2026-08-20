@@ -44,8 +44,9 @@
       <template #toolType="{ model, field }">
         <Radio.Group class="img-radio" v-model:value="model[field]">
           <Radio v-for="item in optionList" :key="item.id" :value="item.type">
-            <div class="img-tool">
+            <div class="img-tool" :title="item.text">
               <img :src="item.img" alt="" />
+              <span>{{ item.text }}</span>
             </div>
           </Radio>
         </Radio.Group>

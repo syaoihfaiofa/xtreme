@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import Editor from '../Editor';
 import { IUserData } from '../type';
 import { nanoid } from 'nanoid';
-import { Box, Rect, Box2D, Vector2Of4 } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline, Rect, Box2D, Vector2Of4 } from 'pc-render';
 
 export function setIdInfo(editor: Editor, userData: IUserData) {
     if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
@@ -34,6 +34,28 @@ export function createAnnotate3D(
     }
 
     // setIdInfo(editor, userData);
+    return object;
+}
+
+export function createGroundPolygon(
+    editor: Editor,
+    points: THREE.Vector3[],
+    userData: IUserData = {},
+) {
+    const object = new GroundPolygon(points);
+    object.userData = userData;
+    if (userData.id) object.uuid = userData.id;
+    return object;
+}
+
+export function createGroundPolyline(
+    editor: Editor,
+    points: THREE.Vector3[],
+    userData: IUserData = {},
+) {
+    const object = new GroundPolyline(points);
+    object.userData = userData;
+    if (userData.id) object.uuid = userData.id;
     return object;
 }
 

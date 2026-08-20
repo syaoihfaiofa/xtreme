@@ -47,6 +47,18 @@ export const toolTypeList3D = [
     type: ToolTypeEnum.CUBOID,
     text: t('business.class.toolType.cuboid'),
   },
+  {
+    id: 2,
+    img: ploygon,
+    type: ToolTypeEnum.PARKING_SLOT,
+    text: 'Parking Slot',
+  },
+  {
+    id: 3,
+    img: polyline,
+    type: ToolTypeEnum.CURB_WALL,
+    text: 'Curb / Wall',
+  },
 ];
 
 export const classBase = (is3D): FormSchema[] => {

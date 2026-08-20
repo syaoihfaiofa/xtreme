@@ -16,6 +16,8 @@ import UpdateTrackDataBatch, {
 import UpdateTrackData from './UpdateTrackData';
 import DeleteTrack, { IDeleteTrackOption } from './DeleteTrack';
 import AddTrack, { IAddTrackOption } from './AddTrack';
+import UpdateGroundPolygonPoints from './UpdateGroundPolygonPoints';
+import UpdateGroundPolylinePoints from './UpdateGroundPolylinePoints';
 export interface ICmdOption {
     'add-object': IAddObjectOption;
     'delete-object': IDeleteObjectOption;
@@ -23,6 +25,14 @@ export interface ICmdOption {
     'update-transform': {
         object: THREE.Object3D;
         transform: ITransform;
+    };
+    'update-ground-polygon-points': {
+        object: import('pc-render').GroundPolygon;
+        points: THREE.Vector3[];
+    };
+    'update-ground-polyline-points': {
+        object: import('pc-render').GroundPolyline;
+        points: THREE.Vector3[];
     };
     'update-2d-rect': {
         object: Rect;
@@ -51,6 +61,8 @@ const CMD: Record<Name, any> = {
     'select-object': SelectObject,
     'delete-object': DeleteObject,
     'update-transform': UpdateTransform,
+    'update-ground-polygon-points': UpdateGroundPolygonPoints,
+    'update-ground-polyline-points': UpdateGroundPolylinePoints,
     'update-2d-rect': Update2DRect,
     'update-2d-box': Update2DBox,
     'update-object-user-data': UpdateObjectDataBatch,
