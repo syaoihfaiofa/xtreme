@@ -61,6 +61,11 @@ public class DataAnnotationController {
         trackSyncUseCase.syncByDataIdAndTrackId(dataId, trackId, classId);
     }
 
+    @PostMapping("track/delete")
+    public List<Long> deleteTrack(@RequestParam Long dataId, @RequestParam String trackId) {
+        return trackSyncUseCase.deleteByDataIdAndTrackId(dataId, trackId);
+    }
+
     @GetMapping("sync/segments")
     public Map<Long, Integer> syncSegments(@RequestParam Long dataId, @RequestParam String trackId) {
         return trackSyncUseCase.findPoseSegments(dataId, trackId);

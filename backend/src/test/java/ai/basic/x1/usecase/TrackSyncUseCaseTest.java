@@ -30,6 +30,24 @@ class TrackSyncUseCaseTest {
         assertPoint(targetPoints.getJSONObject(4), 6, -5, 2);
     }
 
+    @Test
+    void distanceToGroundShapeFootprint_usesNearestSegment() {
+        JSONArray points = new JSONArray();
+        points.add(point(3, -2, 0));
+        points.add(point(3, 2, 0));
+
+        assertEquals(3, TrackSyncUseCase.distanceToGroundShapeFootprint(points), 0.000000001);
+    }
+
+    @Test
+    void distanceToGroundShapeFootprint_returnsZeroWhenSegmentContainsEgo() {
+        JSONArray points = new JSONArray();
+        points.add(point(-2, 0, 0));
+        points.add(point(2, 0, 0));
+
+        assertEquals(0, TrackSyncUseCase.distanceToGroundShapeFootprint(points), 0.000000001);
+    }
+
     private static JSONObject point(double x, double y, double z) {
         JSONObject point = new JSONObject();
         point.set("x", x);

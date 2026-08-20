@@ -408,7 +408,6 @@ export default function useBottom() {
             editor.showMsg('warning', editor.lang('warnNoObject'));
             return;
         }
-        const { frames } = editor.state;
         editor
             .showConfirm({
                 title: editor.lang('btnDelete'),
@@ -418,9 +417,9 @@ export default function useBottom() {
                 okDanger: true,
             })
             .then(
-                () => {
+                async () => {
                     try {
-                        editor.trackManager.deleteObjectByTrack(trackTargetId, frames);
+                        await editor.deleteTrackAcrossScene(trackTargetId);
                         editor.pc.selectObject(editor.pc.selection);
                         editor.showMsg('success', editor.lang('successDelete'));
                         onClear();

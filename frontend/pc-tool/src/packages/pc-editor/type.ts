@@ -182,6 +182,7 @@ export interface IUserData {
     reviewedCorrectVisible?: boolean;
     manualModified?: boolean;
     isProjection?: boolean;
+    projectedFromId?: string;
     // isStandard?: boolean;
     backId?: string;
     // model

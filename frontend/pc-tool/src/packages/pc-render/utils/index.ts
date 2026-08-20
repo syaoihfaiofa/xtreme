@@ -48,6 +48,11 @@ export interface ICameraProjectionOption {
     projectionMatrix: THREE.Matrix4;
 }
 
+export interface IImageRay {
+    origin: THREE.Vector3;
+    direction: THREE.Vector3;
+}
+
 export function isFisheyeCamera(cameraModel?: ICameraModel | string) {
     return (cameraModel || 'pinhole').toLowerCase() === 'fisheye';
 }
@@ -67,6 +72,33 @@ export function projectWorldToImage(
     target.x = ((target.x + 1) / 2) * option.imageSize.x;
     target.y = (-(target.y - 1) / 2) * option.imageSize.y;
     return Math.abs(target.z) < 1;
+}
+
+export function unprojectImageToWorldRay(
+    imagePoint: THREE.Vector2,
+    target: IImageRay,
+    option: ICameraProjectionOption,
+): boolean {
+    const { fx, fy, cx, cy } = option.cameraInternal;
+    if (!Number.isFinite(fx) || !Number.isFinite(fy) || fx === 0 || fy === 0) return false;
+
+    const imageX = (imagePoint.x - cx) / fx;
+    const imageY = (imagePoint.y - cy) / fy;
+    const cameraDirection = new THREE.Vector3();
+    if (isFisheyeCamera(option.cameraModel)) {
+        const thetaD = Math.hypot(imageX, imageY);
+        const theta = invertFisheyeDistortion(thetaD, option.distortion);
+        if (!Number.isFinite(theta) || theta > Math.PI) return false;
+        const sinTheta = Math.sin(theta);
+        const scale = thetaD > 0.000001 ? sinTheta / thetaD : 1;
+        cameraDirection.set(imageX * scale, -imageY * scale, -Math.cos(theta));
+    } else {
+        cameraDirection.set(imageX, -imageY, -1).normalize();
+    }
+
+    target.origin.setFromMatrixPosition(option.matrixWorldInverse.clone().invert());
+    target.direction.copy(cameraDirection).transformDirection(option.matrixWorldInverse.clone().invert());
+    return Number.isFinite(target.direction.x) && Number.isFinite(target.direction.y) && Number.isFinite(target.direction.z);
 }
 
 function projectCameraToFisheyeImage(
@@ -90,6 +122,23 @@ function projectCameraToFisheyeImage(
 
     target.set(fx * x * scale + cx, fy * y * scale + cy, 0);
     return true;
+}
+
+function invertFisheyeDistortion(thetaD: number, distortion?: ICameraDistortion): number {
+    if (thetaD === 0) return 0;
+    const { k1 = 0, k2 = 0, k3 = 0, k4 = 0 } = distortion || {};
+    let min = 0;
+    let max = Math.PI;
+    for (let index = 0; index < 40; index++) {
+        const theta = (min + max) / 2;
+        const theta2 = theta * theta;
+        const value =
+            theta *
+            (1 + k1 * theta2 + k2 * theta2 * theta2 + k3 * theta2 * theta2 * theta2 + k4 * theta2 * theta2 * theta2 * theta2);
+        if (value < thetaD) min = theta;
+        else max = theta;
+    }
+    return (min + max) / 2;
 }
 
 export function isPointInRect(pos: THREE.Vector2, rect: THREE.Vector2[]) {

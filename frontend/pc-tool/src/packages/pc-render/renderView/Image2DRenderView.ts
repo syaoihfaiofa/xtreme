@@ -11,6 +11,7 @@ import {
     isFisheyeCamera,
     projectWorldToImage,
     reformProjectPoints,
+    unprojectImageToWorldRay,
 } from '../utils';
 import { get } from '../utils/tempVar';
 import Image2DRenderProxy from './Image2DRenderProxy';
@@ -287,6 +288,29 @@ export default class Image2DRenderView extends Render {
             projectionMatrix: this.camera.projectionMatrix,
         });
         return target;
+    }
+
+    imgToWorldOnPlane(
+        imagePoint: THREE.Vector2,
+        height: number,
+        target: THREE.Vector3 = new THREE.Vector3(),
+    ): THREE.Vector3 | null {
+        const ray = {
+            origin: new THREE.Vector3(),
+            direction: new THREE.Vector3(),
+        };
+        const valid = unprojectImageToWorldRay(imagePoint, ray, {
+            cameraInternal: this.option.cameraInternal,
+            cameraModel: this.option.cameraModel,
+            distortion: this.option.distortion,
+            imageSize: this.imgSize,
+            matrixWorldInverse: this.camera.matrixWorldInverse,
+            projectionMatrix: this.camera.projectionMatrix,
+        });
+        if (!valid || Math.abs(ray.direction.z) <= 0.000001) return null;
+        const distance = (height - ray.origin.z) / ray.direction.z;
+        if (!Number.isFinite(distance) || distance <= 0) return null;
+        return target.copy(ray.direction).multiplyScalar(distance).add(ray.origin);
     }
 
     projectToImg(pos: THREE.Vector3, target?: THREE.Vector3) {

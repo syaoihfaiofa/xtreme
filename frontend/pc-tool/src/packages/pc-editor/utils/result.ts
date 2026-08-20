@@ -1,5 +1,14 @@
 import * as THREE from 'three';
-import { Box, GroundPolygon, GroundPolyline, Rect, Box2D, ProjectedPolygon, AnnotateObject } from 'pc-render';
+import {
+    Box,
+    GroundPolygon,
+    GroundPolyline,
+    Rect,
+    Box2D,
+    ProjectedPolygon,
+    ProjectedPolyline,
+    AnnotateObject,
+} from 'pc-render';
 import {
     IUserData,
     IClassType,
@@ -185,6 +194,7 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
             lastTime: object.lastTime,
             updateTime: object.updateTime,
             isProjection: object.isProjection,
+            projectedFromId: object.projectedFromId,
             classType: object.classType,
             color: object.color
         },
@@ -249,6 +259,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         // userData.invisibleFlag = obj.invisibleFlag;
         // userData.refId = obj.refId;
         userData.isProjection = obj.isProjection || false;
+        userData.projectedFromId = obj.projectedFromId;
         // userData.isStandard = obj.isStandard || false;
         userData.trackId = obj.trackId || '';
         userData.trackName = obj.trackName || '';
@@ -349,6 +360,19 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             polygon.color = getObjectDisplayColor(classConfig?.color || '#00e5ff', userData);
             bindInfo(polygon, obj);
             annotates.push(polygon);
+        } else if (objType === ObjectType.TYPE_2D_GROUND_POLYLINE) {
+            if (!Array.isArray(obj.points) || obj.points.length < 2) {
+                console.warn('skip invalid projected ground polyline without two points', obj);
+                return;
+            }
+            const polyline = new ProjectedPolyline(
+                obj.points.map((point: any) => new THREE.Vector2(Number(point.x), Number(point.y))),
+            );
+            polyline.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
+            polyline.userData = userData;
+            polyline.color = getObjectDisplayColor(classConfig?.color || '#00e5ff', userData);
+            bindInfo(polyline, obj);
+            annotates.push(polyline);
         } else if (objType === ObjectType.TYPE_2D_RECT || objType === ObjectType.TYPE_RECT) {
             if (!Array.isArray(obj.points) || obj.points.length === 0) {
                 console.warn('skip invalid 2D rect without points', obj);
@@ -441,6 +465,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             // refId: userData.refId || '',
             // invisibleFlag: !!userData.invisibleFlag,
             isProjection: userData.isProjection || false,
+            projectedFromId: userData.projectedFromId,
             // isStandard: userData.isStandard || false,
             trackId: userData.trackId || '',
             trackName: userData.trackName || '',
@@ -507,12 +532,13 @@ function getObjType(annotate: AnnotateObject): ObjectType {
     else if (annotate instanceof GroundPolygon) type = ObjectType.TYPE_GROUND_POLYGON;
     else if (annotate instanceof GroundPolyline) type = ObjectType.TYPE_GROUND_POLYLINE;
     else if (annotate instanceof ProjectedPolygon) type = ObjectType.TYPE_2D_GROUND_POLYGON;
+    else if (annotate instanceof ProjectedPolyline) type = ObjectType.TYPE_2D_GROUND_POLYLINE;
     else if (annotate instanceof Rect) type = ObjectType.TYPE_2D_RECT;
     else if (annotate instanceof Box2D) type = ObjectType.TYPE_2D_BOX;
     return type;
 }
 
-export function get2DPoints(object: Rect | Box2D | ProjectedPolygon) {
+export function get2DPoints(object: Rect | Box2D | ProjectedPolygon | ProjectedPolyline) {
     let points = [] as THREE.Vector2[];
     if (object instanceof Rect) {
         let { size, center } = object;
@@ -526,6 +552,8 @@ export function get2DPoints(object: Rect | Box2D | ProjectedPolygon) {
         points = [...object.positions1, ...object.positions2];
     }
     else if (object instanceof ProjectedPolygon) {
+        points = object.points.map((point) => point.clone());
+    } else if (object instanceof ProjectedPolyline) {
         points = object.points.map((point) => point.clone());
     }
     return points;

@@ -2,7 +2,14 @@ import * as THREE from 'three';
 import Image2DRenderView from '../renderView/Image2DRenderView';
 import Action from './Action';
 import { ITransform } from '../type';
-import { Object2D, Rect, Box2D, Vector2Of4 } from '../objects';
+import {
+    Object2D,
+    Rect,
+    Box2D,
+    Vector2Of4,
+    ProjectedPolygon,
+    ProjectedPolyline,
+} from '../objects';
 import { Event } from '../config';
 import { get } from '../utils/tempVar';
 import { Info, RectTool, Box3DTool, ClearHandler, IBoxEvent, IRectEvent } from '../common/BasicSvg';
@@ -18,8 +25,15 @@ export default class Edit2DAction extends Action {
     object: Object2D | null = null;
     rectTool: RectTool;
     boxTool: Box3DTool;
+    onGroundProjectionPointChange?: (
+        object: ProjectedPolygon | ProjectedPolyline,
+        index: number,
+        point: THREE.Vector2,
+    ) => void;
     //
     clearCall: ClearHandler[] = [];
+    private readonly vertexHandleLayer: HTMLDivElement;
+    private readonly vertexHandles: HTMLDivElement[] = [];
     private readonly onRender = () => {
         this.update();
     };
@@ -37,6 +51,10 @@ export default class Edit2DAction extends Action {
         this.renderView = renderView;
         this.rectTool = new RectTool(renderView.container);
         this.boxTool = new Box3DTool(renderView.container);
+        this.vertexHandleLayer = document.createElement('div');
+        this.vertexHandleLayer.style.cssText =
+            'position:absolute;inset:0;pointer-events:none;z-index:3;display:none;';
+        renderView.container.appendChild(this.vertexHandleLayer);
         this.rectTool.setOption({
             rotateAble: false,
             circleStyle: {
@@ -64,6 +82,7 @@ export default class Edit2DAction extends Action {
         this.clearCall = [];
         this.rectTool.destroy();
         this.boxTool.destroy();
+        this.vertexHandleLayer.remove();
         this.object = null;
     }
 
@@ -161,6 +180,7 @@ export default class Edit2DAction extends Action {
         // });
     }
     update() {
+        this.updateGroundProjectionVertexHandles();
         if (
             !this.isEnable() ||
             !this.object ||
@@ -175,6 +195,14 @@ export default class Edit2DAction extends Action {
             this.boxTool.hide();
             this.updateRect();
         } else {
+            if (
+                this.object instanceof ProjectedPolygon ||
+                this.object instanceof ProjectedPolyline
+            ) {
+                this.rectTool.hide();
+                this.boxTool.hide();
+                return;
+            }
             this.boxTool.show();
             this.rectTool.hide();
             this.updateBox2D();
@@ -222,5 +250,82 @@ export default class Edit2DAction extends Action {
         let option = {} as any;
         option[positionName] = positionMap;
         this.renderView.pointCloud.update2DBox(object, option);
+    }
+
+    private updateGroundProjectionVertexHandles(): void {
+        if (
+            !(this.object instanceof ProjectedPolygon) &&
+            !(this.object instanceof ProjectedPolyline)
+        ) {
+            this.vertexHandleLayer.style.display = 'none';
+            return;
+        }
+
+        const points = this.object.points;
+        this.vertexHandleLayer.style.display = 'block';
+        this.ensureVertexHandles(points.length);
+        points.forEach((point, index) => {
+            const position = point.clone();
+            this.renderView.imgToDom(position);
+            const handle = this.vertexHandles[index];
+            handle.dataset.index = String(index);
+            handle.style.display = 'block';
+            handle.style.left = `${position.x}px`;
+            handle.style.top = `${position.y}px`;
+        });
+        this.vertexHandles.slice(points.length).forEach((handle) => {
+            handle.style.display = 'none';
+        });
+    }
+
+    private ensureVertexHandles(count: number): void {
+        while (this.vertexHandles.length < count) {
+            const handle = document.createElement('div');
+            handle.style.cssText =
+                'position:absolute;width:10px;height:10px;border:2px solid #00e5ff;' +
+                'border-radius:50%;background:#10252a;box-sizing:border-box;' +
+                'transform:translate(-50%,-50%);pointer-events:auto;cursor:grab;';
+            handle.addEventListener('pointerdown', (event) => {
+                this.startGroundProjectionVertexDrag(event, Number(handle.dataset.index));
+            });
+            this.vertexHandleLayer.appendChild(handle);
+            this.vertexHandles.push(handle);
+        }
+    }
+
+    private startGroundProjectionVertexDrag(event: PointerEvent, index: number): void {
+        const object = this.object;
+        if (
+            !(object instanceof ProjectedPolygon) &&
+            !(object instanceof ProjectedPolyline)
+        ) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        const onMove = (moveEvent: PointerEvent): void => {
+            const rect = this.renderView.container.getBoundingClientRect();
+            const point = new THREE.Vector2(
+                moveEvent.clientX - rect.left,
+                moveEvent.clientY - rect.top,
+            );
+            this.renderView.domToImg(point);
+            if (
+                point.x < 0 ||
+                point.x > this.renderView.imgSize.x ||
+                point.y < 0 ||
+                point.y > this.renderView.imgSize.y
+            ) {
+                return;
+            }
+            this.onGroundProjectionPointChange?.(object, index, point);
+        };
+        const onUp = (): void => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+        };
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
     }
 }

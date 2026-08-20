@@ -18,6 +18,8 @@ import {
     Box,
     GroundPolygon,
     GroundPolyline,
+    ProjectedPolygon,
+    ProjectedPolyline,
 } from 'pc-render';
 import * as _ from 'lodash';
 
@@ -108,6 +110,26 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
 
     let editAction = view.getAction('edit-2d') as Edit2DAction;
     if (editAction) {
+        editAction.onGroundProjectionPointChange = (
+            projection: ProjectedPolygon | ProjectedPolyline,
+            index: number,
+            imagePoint: THREE.Vector2,
+        ) => {
+            const sourceId = projection.userData.projectedFromId;
+            const source = editor.pc.getAnnotate3D().find((object) => object.uuid === sourceId);
+            if (!(source instanceof GroundPolygon) && !(source instanceof GroundPolyline)) return;
+            const worldPoint = view.imgToWorldOnPlane(imagePoint, source.points3D[index].z);
+            if (!worldPoint) return;
+            const points = source.points3D.map((point) => point.clone());
+            points[index].copy(worldPoint);
+            if (source instanceof GroundPolygon && !GroundPolygon.isValidPoints(points)) return;
+            editor.cmdManager.execute(
+                source instanceof GroundPolygon
+                    ? 'update-ground-polygon-points'
+                    : 'update-ground-polyline-points',
+                { object: source, points },
+            );
+        };
         editAction.updateRectData = (center: THREE.Vector2, size?: THREE.Vector2) => {
             let object = editAction.object as Rect;
             editor.cmdManager.execute('update-2d-rect', { object, option: { center, size } });
@@ -143,7 +165,11 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         if (config.filter2DByTrack && currentTrack) {
             return objects.filter((e) => {
                 return (
-                    e.userData.trackId === currentTrack && (e instanceof Rect || e instanceof Box2D)
+                    e.userData.trackId === currentTrack &&
+                    (e instanceof Rect ||
+                        e instanceof Box2D ||
+                        e instanceof ProjectedPolygon ||
+                        e instanceof ProjectedPolyline)
                 );
             }) as Object2D[];
         } else {

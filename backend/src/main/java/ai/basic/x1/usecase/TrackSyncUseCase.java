@@ -111,6 +111,42 @@ public class TrackSyncUseCase {
     }
 
     @Transactional(rollbackFor = Exception.class)
+    public List<Long> deleteByDataIdAndTrackId(Long dataId, String trackId) {
+        if (dataId == null || StrUtil.isBlank(trackId)) {
+            throw new IllegalArgumentException("dataId and trackId are required");
+        }
+        DataInfo sourceFrame = dataInfoDAO.getById(dataId);
+        if (sourceFrame == null || sourceFrame.getParentId() == null) {
+            throw new IllegalArgumentException(String.format("Scene frame not found: dataId=%s", dataId));
+        }
+        List<Long> frameIds = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                        .eq(DataInfo::getParentId, sourceFrame.getParentId())
+                        .eq(DataInfo::getIsDeleted, false))
+                .stream()
+                .map(DataInfo::getId)
+                .collect(Collectors.toList());
+        if (frameIds.isEmpty()) {
+            return List.of();
+        }
+        List<DataAnnotationObject> matched = dataAnnotationObjectDAO.list(
+                        Wrappers.lambdaQuery(DataAnnotationObject.class)
+                                .in(DataAnnotationObject::getDataId, frameIds))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .collect(Collectors.toList());
+        if (matched.isEmpty()) {
+            return List.of();
+        }
+        dataAnnotationObjectDAO.removeBatchByIds(
+                matched.stream().map(DataAnnotationObject::getId).collect(Collectors.toList()));
+        return matched.stream()
+                .map(DataAnnotationObject::getDataId)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(rollbackFor = Exception.class)
     public void syncByDataIdAndTrackId(Long dataId, String trackId, Long classId) {
         if (ObjectUtil.isNull(dataId) || StrUtil.isBlank(trackId)) {
             return;
@@ -243,15 +279,17 @@ public class TrackSyncUseCase {
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
         Map<Long, Integer> segmentByDataId = buildSegmentByDataId(sceneId, frames, locationGapMs);
 
-        if (isGroundPolygon(attrs)) {
+        if (isGroundPolygon(attrs) && MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
-            syncGroundPolygon(source, trackId, frames, poseByDataId);
+            double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
+            syncGroundPolygon(source, trackId, syncRadius, frames, poseByDataId);
             return;
         }
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
                 requireScenePose(poseByDataId, source.getDataId());
-                syncGroundPolyline(source, trackId, frames, poseByDataId);
+                double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
+                syncGroundPolyline(source, trackId, syncRadius, frames, poseByDataId);
             }
             return;
         }
@@ -483,7 +521,7 @@ public class TrackSyncUseCase {
      * The stored contour remains in each frame's local LiDAR coordinates; world coordinates
      * are used only while transforming between source and target frames.
      */
-    private void syncGroundPolygon(DataAnnotationObjectBO source, String trackId, List<DataInfo> frames,
+    private void syncGroundPolygon(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
                                    Map<Long, Pose> poseByDataId) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
@@ -525,6 +563,7 @@ public class TrackSyncUseCase {
 
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
+        List<Long> deleteIds = new ArrayList<>();
         for (DataInfo frame : frames) {
             Pose targetPose = poseByDataId.get(frame.getId());
             if (targetPose == null || !targetPose.complete) {
@@ -549,12 +588,19 @@ public class TrackSyncUseCase {
                 targetPoint.set("z", worldPoint[2] - targetPose.z);
                 targetPoints.add(targetPoint);
             }
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            if (distanceToGroundShapeFootprint(targetPoints) > syncRadius) {
+                if (existing != null) {
+                    deleteIds.add(existing.getId());
+                }
+                continue;
+            }
             contour.set("points", targetPoints);
             attrs.set("type", "GROUND_POLYGON");
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
+            attrs.set("syncDistance", syncRadius);
             attrs.set("parkingOpeningEdge", "P3_P0");
-            DataAnnotationObject existing = existingByDataId.get(frame.getId());
             if (existing == null) {
                 inserts.add(DataAnnotationObject.builder()
                         .datasetId(source.getDatasetId())
@@ -572,10 +618,10 @@ public class TrackSyncUseCase {
                 updates.add(existing);
             }
         }
-        applyChanges(inserts, updates, new ArrayList<>());
+        applyChanges(inserts, updates, deleteIds);
     }
 
-    private void syncGroundPolyline(DataAnnotationObjectBO source, String trackId, List<DataInfo> frames,
+    private void syncGroundPolyline(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
                                     Map<Long, Pose> poseByDataId) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
@@ -602,6 +648,7 @@ public class TrackSyncUseCase {
 
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
+        List<Long> deleteIds = new ArrayList<>();
         for (DataInfo frame : frames) {
             Pose targetPose = poseByDataId.get(frame.getId());
             if (targetPose == null || !targetPose.complete) {
@@ -616,11 +663,19 @@ public class TrackSyncUseCase {
                 contour = new JSONObject();
                 attrs.set("contour", contour);
             }
-            contour.set("points", projectGroundPoints(sourcePoints, sourcePose, targetPose));
+            JSONArray targetPoints = projectGroundPoints(sourcePoints, sourcePose, targetPose);
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            if (distanceToGroundShapeFootprint(targetPoints) > syncRadius) {
+                if (existing != null) {
+                    deleteIds.add(existing.getId());
+                }
+                continue;
+            }
+            contour.set("points", targetPoints);
             attrs.set("type", GROUND_POLYLINE);
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
-            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            attrs.set("syncDistance", syncRadius);
             if (existing == null) {
                 inserts.add(DataAnnotationObject.builder()
                         .datasetId(source.getDatasetId())
@@ -638,7 +693,7 @@ public class TrackSyncUseCase {
                 updates.add(existing);
             }
         }
-        applyChanges(inserts, updates, new ArrayList<>());
+        applyChanges(inserts, updates, deleteIds);
     }
 
     static JSONArray projectGroundPoints(JSONArray sourcePoints, Pose sourcePose, Pose targetPose) {
@@ -661,6 +716,51 @@ public class TrackSyncUseCase {
                     sourcePose.z + localZ - targetPose.z));
         }
         return targetPoints;
+    }
+
+    static double distanceToGroundShapeFootprint(JSONArray points) {
+        if (points == null || points.isEmpty()) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double distance = Double.POSITIVE_INFINITY;
+        for (int index = 0; index < points.size(); index++) {
+            JSONObject point = points.getJSONObject(index);
+            if (point == null) {
+                continue;
+            }
+            double x = getDouble(point, "x");
+            double y = getDouble(point, "y");
+            distance = Math.min(distance, Math.hypot(x, y));
+            if (index == 0) {
+                continue;
+            }
+            JSONObject previous = points.getJSONObject(index - 1);
+            if (previous != null) {
+                distance = Math.min(distance, distanceToSegment(
+                        0, 0,
+                        getDouble(previous, "x"), getDouble(previous, "y"),
+                        x, y));
+            }
+        }
+        return distance;
+    }
+
+    private static double distanceToSegment(
+            double pointX,
+            double pointY,
+            double startX,
+            double startY,
+            double endX,
+            double endY) {
+        double deltaX = endX - startX;
+        double deltaY = endY - startY;
+        double lengthSquared = deltaX * deltaX + deltaY * deltaY;
+        if (lengthSquared <= 0.0000001) {
+            return Math.hypot(pointX - startX, pointY - startY);
+        }
+        double ratio = ((pointX - startX) * deltaX + (pointY - startY) * deltaY) / lengthSquared;
+        ratio = Math.max(0, Math.min(1, ratio));
+        return Math.hypot(pointX - (startX + ratio * deltaX), pointY - (startY + ratio * deltaY));
     }
 
     private void syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,

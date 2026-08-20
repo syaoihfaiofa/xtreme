@@ -1,5 +1,17 @@
 import { IObject, IFrame, IModelResult } from '../type';
-import { AnnotateObject, Box, GroundPolygon, GroundPolyline, Rect, Box2D, ITransform, Object2D } from 'pc-render';
+import {
+    AnnotateObject,
+    Box,
+    GroundPolygon,
+    GroundPolyline,
+    Rect,
+    Box2D,
+    ITransform,
+    Object2D,
+    ProjectedPolygon,
+    ProjectedPolyline,
+    Image2DRenderView,
+} from 'pc-render';
 import Editor from '../Editor';
 import { Event as EditorEvent } from 'pc-editor';
 // import * as api from '../api';
@@ -184,6 +196,24 @@ export default class DataManager {
         this.onAnnotatesRemove(objects, frame);
     }
 
+    purgeTrackFromCachedFrames(trackId: string): void {
+        this.dataMap.forEach((objects, frameKey) => {
+            const removed = objects.filter((object) => object.userData.trackId === trackId);
+            if (removed.length === 0) return;
+            const remain = objects.filter((object) => object.userData.trackId !== trackId);
+            this.setFrameObject(frameKey, remain);
+            const frameMap = new Map<string, AnnotateObject>();
+            remain.forEach((object) => frameMap.set(object.uuid, object));
+            this.hasMap.set(frameKey, frameMap);
+            const frame = this.editor.getFrame(frameKey);
+            if (frame) this.editor.trackManager.removeTrackCount(removed, frame);
+        });
+        this.editor.pc.selectObject(
+            this.editor.pc.selection.filter((object) => object.userData.trackId !== trackId),
+        );
+        this.loadDataFromManager();
+    }
+
     setAnnotatesVisible(
         objects: AnnotateObject | AnnotateObject[],
         visible: boolean | boolean[],
@@ -266,9 +296,46 @@ export default class DataManager {
         frame?: IFrame,
     ): void {
         object.setPoints(points);
+        this.updateGroundShapeProjections(object);
         this.onAnnotatesChange([object], frame, {
             type: 'transform',
             points3D: object.points3D.map((point) => point.clone()),
+        });
+    }
+
+    private updateGroundShapeProjections(object: GroundPolygon | GroundPolyline): void {
+        const views = this.editor.pc.renderViews.filter(
+            (view) => view instanceof Image2DRenderView,
+        ) as Image2DRenderView[];
+        const projections = this.editor.pc
+            .getAnnotate2D()
+            .filter(
+                (annotate) =>
+                    (annotate instanceof ProjectedPolygon || annotate instanceof ProjectedPolyline) &&
+                    annotate.userData.projectedFromId === object.uuid,
+            ) as Array<ProjectedPolygon | ProjectedPolyline>;
+
+        projections.forEach((projection) => {
+            const view = views.find((item) => item.id === projection.viewId || item.renderId === projection.viewId);
+            if (!view || projection.points.length !== object.points3D.length) return;
+            object.points3D.forEach((point, index) => {
+                const projected = view.worldToImg(point.clone());
+                if (
+                    Number.isFinite(projected.x) &&
+                    Number.isFinite(projected.y) &&
+                    projected.x >= 0 &&
+                    projected.x <= view.imgSize.x &&
+                    projected.y >= 0 &&
+                    projected.y <= view.imgSize.y
+                ) {
+                    projection.points[index].set(projected.x, projected.y);
+                }
+            });
+            if (projection instanceof ProjectedPolygon) {
+                const rear = projection.points[1].clone().add(projection.points[2]).multiplyScalar(0.5);
+                const opening = projection.points[0].clone().add(projection.points[3]).multiplyScalar(0.5);
+                projection.openingDirection.copy(opening.sub(rear).normalize());
+            }
         });
     }
 
