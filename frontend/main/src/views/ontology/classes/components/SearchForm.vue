@@ -171,9 +171,19 @@
   /**  ToolType Selection List */
   const toolTypeOption = computed(() => {
     if (props.datasetType != datasetTypeEnum.IMAGE) {
-      return toolTypeList.filter((item) => item.type === ToolTypeEnum.CUBOID);
+      return toolTypeList.filter(
+        (item) =>
+          item.type === ToolTypeEnum.CUBOID ||
+          item.type === ToolTypeEnum.PARKING_SLOT ||
+          item.type === ToolTypeEnum.CURB_WALL,
+      );
     } else {
-      return toolTypeList.filter((item) => item.type !== ToolTypeEnum.CUBOID);
+      return toolTypeList.filter(
+        (item) =>
+          item.type !== ToolTypeEnum.CUBOID &&
+          item.type !== ToolTypeEnum.PARKING_SLOT &&
+          item.type !== ToolTypeEnum.CURB_WALL,
+      );
     }
   });
 

@@ -87,6 +87,34 @@ export const allItems: IItemConfig[] = [
         },
     },
     {
+        action: 'createParkingSlot',
+        title: () => '停车位四点标注 (P)',
+        getIcon: function () {
+            return 'iconfont icon-biaozhunkuang';
+        },
+        isDisplay: function (editor: Editor) {
+            const state = editor.state;
+            return state.modeConfig.actions['createParkingSlot'] && !state.config.showSingleImgView;
+        },
+        isActive: function () {
+            return false;
+        },
+    },
+    {
+        action: 'createGroundPolyline',
+        title: () => '地面折线标注 (L)',
+        getIcon: function () {
+            return 'iconfont icon-biaozhunkuang';
+        },
+        isDisplay: function (editor: Editor) {
+            const state = editor.state;
+            return state.modeConfig.actions['createGroundPolyline'] && !state.config.showSingleImgView;
+        },
+        isActive: function () {
+            return false;
+        },
+    },
+    {
         action: 'translate',
         title: ($$) => $$('title_translate'),
         getIcon: function (editor: Editor) {

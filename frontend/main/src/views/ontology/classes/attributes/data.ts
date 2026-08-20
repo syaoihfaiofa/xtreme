@@ -77,6 +77,8 @@ export const toolTypeImg = {
   POLYLINE: polyline,
   KEY_POINT: key_point,
   CUBOID: cuboid,
+  PARKING_SLOT: polygon,
+  CURB_WALL: polyline,
 };
 
 /** toolType list */
@@ -110,6 +112,18 @@ export const toolTypeList = [
     img: cuboid,
     type: ToolTypeEnum.CUBOID,
     text: t('business.ontology.modal.toolType.cuboid'),
+  },
+  {
+    id: 6,
+    img: polygon,
+    type: ToolTypeEnum.PARKING_SLOT,
+    text: 'Parking Slot',
+  },
+  {
+    id: 7,
+    img: polyline,
+    type: ToolTypeEnum.CURB_WALL,
+    text: 'Curb / Wall',
   },
 ];
 

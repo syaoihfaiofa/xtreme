@@ -5,6 +5,8 @@ import {
     TransformControlsAction,
     AnnotateObject,
     Box,
+    GroundPolygon,
+    GroundPolyline,
 } from 'pc-render';
 import { Vector2Of4 } from 'pc-render';
 import CmdManager from './common/CmdManager';
@@ -346,6 +348,19 @@ export default class Editor extends THREE.EventDispatcher {
         return object;
     }
 
+    createGroundPolygon(points: THREE.Vector3[], userData: IUserData = {}): GroundPolygon {
+        const object = utils.createGroundPolygon(this, points, userData);
+        utils.setIdInfo(this, object.userData);
+        object.uuid = object.userData.id as string;
+        return object;
+    }
+
+    createGroundPolyline(points: THREE.Vector3[], userData: IUserData = {}): GroundPolyline {
+        const object = utils.createGroundPolyline(this, points, userData);
+        this.updateObjectRenderInfo(object);
+        return object;
+    }
+
     createAnnotateRect(center: THREE.Vector2, size: THREE.Vector2, userData: IUserData = {}) {
         let object = utils.createAnnotateRect(this, center, size, userData);
         utils.setIdInfo(this, object.userData);
@@ -402,6 +417,8 @@ export default class Editor extends THREE.EventDispatcher {
             if (obj instanceof Box) {
                 // obj.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
                 obj.color.setStyle(displayColor);
+            } else if (obj instanceof GroundPolygon || obj instanceof GroundPolyline) {
+                obj.setColor(displayColor);
             } else {
                 obj.color = displayColor;
             }

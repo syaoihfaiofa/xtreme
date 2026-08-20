@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Box, Rect, Box2D, AnnotateObject } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline, Rect, Box2D, ProjectedPolygon, AnnotateObject } from 'pc-render';
 import {
     IUserData,
     IClassType,
@@ -283,7 +283,39 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.attrs = obj.attrs || {};
         userData.pointN = obj.pointN || 0;
         createUtils.setIdInfo(editor, userData);
-        if (objType === ObjectType.TYPE_3D_BOX || objType === ObjectType.TYPE_3D) {
+        if (objType === ObjectType.TYPE_GROUND_POLYGON) {
+            if (!Array.isArray(obj.points) || obj.points.length !== 4) {
+                console.warn('skip invalid ground polygon without four points', obj);
+                return;
+            }
+            const points = obj.points.map(
+                (point: any) => new THREE.Vector3(Number(point.x), Number(point.y), Number(point.z)),
+            );
+            if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z))) {
+                console.warn('skip invalid ground polygon point', obj);
+                return;
+            }
+            const polygon = createUtils.createGroundPolygon(editor, points, userData);
+            if (classConfig) polygon.setColor(getObjectDisplayColor(classConfig.color, userData));
+            bindInfo(polygon, obj);
+            annotates.push(polygon);
+        } else if (objType === ObjectType.TYPE_GROUND_POLYLINE) {
+            if (!Array.isArray(obj.points) || obj.points.length < 2) {
+                console.warn('skip invalid ground polyline without two points', obj);
+                return;
+            }
+            const points = obj.points.map(
+                (point: any) => new THREE.Vector3(Number(point.x), Number(point.y), Number(point.z)),
+            );
+            if (points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z))) {
+                console.warn('skip invalid ground polyline point', obj);
+                return;
+            }
+            const polyline = createUtils.createGroundPolyline(editor, points, userData);
+            if (classConfig) polyline.setColor(getObjectDisplayColor(classConfig.color, userData));
+            bindInfo(polyline, obj);
+            annotates.push(polyline);
+        } else if (objType === ObjectType.TYPE_3D_BOX || objType === ObjectType.TYPE_3D) {
             if (!obj.center3D || !obj.size3D) {
                 console.warn('skip invalid 3D object without center3D/size3D', obj);
                 return;
@@ -304,6 +336,19 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             }
             bindInfo(box, obj);
             annotates.push(box);
+        } else if (objType === ObjectType.TYPE_2D_GROUND_POLYGON) {
+            if (!Array.isArray(obj.points) || obj.points.length !== 4) {
+                console.warn('skip invalid projected ground polygon without four points', obj);
+                return;
+            }
+            const polygon = new ProjectedPolygon(
+                obj.points.map((point: any) => new THREE.Vector2(Number(point.x), Number(point.y))),
+            );
+            polygon.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
+            polygon.userData = userData;
+            polygon.color = getObjectDisplayColor(classConfig?.color || '#00e5ff', userData);
+            bindInfo(polygon, obj);
+            annotates.push(polygon);
         } else if (objType === ObjectType.TYPE_2D_RECT || objType === ObjectType.TYPE_RECT) {
             if (!Array.isArray(obj.points) || obj.points.length === 0) {
                 console.warn('skip invalid 2D rect without points', obj);
@@ -377,7 +422,11 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
 
     annotates.forEach((obj) => {
         let userData = editor.getObjectUserData(obj) as Required<IUserData>;
-        let points = obj instanceof Box ? [] : get2DPoints(obj as any);
+        let points = obj instanceof Box
+            ? []
+            : obj instanceof GroundPolygon || obj instanceof GroundPolyline
+              ? obj.points3D.map((point) => point.clone())
+              : get2DPoints(obj as any);
         let classConfig = editor.getClassType(userData);
         updateObjectVersion(obj as any);
         let bsObj = obj as any;
@@ -437,6 +486,10 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             info.center3D.set(obj.position.x, obj.position.y, obj.position.z);
             info.rotation3D.set(obj.rotation.x, obj.rotation.y, obj.rotation.z);
             info.size3D.set(obj.scale.x, obj.scale.y, obj.scale.z);
+        } else if (obj instanceof GroundPolygon) {
+            info.objType = ObjectType.TYPE_GROUND_POLYGON;
+        } else if (obj instanceof GroundPolyline) {
+            info.objType = ObjectType.TYPE_GROUND_POLYLINE;
         } else {
             info.viewIndex = parseInt((obj.viewId.match(/[0-9]{1,5}$/) as any)[0]);
         }
@@ -451,12 +504,15 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
 function getObjType(annotate: AnnotateObject): ObjectType {
     let type: ObjectType = ObjectType.TYPE_3D_BOX;
     if (annotate instanceof Box) type = ObjectType.TYPE_3D_BOX;
+    else if (annotate instanceof GroundPolygon) type = ObjectType.TYPE_GROUND_POLYGON;
+    else if (annotate instanceof GroundPolyline) type = ObjectType.TYPE_GROUND_POLYLINE;
+    else if (annotate instanceof ProjectedPolygon) type = ObjectType.TYPE_2D_GROUND_POLYGON;
     else if (annotate instanceof Rect) type = ObjectType.TYPE_2D_RECT;
     else if (annotate instanceof Box2D) type = ObjectType.TYPE_2D_BOX;
     return type;
 }
 
-export function get2DPoints(object: Rect | Box2D) {
+export function get2DPoints(object: Rect | Box2D | ProjectedPolygon) {
     let points = [] as THREE.Vector2[];
     if (object instanceof Rect) {
         let { size, center } = object;
@@ -468,6 +524,9 @@ export function get2DPoints(object: Rect | Box2D) {
         ];
     } else if (object instanceof Box2D) {
         points = [...object.positions1, ...object.positions2];
+    }
+    else if (object instanceof ProjectedPolygon) {
+        points = object.points.map((point) => point.clone());
     }
     return points;
 }

@@ -56,6 +56,8 @@ export const executeActions: IBsActionName[] = [
     'create2DBox',
     'create2DRect',
     'createObjectWith3',
+    'createParkingSlot',
+    'createGroundPolyline',
     'copyBackWard',
     'copyForward',
     'undo',

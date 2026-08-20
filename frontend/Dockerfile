@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM node:16 AS build
 WORKDIR /build
 COPY main ./main

@@ -17,6 +17,7 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
@@ -62,6 +63,8 @@ public class TrackSyncUseCase {
     private static final String MOTION_STATIC = "STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
     private static final String MOTION_DYNAMIC_VARIABLE_SIZE = "DYNAMIC_VARIABLE_SIZE";
+    private static final String GROUND_POLYGON = "GROUND_POLYGON";
+    private static final String GROUND_POLYLINE = "GROUND_POLYLINE";
 
     @Autowired
     private DataAnnotationObjectDAO dataAnnotationObjectDAO;
@@ -117,7 +120,7 @@ public class TrackSyncUseCase {
         var source = objects.stream()
                 .filter(obj -> ObjectUtil.isNotNull(obj.getClassAttributes()))
                 .filter(obj -> trackId.equals(obj.getClassAttributes().getStr("trackId")))
-                .filter(TrackSyncUseCase::hasSyncableBox)
+                .filter(TrackSyncUseCase::hasSyncableObject)
                 .filter(obj -> classId == null || sameClassId(obj, classId))
                 .findFirst();
         if (source.isEmpty()) {
@@ -239,6 +242,19 @@ public class TrackSyncUseCase {
         Map<Long, Pose> poseByDataId = buildPoseByDataId(sceneId, frames, frameIds);
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
         Map<Long, Integer> segmentByDataId = buildSegmentByDataId(sceneId, frames, locationGapMs);
+
+        if (isGroundPolygon(attrs)) {
+            requireScenePose(poseByDataId, source.getDataId());
+            syncGroundPolygon(source, trackId, frames, poseByDataId);
+            return;
+        }
+        if (isGroundPolyline(attrs)) {
+            if (MOTION_STATIC.equals(motionMode)) {
+                requireScenePose(poseByDataId, source.getDataId());
+                syncGroundPolyline(source, trackId, frames, poseByDataId);
+            }
+            return;
+        }
 
         // existing annotation rows across the whole scene, so we can decide insert vs update vs delete
         var existingObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
@@ -460,6 +476,191 @@ public class TrackSyncUseCase {
         attrs.set("dynamicSyncNextFrames", nextFrames);
         attrs.set("syncUseZ", syncUseZ);
         updateSyncMetadata(attrs, maxDisappearGap, segmentId, locationGapMs);
+    }
+
+    /**
+     * Propagate the static four-corner parking footprint to every frame that has a pose.
+     * The stored contour remains in each frame's local LiDAR coordinates; world coordinates
+     * are used only while transforming between source and target frames.
+     */
+    private void syncGroundPolygon(DataAnnotationObjectBO source, String trackId, List<DataInfo> frames,
+                                   Map<Long, Pose> poseByDataId) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
+        JSONArray sourcePoints = sourceContour == null ? null : sourceContour.getJSONArray("points");
+        if (sourcePoints == null || sourcePoints.size() != 4) {
+            throw new IllegalArgumentException(
+                    String.format("Parking slot requires exactly four points: dataId=%s, trackId=%s",
+                            source.getDataId(), trackId));
+        }
+        Pose sourcePose = poseByDataId.get(source.getDataId());
+        List<double[]> worldPoints = new ArrayList<>(4);
+        for (int index = 0; index < 4; index++) {
+            JSONObject point = sourcePoints.getJSONObject(index);
+            if (point == null) {
+                throw new IllegalArgumentException(
+                        String.format("Parking slot point is invalid: dataId=%s, index=%s", source.getDataId(), index));
+            }
+            double localX = getDouble(point, "x");
+            double localY = getDouble(point, "y");
+            double localZ = getDouble(point, "z");
+            double worldX = sourcePose.x + localX * Math.cos(sourcePose.yaw) - localY * Math.sin(sourcePose.yaw);
+            double worldY = sourcePose.y + localX * Math.sin(sourcePose.yaw) + localY * Math.cos(sourcePose.yaw);
+            worldPoints.add(new double[]{worldX, worldY, sourcePose.z + localZ});
+        }
+
+        Map<Long, DataAnnotationObject> existingByDataId = dataAnnotationObjectDAO.list(
+                        Wrappers.lambdaQuery(DataAnnotationObject.class)
+                                .in(DataAnnotationObject::getDataId,
+                                        frames.stream().map(DataInfo::getId).collect(Collectors.toList())))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> sameClass(object, source))
+                .filter(object -> isGroundPolygon(object.getClassAttributes()))
+                .collect(Collectors.toMap(
+                        DataAnnotationObject::getDataId,
+                        object -> object,
+                        (first, ignored) -> first));
+
+        List<DataAnnotationObject> inserts = new ArrayList<>();
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataInfo frame : frames) {
+            Pose targetPose = poseByDataId.get(frame.getId());
+            if (targetPose == null || !targetPose.complete) {
+                continue;
+            }
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
+                    existingByDataId.containsKey(frame.getId())
+                            ? existingByDataId.get(frame.getId()).getClassAttributes()
+                            : sourceAttrs));
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (contour == null) {
+                contour = new JSONObject();
+                attrs.set("contour", contour);
+            }
+            JSONArray targetPoints = new JSONArray();
+            for (double[] worldPoint : worldPoints) {
+                double dx = worldPoint[0] - targetPose.x;
+                double dy = worldPoint[1] - targetPose.y;
+                JSONObject targetPoint = new JSONObject();
+                targetPoint.set("x", dx * Math.cos(targetPose.yaw) + dy * Math.sin(targetPose.yaw));
+                targetPoint.set("y", -dx * Math.sin(targetPose.yaw) + dy * Math.cos(targetPose.yaw));
+                targetPoint.set("z", worldPoint[2] - targetPose.z);
+                targetPoints.add(targetPoint);
+            }
+            contour.set("points", targetPoints);
+            attrs.set("type", "GROUND_POLYGON");
+            attrs.set("trackId", trackId);
+            attrs.set("motionMode", MOTION_STATIC);
+            attrs.set("parkingOpeningEdge", "P3_P0");
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            if (existing == null) {
+                inserts.add(DataAnnotationObject.builder()
+                        .datasetId(source.getDatasetId())
+                        .dataId(frame.getId())
+                        .classId(source.getClassId())
+                        .classAttributes(attrs)
+                        .sourceId(-1L)
+                        .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW)
+                        .createdAt(OffsetDateTime.now())
+                        .createdBy(source.getCreatedBy())
+                        .build());
+            } else {
+                existing.setClassId(source.getClassId());
+                existing.setClassAttributes(attrs);
+                updates.add(existing);
+            }
+        }
+        applyChanges(inserts, updates, new ArrayList<>());
+    }
+
+    private void syncGroundPolyline(DataAnnotationObjectBO source, String trackId, List<DataInfo> frames,
+                                    Map<Long, Pose> poseByDataId) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
+        JSONArray sourcePoints = sourceContour == null ? null : sourceContour.getJSONArray("points");
+        if (sourcePoints == null) {
+            throw new IllegalArgumentException(
+                    String.format("Ground polyline points are required: dataId=%s, trackId=%s",
+                            source.getDataId(), trackId));
+        }
+        Pose sourcePose = poseByDataId.get(source.getDataId());
+        Map<Long, DataAnnotationObject> existingByDataId = dataAnnotationObjectDAO.list(
+                        Wrappers.lambdaQuery(DataAnnotationObject.class)
+                                .in(DataAnnotationObject::getDataId,
+                                        frames.stream().map(DataInfo::getId).collect(Collectors.toList())))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> sameClass(object, source))
+                .filter(object -> isGroundPolyline(object.getClassAttributes()))
+                .collect(Collectors.toMap(
+                        DataAnnotationObject::getDataId,
+                        object -> object,
+                        (first, ignored) -> first));
+
+        List<DataAnnotationObject> inserts = new ArrayList<>();
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataInfo frame : frames) {
+            Pose targetPose = poseByDataId.get(frame.getId());
+            if (targetPose == null || !targetPose.complete) {
+                continue;
+            }
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
+                    existingByDataId.containsKey(frame.getId())
+                            ? existingByDataId.get(frame.getId()).getClassAttributes()
+                            : sourceAttrs));
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (contour == null) {
+                contour = new JSONObject();
+                attrs.set("contour", contour);
+            }
+            contour.set("points", projectGroundPoints(sourcePoints, sourcePose, targetPose));
+            attrs.set("type", GROUND_POLYLINE);
+            attrs.set("trackId", trackId);
+            attrs.set("motionMode", MOTION_STATIC);
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            if (existing == null) {
+                inserts.add(DataAnnotationObject.builder()
+                        .datasetId(source.getDatasetId())
+                        .dataId(frame.getId())
+                        .classId(source.getClassId())
+                        .classAttributes(attrs)
+                        .sourceId(-1L)
+                        .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW)
+                        .createdAt(OffsetDateTime.now())
+                        .createdBy(source.getCreatedBy())
+                        .build());
+            } else {
+                existing.setClassId(source.getClassId());
+                existing.setClassAttributes(attrs);
+                updates.add(existing);
+            }
+        }
+        applyChanges(inserts, updates, new ArrayList<>());
+    }
+
+    static JSONArray projectGroundPoints(JSONArray sourcePoints, Pose sourcePose, Pose targetPose) {
+        JSONArray targetPoints = new JSONArray();
+        for (int index = 0; index < sourcePoints.size(); index++) {
+            JSONObject sourcePoint = sourcePoints.getJSONObject(index);
+            if (sourcePoint == null) {
+                throw new IllegalArgumentException(String.format("Ground shape point is invalid: index=%s", index));
+            }
+            double localX = getDouble(sourcePoint, "x");
+            double localY = getDouble(sourcePoint, "y");
+            double localZ = getDouble(sourcePoint, "z");
+            double worldX = sourcePose.x + localX * Math.cos(sourcePose.yaw) - localY * Math.sin(sourcePose.yaw);
+            double worldY = sourcePose.y + localX * Math.sin(sourcePose.yaw) + localY * Math.cos(sourcePose.yaw);
+            double dx = worldX - targetPose.x;
+            double dy = worldY - targetPose.y;
+            targetPoints.add(point3D(
+                    dx * Math.cos(targetPose.yaw) + dy * Math.sin(targetPose.yaw),
+                    -dx * Math.sin(targetPose.yaw) + dy * Math.cos(targetPose.yaw),
+                    sourcePose.z + localZ - targetPose.z));
+        }
+        return targetPoints;
     }
 
     private void syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,
@@ -982,6 +1183,29 @@ public class TrackSyncUseCase {
         return contour != null
                 && contour.getJSONObject("center3D") != null
                 && contour.getJSONObject("size3D") != null;
+    }
+
+    private static boolean hasSyncableObject(DataAnnotationObject object) {
+        return hasSyncableBox(object)
+                || isGroundPolygon(object.getClassAttributes())
+                || isGroundPolyline(object.getClassAttributes());
+    }
+
+    private static boolean isGroundPolygon(JSONObject attrs) {
+        if (attrs == null || !GROUND_POLYGON.equals(attrs.getStr("type"))) {
+            return false;
+        }
+        JSONObject contour = attrs.getJSONObject("contour");
+        JSONArray points = contour == null ? null : contour.getJSONArray("points");
+        return points != null && points.size() == 4;
+    }
+
+    private static boolean isGroundPolyline(JSONObject attrs) {
+        if (attrs == null || !GROUND_POLYLINE.equals(attrs.getStr("type"))) {
+            return false;
+        }
+        JSONObject contour = attrs.getJSONObject("contour");
+        return contour != null && contour.getJSONArray("points") != null;
     }
 
     private void applyChanges(List<DataAnnotationObject> toInsert, List<DataAnnotationObject> toUpdate,

@@ -15,6 +15,8 @@ ORDER=(
   "V16__Add_dataset_inference_mode.sql"
   "V17__Add_user_role.sql"
   "V19__Add_scene_location_table.sql"
+  "V20__Add_parking_slot_tool_type.sql"
+  "V21__Add_curb_wall_tool_type.sql"
 )
 
 for migration in "${ORDER[@]}"; do

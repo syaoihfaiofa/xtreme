@@ -2,7 +2,7 @@ import { reactive, toRefs, watch } from 'vue';
 import { useInjectEditor } from '../../state';
 import { allItems } from './item';
 import { IActionName } from 'pc-editor';
-import { Image2DRenderView, CreateAction, Box, Object2D } from 'pc-render';
+import { Image2DRenderView, CreateAction, Box, GroundPolygon, GroundPolyline, Object2D } from 'pc-render';
 import { IModelResult, IModel } from 'pc-editor';
 import * as api from '../../api';
 import * as locale from './lang';
@@ -11,6 +11,8 @@ let createActions: IActionName[] = [
     'create2DBox',
     'create2DRect',
     'createObjectWith3',
+    'createParkingSlot',
+    'createGroundPolyline',
     'pickObject',
 ];
 
@@ -42,6 +44,14 @@ export default function useTool() {
                 stopOtherCreateAction('createObjectWith3');
                 editor.actionManager.execute('createObjectWith3');
 
+                break;
+            case 'createParkingSlot':
+                stopOtherCreateAction('createParkingSlot');
+                editor.actionManager.execute('createParkingSlot');
+                break;
+            case 'createGroundPolyline':
+                stopOtherCreateAction('createGroundPolyline');
+                editor.actionManager.execute('createGroundPolyline');
                 break;
             case 'createRect':
                 stopOtherCreateAction('create2DRect');
@@ -98,7 +108,9 @@ export default function useTool() {
         let selection = editor.pc.selection;
 
         if (selection.length > 0) {
-            let object3D = selection.filter((e) => e instanceof Box);
+            let object3D = selection.filter(
+                (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline,
+            );
             if (object3D.length === 0) {
                 editor.showMsg('warning', 'Please Select a 3D Result');
                 return;
@@ -118,7 +130,9 @@ export default function useTool() {
 
     function reProject() {
         let selection = editor.pc.selection;
-        let object3D = selection.filter((e) => e instanceof Box);
+        let object3D = selection.filter(
+            (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline,
+        );
         if (object3D.length === 0) {
             editor.showMsg('warning', 'Please Select a 3D Result');
             return;

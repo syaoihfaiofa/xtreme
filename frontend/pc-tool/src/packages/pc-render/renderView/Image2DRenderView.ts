@@ -3,7 +3,7 @@ import Render from './Render';
 import PointCloud from '../PointCloud';
 import PointsMaterial, { IUniformOption } from '../material/PointsMaterial';
 import * as _ from 'lodash';
-import { Object2D, Box, Rect, Vector2Of4, Box2D, AnnotateObject } from '../objects';
+import { Object2D, Box, Rect, Vector2Of4, Box2D, ProjectedPolygon, ProjectedPolyline, AnnotateObject } from '../objects';
 import { ICameraDistortion, ICameraInternal, ICameraModel, IRenderViewConfig } from '../type';
 import {
     createMatrixFromCameraInternal,
@@ -111,6 +111,7 @@ export default class Image2DRenderView extends Render {
     renderBox: boolean = true;
     renderPoints: boolean = false;
     renderRect: boolean = true;
+    renderProjectedGround: boolean = true;
     renderBox2D: boolean = true;
     // render config
     lineWidth: number = 1;
@@ -463,7 +464,10 @@ export default class Image2DRenderView extends Render {
         let flag1 = (this.renderId && obj.viewId === this.renderId) || obj.viewId === this.id;
 
         let flag2 =
-            (this.renderRect && obj instanceof Rect) || (this.renderBox2D && obj instanceof Box2D);
+            (this.renderRect && obj instanceof Rect) ||
+            (this.renderBox2D && obj instanceof Box2D) ||
+            (this.renderProjectedGround &&
+                (obj instanceof ProjectedPolygon || obj instanceof ProjectedPolyline));
         // (this.renderBox && obj instanceof Box);
 
         return obj.visible && flag1 && flag2;

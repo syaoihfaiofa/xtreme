@@ -21,6 +21,9 @@ export default class LoadManager {
         const currentTrack = this.editor.currentTrack;
         const currentTrackName = this.editor.currentTrackName;
 
+        // The current selection belongs to the outgoing frame. Clear it before
+        // mounting the next frame's annotations so render views never fit a detached object.
+        this.editor.pc.selectObject();
         this.editor.state.frameIndex = index;
 
         this.editor.actionManager.stopCurrentAction();
