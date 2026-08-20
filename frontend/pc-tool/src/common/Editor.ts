@@ -73,6 +73,22 @@ export default class Editor extends BaseEditor {
         });
     }
 
+    async deleteTrackAcrossScene(trackId: string): Promise<void> {
+        if (!trackId) {
+            throw new Error('trackId is required to delete a tracked object');
+        }
+        const frame = this.getCurrentFrame();
+        await api.deleteTrack(String(frame.id), trackId);
+        this.dataManager.purgeTrackFromCachedFrames(trackId);
+        this.trackManager.removeTrackObject(trackId);
+        this.trackManager.trackInfo.delete(trackId);
+        this.trackManager.trackFrameIndexMap.delete(trackId);
+        if (this.currentTrack === trackId) {
+            this.setCurrentTrack(undefined, '');
+        }
+        this.pc.render();
+    }
+
     destroy(): void {
         if (this.syncKeydownHandler) {
             window.removeEventListener('keydown', this.syncKeydownHandler, true);

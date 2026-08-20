@@ -44,6 +44,7 @@ export default class CreateAction extends Action {
     endOnDoubleClick: boolean = false;
     callback: ICallback | undefined | null = null;
     onChange: ICallback | undefined | null = null;
+    private pendingClick?: { event: MouseEvent; timer: number };
     constructor(renderView: MainRenderView) {
         super();
 
@@ -70,6 +71,7 @@ export default class CreateAction extends Action {
         this.onMouseUp = this.onMouseUp.bind(this);
         this.onMouseMove = this.onMouseMove.bind(this);
         this.onDoubleClick = this.onDoubleClick.bind(this);
+        this.onContextMenu = this.onContextMenu.bind(this);
 
         this.drawBox = _.throttle(this.drawBox.bind(this), 30);
         this.drawPoint3 = _.throttle(this.drawPoint3.bind(this), 30);
@@ -85,6 +87,7 @@ export default class CreateAction extends Action {
         this.canvas.addEventListener('mouseup', this.onMouseUp);
         this.canvas.addEventListener('mousemove', this.onMouseMove);
         this.canvas.addEventListener('dblclick', this.onDoubleClick);
+        this.canvas.addEventListener('contextmenu', this.onContextMenu);
     }
 
     destroy() {
@@ -93,6 +96,7 @@ export default class CreateAction extends Action {
         this.canvas.removeEventListener('mouseup', this.onMouseUp);
         this.canvas.removeEventListener('mousemove', this.onMouseMove);
         this.canvas.removeEventListener('dblclick', this.onDoubleClick);
+        this.canvas.removeEventListener('contextmenu', this.onContextMenu);
     }
 
     start(option: IStartOption, callback: ICallback, onChange?: ICallback) {
@@ -117,11 +121,13 @@ export default class CreateAction extends Action {
 
         this.canvas.style.display = 'block';
         this.points = [];
+        this.clearPendingClick();
 
         this.clear();
     }
 
     end() {
+        this.clearPendingClick();
         this.canvas.style.display = 'none';
     }
 
@@ -307,12 +313,33 @@ export default class CreateAction extends Action {
     onClick(event: MouseEvent) {
         event.stopPropagation();
         if (!this.enabled || !this.startClick) return;
-        if (this.endOnDoubleClick && event.detail > 1) return;
+        if (this.endOnDoubleClick) {
+            if (event.detail > 1) return;
+            this.commitPendingClick();
+            const timer = window.setTimeout(() => {
+                if (this.pendingClick?.event === event) {
+                    this.handleMouse(event);
+                    this.pendingClick = undefined;
+                }
+            }, 250);
+            this.pendingClick = { event, timer };
+            return;
+        }
         this.handleMouse(event);
     }
     onDoubleClick(event: MouseEvent) {
         event.stopPropagation();
         if (!this.enabled || !this.endOnDoubleClick) return;
+        this.clearPendingClick();
+        if (this.points.length < 2) return;
+        this.end();
+        this.handleCallback();
+    }
+    onContextMenu(event: MouseEvent) {
+        if (!this.enabled || !this.endOnDoubleClick) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.commitPendingClick();
         if (this.points.length < 2) return;
         this.end();
         this.handleCallback();
@@ -327,5 +354,18 @@ export default class CreateAction extends Action {
             this.end();
             this.handleCallback();
         }
+    }
+
+    private commitPendingClick(): void {
+        if (!this.pendingClick) return;
+        window.clearTimeout(this.pendingClick.timer);
+        this.handleMouse(this.pendingClick.event);
+        this.pendingClick = undefined;
+    }
+
+    private clearPendingClick(): void {
+        if (!this.pendingClick) return;
+        window.clearTimeout(this.pendingClick.timer);
+        this.pendingClick = undefined;
     }
 }

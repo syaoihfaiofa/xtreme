@@ -1,8 +1,5 @@
 import { useInjectEditor } from '../../state';
 import { IItem } from './type';
-import { AnnotateObject } from 'pc-render';
-import { Event as EditorEvent } from 'pc-editor';
-import * as _ from 'lodash';
 import * as locale from './lang';
 
 export default function useTrackItem() {
@@ -36,23 +33,11 @@ export default function useTrackItem() {
                 okDanger: true,
             })
             .then(
-                () => {
-                    let idMap = {} as Record<string, boolean>;
-                    item.data.forEach((e) => {
-                        idMap[e.id] = true;
-                    });
-
-                    let objects: AnnotateObject[] = [];
-                    let annotate3D = pc.getAnnotate3D();
-                    let annotate2D = pc.getAnnotate2D();
-
-                    [...annotate3D, ...annotate2D].forEach((object) => {
-                        let id = object.uuid;
-                        if (idMap[id]) objects.push(object);
-                    });
-
-                    if (objects.length > 0) {
-                        editor.cmdManager.execute('delete-object', [{ objects: objects }]);
+                async () => {
+                    try {
+                        await editor.deleteTrackAcrossScene(item.id);
+                    } catch (error) {
+                        editor.showMsg('error', $$('errorDelete'));
                     }
                 },
                 () => {},

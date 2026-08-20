@@ -55,6 +55,10 @@ export async function syncObject(dataId: string, trackId: string, classId?: stri
     return await post('/api/annotate/data/sync', null, { params });
 }
 
+export async function deleteTrack(dataId: string, trackId: string): Promise<void> {
+    await post('/api/annotate/data/track/delete', null, { params: { dataId, trackId } });
+}
+
 export async function getSyncSegments(
     dataId: string,
     trackId: string,

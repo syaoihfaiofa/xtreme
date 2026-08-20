@@ -246,7 +246,6 @@ export const projectObject2D = define({
         let config = editor.state.config;
         let addObjects: AnnotateObject[] = [];
         let deleteObjects: AnnotateObject[] = [];
-        if (!config.projectPoint4 && !config.projectPoint8) return;
 
         let annotate3D = editor.pc.getAnnotate3D() as Array<Box | GroundPolygon | GroundPolyline>;
         let annotate2D = editor.pc.getAnnotate2D();
@@ -268,10 +267,12 @@ export const projectObject2D = define({
         let existMapRect = {} as Record<string, Record<string, Rect>>;
         let existMapBox2D = {} as Record<string, Record<string, Box2D>>;
         let existMapParking = {} as Record<string, Record<string, ProjectedPolygon>>;
+        let existMapPolyline = {} as Record<string, Record<string, ProjectedPolyline>>;
         views.forEach((view) => {
             existMapRect[view.id] = {} as Record<string, Rect>;
             existMapBox2D[view.id] = {} as Record<string, Box2D>;
             existMapParking[view.id] = {} as Record<string, ProjectedPolygon>;
+            existMapPolyline[view.id] = {} as Record<string, ProjectedPolyline>;
         });
         annotate2D.forEach((object) => {
             let viewId = object.viewId;
@@ -296,9 +297,16 @@ export const projectObject2D = define({
             if (
                 object instanceof ProjectedPolygon &&
                 existMapParking[viewId] &&
-                userData.trackId
+                (userData.projectedFromId || userData.trackId)
             ) {
-                existMapParking[viewId][userData.trackId] = object;
+                existMapParking[viewId][userData.projectedFromId || userData.trackId || ''] = object;
+            }
+            if (
+                object instanceof ProjectedPolyline &&
+                existMapPolyline[viewId] &&
+                (userData.projectedFromId || userData.trackId)
+            ) {
+                existMapPolyline[viewId][userData.projectedFromId || userData.trackId || ''] = object;
             }
         });
 
@@ -307,6 +315,7 @@ export const projectObject2D = define({
             let userData = object.userData as IUserData;
             // let objectId = userData.id as string;
             let trackId = userData.trackId as string;
+            const projectionKey = object.uuid || trackId;
             views.forEach((view) => {
                 let viewId = view.id;
                 if (object instanceof GroundPolyline) {
@@ -315,30 +324,44 @@ export const projectObject2D = define({
                         return new THREE.Vector2(projected.x, projected.y);
                     });
                     if (points.length >= 2) {
-                        const projection = new ProjectedPolyline(points);
-                        projection.viewId = viewId;
-                        projection.userData = { ...userData, isProjection: true };
-                        setIdInfo(editor, projection.userData);
-                        projection.uuid = projection.userData.id as string;
-                        projection.color = `#${object.color.getHexString()}`;
-                        addObjects.push(projection);
+                        const existing = existMapPolyline[viewId][projectionKey];
+                        if (existing && updateFlag) {
+                            existing.points.splice(0, existing.points.length, ...points);
+                            existing.userData.projectedFromId = object.uuid;
+                            updateN++;
+                        } else if (!existing && createFlag) {
+                            const projection = new ProjectedPolyline(points);
+                            projection.viewId = viewId;
+                            projection.userData = {
+                                ...getProjectionUserData(userData),
+                                isProjection: true,
+                                projectedFromId: object.uuid,
+                            };
+                            setIdInfo(editor, projection.userData);
+                            projection.uuid = projection.userData.id as string;
+                            projection.color = `#${object.color.getHexString()}`;
+                            addObjects.push(projection);
+                        }
                     }
                     return;
                 }
                 if (object instanceof GroundPolygon) {
                     const projection = createParkingProjection(view, object);
                     if (projection) {
-                        const existing = existMapParking[viewId][trackId];
+                        const existing = existMapParking[viewId][projectionKey];
                         if (existing && updateFlag) {
                             existing.setPoints(projection.points);
                             existing.openingDirection.copy(projection.openingDirection);
                             existing.edgePoints = projection.edgePoints;
+                            existing.userData.projectedFromId = object.uuid;
                             updateN++;
                         } else if (!existing && createFlag) {
+                            setIdInfo(editor, projection.userData);
+                            projection.uuid = projection.userData.id as string;
                             addObjects.push(projection);
                         }
-                    } else if (existMapParking[viewId][trackId]) {
-                        deleteObjects.push(existMapParking[viewId][trackId]);
+                    } else if (existMapParking[viewId][projectionKey]) {
+                        deleteObjects.push(existMapParking[viewId][projectionKey]);
                     }
                     return;
                 }
@@ -432,8 +455,9 @@ export const projectObject2D = define({
             }
             projection.viewId = view.id;
             projection.userData = {
-                ...object.userData,
+                ...getProjectionUserData(object.userData as IUserData),
                 isProjection: true,
+                projectedFromId: object.uuid,
                 parkingOpeningEdge: 'P3_P0',
             };
             projection.color = `#${object.color.getHexString()}`;
@@ -510,6 +534,13 @@ export const projectObject2D = define({
         }
     },
 });
+
+function getProjectionUserData(source: IUserData): IUserData {
+    const userData = { ...source };
+    delete userData.id;
+    delete userData.backId;
+    return userData;
+}
 
 function noPointsInImage(p1: THREE.Vector2, p2: THREE.Vector2, imgSize: THREE.Vector2) {
     let n = 0;
