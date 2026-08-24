@@ -99,20 +99,45 @@
             const observePointer = () => {
                 windowReceivedPointer = true;
             };
+            const dispatchPick = () => {
+                eventTarget.dispatchEvent(
+                    new PointerEvent('pointerdown', {
+                        bubbles: true,
+                        cancelable: true,
+                        button: 0,
+                        clientX: rect.left + domPoint.x,
+                        clientY: rect.top + domPoint.y,
+                    }),
+                );
+            };
+            const viewId = view.renderId || view.id;
+            const viewKey = viewId.match(/[0-9]{1,5}$/)?.[0] || view.id;
+            const pointCountBefore = target.polyline.points3D.length;
+            const flagsBefore = target.polyline.getSegmentVisibleForView(viewKey);
+
             window.addEventListener('pointerdown', observePointer, true);
-            eventTarget.dispatchEvent(
-                new PointerEvent('pointerdown', {
-                    bubbles: true,
-                    cancelable: true,
-                    button: 0,
-                    clientX: rect.left + domPoint.x,
-                    clientY: rect.top + domPoint.y,
-                }),
-            );
+            dispatchPick();
             window.removeEventListener('pointerdown', observePointer, true);
 
+            const pendingPointCreated = action.pendingImagePoint !== null;
+            if (pendingPointCreated) {
+                dispatchPick();
+            }
+            const flagsAfterToggle = target.polyline.getSegmentVisibleForView(viewKey);
+            const pointCountAfter = target.polyline.points3D.length;
+            const visibilityChanged =
+                JSON.stringify(flagsAfterToggle) !== JSON.stringify(flagsBefore);
+
+            if (visibilityChanged) {
+                dispatchPick();
+                dispatchPick();
+            }
+            const flagsAfterRestore = target.polyline.getSegmentVisibleForView(viewKey);
+            const stateRestored =
+                JSON.stringify(flagsAfterRestore) === JSON.stringify(flagsBefore);
+
             const details = {
-                viewId: view.renderId || view.id,
+                viewId,
                 actionEnabled: action.isEnable(),
                 windowReceivedPointer,
                 segmentIndex: target.segmentIndex,
@@ -120,19 +145,31 @@
                     x: Math.round(target.imagePoint.x),
                     y: Math.round(target.imagePoint.y),
                 },
-                pendingPointCreated: action.pendingImagePoint !== null,
+                pendingPointCreated,
+                visibilityChanged,
+                pointCountUnchanged: pointCountAfter === pointCountBefore,
+                stateRestored,
             };
             console.table(details);
 
             if (!windowReceivedPointer) {
                 return fail('synthetic pointer event did not reach window capture', details);
             }
-            if (!action.pendingImagePoint) {
+            if (!pendingPointCreated) {
                 return fail('event reached the action, but projected curb segment was not picked', details);
+            }
+            if (!visibilityChanged) {
+                return fail('selecting the same segment twice did not toggle its visibility', details);
+            }
+            if (pointCountAfter !== pointCountBefore) {
+                return fail('toggling visibility added points to the BEV polyline', details);
+            }
+            if (!stateRestored) {
+                return fail('the second toggle did not restore the original visibility state', details);
             }
 
             action.clearPending();
-            return pass('curb segment picking completed successfully', details);
+            return pass('curb segment picking and visibility toggling completed successfully', details);
         }
 
         return fail('no enabled image view contains a projectable GroundPolyline segment', {

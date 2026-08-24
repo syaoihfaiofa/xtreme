@@ -23,7 +23,7 @@ import {
     EditGroundPolylineAction,
     EditGroundPolylineVisibility2DAction,
 } from 'pc-render';
-import { hideRangeBetweenHits } from './utils/polylineSegmentVisibility';
+import { toggleSegmentRangeBetweenHits } from './utils/polylineSegmentVisibility';
 import * as _ from 'lodash';
 
 export default function hack(editor: Editor) {
@@ -142,23 +142,24 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         };
         visibilityAction.onRangePicked = (first, second): void => {
             const viewKey = (view.renderId || view.id).match(/[0-9]{1,5}$/)?.[0] || view.id;
-            const result = hideRangeBetweenHits(
-                first.polyline.points3D,
+            const result = toggleSegmentRangeBetweenHits(
                 first.polyline.segmentVisibleByView,
                 viewKey,
+                first.polyline.points3D.length,
                 { segmentIndex: first.segmentIndex, t: first.t },
                 { segmentIndex: second.segmentIndex, t: second.t },
             );
-            if (!result) {
-                editor.showMsg('warning', '两个点太近，请重新选择', 3);
-                return;
-            }
             editor.cmdManager.execute('update-ground-polyline-visibility-range', {
                 object: first.polyline,
-                points: result.points,
                 byView: result.byView,
             });
-            editor.showMsg('info', '两点之间已设为不可见，BEV 已同步', 3);
+            editor.showMsg(
+                'info',
+                result.visible
+                    ? '所选线段已恢复可见，BEV 已同步'
+                    : '所选线段已设为不可见，BEV 已同步',
+                3,
+            );
         };
     }
 

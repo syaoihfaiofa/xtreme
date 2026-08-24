@@ -167,6 +167,61 @@ export function isPointInsideImage(point: THREE.Vector2, imgSize: THREE.Vector2)
     );
 }
 
+function segmentsIntersect(
+    firstStart: THREE.Vector2,
+    firstEnd: THREE.Vector2,
+    secondStart: THREE.Vector2,
+    secondEnd: THREE.Vector2,
+): boolean {
+    const boundsOverlap =
+        Math.max(firstStart.x, firstEnd.x) >= Math.min(secondStart.x, secondEnd.x) &&
+        Math.max(secondStart.x, secondEnd.x) >= Math.min(firstStart.x, firstEnd.x) &&
+        Math.max(firstStart.y, firstEnd.y) >= Math.min(secondStart.y, secondEnd.y) &&
+        Math.max(secondStart.y, secondEnd.y) >= Math.min(firstStart.y, firstEnd.y);
+    if (!boundsOverlap) {
+        return false;
+    }
+    const cross = (origin: THREE.Vector2, end: THREE.Vector2, point: THREE.Vector2): number =>
+        (end.x - origin.x) * (point.y - origin.y) -
+        (end.y - origin.y) * (point.x - origin.x);
+    const firstSideStart = cross(firstStart, firstEnd, secondStart);
+    const firstSideEnd = cross(firstStart, firstEnd, secondEnd);
+    const secondSideStart = cross(secondStart, secondEnd, firstStart);
+    const secondSideEnd = cross(secondStart, secondEnd, firstEnd);
+    return (
+        firstSideStart * firstSideEnd <= 0 &&
+        secondSideStart * secondSideEnd <= 0
+    );
+}
+
+function isLineSegmentInsideImage(
+    start: THREE.Vector2,
+    end: THREE.Vector2,
+    imgSize: THREE.Vector2,
+): boolean {
+    if (isPointInsideImage(start, imgSize) || isPointInsideImage(end, imgSize)) {
+        return true;
+    }
+    if (
+        !Number.isFinite(start.x) ||
+        !Number.isFinite(start.y) ||
+        !Number.isFinite(end.x) ||
+        !Number.isFinite(end.y)
+    ) {
+        return false;
+    }
+    const topLeft = new THREE.Vector2(0, 0);
+    const topRight = new THREE.Vector2(imgSize.x, 0);
+    const bottomRight = new THREE.Vector2(imgSize.x, imgSize.y);
+    const bottomLeft = new THREE.Vector2(0, imgSize.y);
+    return [
+        [topLeft, topRight],
+        [topRight, bottomRight],
+        [bottomRight, bottomLeft],
+        [bottomLeft, topLeft],
+    ].some(([edgeStart, edgeEnd]) => segmentsIntersect(start, end, edgeStart, edgeEnd));
+}
+
 export function isSegmentProjectedInView(
     points3D: THREE.Vector3[],
     segmentIndex: number,
@@ -193,10 +248,7 @@ export function isSegmentProjectedInView(
     }
     const projectedStart = project(start);
     const projectedEnd = project(end);
-    return (
-        isPointInsideImage(projectedStart, view.imgSize) ||
-        isPointInsideImage(projectedEnd, view.imgSize)
-    );
+    return isLineSegmentInsideImage(projectedStart, projectedEnd, view.imgSize);
 }
 
 export function resolveEffectiveVisibleForView(
@@ -222,20 +274,22 @@ export function deriveBevVisibility(
     if (segmentCount === 0) {
         return [];
     }
-    const viewByKey = new Map<string, Image2DRenderView>();
-    views.forEach((view) => {
-        viewByKey.set(getViewKeyFromImageView(view), view);
-    });
-    const effectiveByView = CAMERA_VIEW_KEYS.map((viewKey) => {
-        const view = viewByKey.get(viewKey);
-        if (!view) {
-            return normalizeSegmentVisible(byView[viewKey], points3D.length).map(() => false);
+    const projectedViews = views.map((view) => ({
+        flags: normalizeSegmentVisible(
+            byView[getViewKeyFromImageView(view)],
+            points3D.length,
+        ),
+        projected: Array.from({ length: segmentCount }, (_, index) =>
+            isSegmentProjectedInView(points3D, index, view),
+        ),
+    }));
+    return Array.from({ length: segmentCount }, (_, index) => {
+        const relevantViews = projectedViews.filter((entry) => entry.projected[index]);
+        if (relevantViews.length === 0) {
+            return true;
         }
-        return resolveEffectiveVisibleForView(byView[viewKey], points3D, view);
+        return relevantViews.some((entry) => entry.flags[index] === true);
     });
-    return Array.from({ length: segmentCount }, (_, index) =>
-        effectiveByView.some((flags) => flags[index] === true),
-    );
 }
 
 export function toBevExportSegmentVisibility(flags: boolean[]): ISegmentVisibilityEntry[] {
@@ -294,6 +348,35 @@ export function projectPolylineToImagePoints(
 export interface IPolylineHit {
     segmentIndex: number;
     t: number;
+}
+
+export interface IToggledSegmentRange {
+    byView: Record<string, boolean[]>;
+    visible: boolean;
+}
+
+export function toggleSegmentRangeBetweenHits(
+    byView: Record<string, boolean[]>,
+    viewKey: string,
+    pointCount: number,
+    hitA: IPolylineHit,
+    hitB: IPolylineHit,
+): IToggledSegmentRange {
+    const start = Math.min(hitA.segmentIndex, hitB.segmentIndex);
+    const end = Math.max(hitA.segmentIndex, hitB.segmentIndex);
+    const flags = normalizeSegmentVisible(byView[viewKey], pointCount);
+    const selectedFlags = flags.slice(start, end + 1);
+    const visible = selectedFlags.length > 0 && selectedFlags.every((value) => value === false);
+    for (let index = start; index <= end && index < flags.length; index++) {
+        flags[index] = visible;
+    }
+    return {
+        byView: {
+            ...cloneByView(byView),
+            [viewKey]: flags,
+        },
+        visible,
+    };
 }
 
 const VERTEX_SNAP_T = 0.03;

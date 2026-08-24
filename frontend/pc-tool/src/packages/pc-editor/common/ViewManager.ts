@@ -7,6 +7,7 @@ import {
     SideRenderView,
     Image2DRenderView,
     Edit2DAction,
+    EditGroundPolylineAction,
     MainRenderView,
 } from 'pc-render';
 import { OPType, IImgViewConfig } from '../type';
@@ -173,6 +174,12 @@ export default class ViewManager {
                     } else {
                         view.toggle(false);
                     }
+                } else if (view instanceof MainRenderView) {
+                    const action = view.getAction(
+                        'edit-ground-polyline',
+                    ) as EditGroundPolylineAction | undefined;
+                    action?.toggle(false);
+                    view.render();
                 }
                 // else if (view instanceof MainRenderView) {
                 //     view.toggle(false);
@@ -203,6 +210,12 @@ export default class ViewManager {
                     } else {
                         view.toggle(true);
                     }
+                } else if (view instanceof MainRenderView) {
+                    const action = view.getAction(
+                        'edit-ground-polyline',
+                    ) as EditGroundPolylineAction | undefined;
+                    action?.toggle(true);
+                    view.render();
                 }
                 // else if (view instanceof MainRenderView) {
                 //     view.toggle(true);

@@ -2,22 +2,22 @@ import * as THREE from 'three';
 import { AnnotateType, Intersect } from '../type';
 import { ObjectType } from 'pc-editor';
 
-const HIDDEN_LINE_COLOR = 0x888888;
+const HIDDEN_LINE_COLOR = 0xff7a45;
 const CAMERA_VIEW_KEYS = ['0', '1', '2', '3'];
 
-export default class GroundPolyline extends THREE.Line {
+export default class GroundPolyline extends THREE.LineSegments {
     annotateType = AnnotateType.ANNOTATE_3D;
     objectType = ObjectType.TYPE_GROUND_POLYLINE;
     color = new THREE.Color();
     readonly points3D: THREE.Vector3[] = [];
     segmentVisibleByView: Record<string, boolean[]> = {};
     private bevSegmentVisible: boolean[] = [];
-    private readonly hiddenLine: THREE.Line;
+    private readonly hiddenLine: THREE.LineSegments;
 
     constructor(points: THREE.Vector3[]) {
         super(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ toneMapped: false }));
         this.type = 'GroundPolyline';
-        this.hiddenLine = new THREE.Line(
+        this.hiddenLine = new THREE.LineSegments(
             new THREE.BufferGeometry(),
             new THREE.LineDashedMaterial({
                 color: HIDDEN_LINE_COLOR,
@@ -100,6 +100,9 @@ export default class GroundPolyline extends THREE.Line {
 
     raycast(raycaster: THREE.Raycaster, intersects: Intersect[]): void {
         super.raycast(raycaster, intersects as THREE.Intersection[]);
+        if (this.hiddenLine.visible) {
+            this.hiddenLine.raycast(raycaster, intersects as THREE.Intersection[]);
+        }
     }
 
     setColor(color: THREE.ColorRepresentation): void {
@@ -197,7 +200,11 @@ export default class GroundPolyline extends THREE.Line {
             segmentCount > 0 && flags.length === segmentCount && flags.some((visible) => !visible);
 
         if (!hasHiddenSegments) {
-            this.geometry.setFromPoints(this.points3D);
+            const points = this.points3D.slice(0, -1).flatMap((start, index) => [
+                start.clone(),
+                this.points3D[index + 1].clone(),
+            ]);
+            this.geometry.setFromPoints(points);
             this.hiddenLine.visible = false;
             return;
         }
@@ -208,13 +215,10 @@ export default class GroundPolyline extends THREE.Line {
             const start = this.points3D[index];
             const end = this.points3D[index + 1];
             const target = flags[index] ? visiblePoints : hiddenPoints;
-            if (target.length === 0 || !target[target.length - 1].equals(start)) {
-                target.push(start.clone());
-            }
-            target.push(end.clone());
+            target.push(start.clone(), end.clone());
         }
 
-        this.geometry.setFromPoints(visiblePoints.length >= 2 ? visiblePoints : this.points3D);
+        this.geometry.setFromPoints(visiblePoints);
         if (hiddenPoints.length >= 2) {
             this.hiddenLine.geometry.setFromPoints(hiddenPoints);
             this.hiddenLine.computeLineDistances();
