@@ -107,7 +107,7 @@ export default function useTool() {
             });
             editor.showMsg(
                 'info',
-                '请在相机图的折线上依次右键选择两个点，两点之间将设为不可见',
+                '请在相机图的折线上依次点击两个点，两点之间将设为不可见',
                 5,
             );
         } else {

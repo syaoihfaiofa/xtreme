@@ -137,10 +137,10 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
             return editor.state.config.groundPolylineVisibilityEdit === true;
         };
         visibilityAction.onFirstPoint = (): void => {
-            editor.showMsg('info', '已选第一个点，请再右键选择折线上的第二个点', 3);
+            editor.showMsg('info', '已选第一个点，请再点击折线上的第二个点', 3);
         };
         visibilityAction.onMiss = (): void => {
-            editor.showMsg('warning', '未命中折线，请右键点击图片中的折线上', 2);
+            editor.showMsg('warning', '未命中折线，请点击图片中的折线上', 2);
         };
         visibilityAction.onRangePicked = (first, second): void => {
             const viewKey = (view.renderId || view.id).match(/[0-9]{1,5}$/)?.[0] || view.id;

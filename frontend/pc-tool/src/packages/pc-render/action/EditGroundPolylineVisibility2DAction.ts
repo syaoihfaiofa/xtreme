@@ -100,12 +100,10 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
     onMiss?: () => void;
     private pending: IPickedPolylinePoint | null = null;
     private marker: HTMLDivElement | null = null;
-    private readonly handledEvents = new WeakSet<PointerEvent>();
 
     readonly handlePointerDown = (event: PointerEvent): void => {
         const isPickButton = event.button === 0 || event.button === 2;
         if (
-            this.handledEvents.has(event) ||
             !this.isEventInsideView(event) ||
             !this.isEditEnabled?.() ||
             !isPickButton ||
@@ -115,7 +113,6 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
         ) {
             return;
         }
-        this.handledEvents.add(event);
         if (event.button === 2) {
             event.stopPropagation();
             event.preventDefault();
@@ -163,23 +160,11 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
             'transform:translate(-50%,-50%);pointer-events:none;z-index:20;display:none;';
         this.renderView.container.appendChild(this.marker);
         this.renderView.container.addEventListener('pointerdown', this.handlePointerDown, true);
-        this.renderView.proxy.renderer.domElement.addEventListener(
-            'pointerdown',
-            this.handlePointerDown,
-            true,
-        );
-        window.addEventListener('pointerdown', this.handlePointerDown, true);
         window.addEventListener('contextmenu', this.handleContextMenu, true);
     }
 
     destroy(): void {
         this.renderView.container.removeEventListener('pointerdown', this.handlePointerDown, true);
-        this.renderView.proxy.renderer.domElement.removeEventListener(
-            'pointerdown',
-            this.handlePointerDown,
-            true,
-        );
-        window.removeEventListener('pointerdown', this.handlePointerDown, true);
         window.removeEventListener('contextmenu', this.handleContextMenu, true);
         this.marker?.remove();
         this.marker = null;

@@ -3,7 +3,6 @@
         class="img-view-max"
         ref="container"
         v-show="state.config.showSingleImgView"
-        @pointerdown.capture="onVisibilityPointerDown"
         :style="{
             width: `${state.config.maxViewWidth}px`,
             height: `${state.config.maxViewHeight}px`,
@@ -53,7 +52,6 @@
 <script setup lang="ts">
     import { onMounted, onBeforeUnmount, ref, watch, reactive, computed } from 'vue';
     import {
-        EditGroundPolylineVisibility2DAction,
         Image2DRenderView,
         Event,
         Rect,
@@ -280,13 +278,6 @@
 
     function onBack() {
         editor.viewManager.showImgView();
-    }
-
-    function onVisibilityPointerDown(event: PointerEvent): void {
-        const action = view.getAction(
-            'edit-ground-polyline-visibility-2d',
-        ) as EditGroundPolylineVisibility2DAction | undefined;
-        action?.handlePointerDown(event);
     }
 
     function onDBClick() {

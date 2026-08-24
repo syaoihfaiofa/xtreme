@@ -2,7 +2,6 @@
     <div
         class="img-view"
         @dblclick="onDBClick"
-        @pointerdown.capture="onVisibilityPointerDown"
         :style="{
             borderColor: state.config.imgRegionIndex === props.imgIndex ? '#1890ff' : '#2e2525',
             aspectRatio: state.config.aspectRatio,
@@ -27,7 +26,6 @@
     import { onMounted, ref, onBeforeUnmount } from 'vue';
     import * as THREE from 'three';
     import {
-        EditGroundPolylineVisibility2DAction,
         Image2DRenderView,
         PointsMaterial,
         Rect,
@@ -118,13 +116,6 @@
     function onDBClick() {
         if (!canOperate()) return;
         editor.viewManager.showSingleImgView(props.imgIndex);
-    }
-
-    function onVisibilityPointerDown(event: PointerEvent): void {
-        const action = view.getAction(
-            'edit-ground-polyline-visibility-2d',
-        ) as EditGroundPolylineVisibility2DAction | undefined;
-        action?.handlePointerDown(event);
     }
 
     function rand(start: number, end: number) {
