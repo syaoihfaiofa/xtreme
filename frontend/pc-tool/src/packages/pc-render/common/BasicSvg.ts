@@ -541,6 +541,8 @@ export class RectTool extends BasicSvg<IRectEvent> {
                 });
             }, 30);
             function onDocUp(e: MouseEvent) {
+                onDocMove.flush();
+                onDocMove.cancel();
                 scope.dispatchEvent({ type: 'end', event: e, info: info });
                 document.removeEventListener('mousemove', onDocMove);
                 document.removeEventListener('mouseup', onDocUp);

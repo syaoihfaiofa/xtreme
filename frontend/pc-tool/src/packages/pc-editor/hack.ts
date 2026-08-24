@@ -20,6 +20,7 @@ import {
     GroundPolyline,
     ProjectedPolygon,
     ProjectedPolyline,
+    EditGroundPolylineAction,
 } from 'pc-render';
 import * as _ from 'lodash';
 
@@ -74,6 +75,21 @@ function hackMainView(editor: Editor, view: MainRenderView) {
                 transform: { position: position },
             });
         }, 30);
+    }
+
+    const editGroundPolylineAction = view.getAction(
+        'edit-ground-polyline',
+    ) as EditGroundPolylineAction;
+    if (editGroundPolylineAction) {
+        editGroundPolylineAction.onGroundPolylinePointsChange = (
+            object: GroundPolyline,
+            points: THREE.Vector3[],
+        ): void => {
+            editor.cmdManager.execute('update-ground-polyline-points', {
+                object,
+                points,
+            });
+        };
     }
 
     // let selectAction = view.getAction('select') as SelectAction;

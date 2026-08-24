@@ -7,6 +7,12 @@ export enum ModelType {
   TRACKING = 'TRACKING',
 }
 
+export type ModelCode =
+  | 'IMAGE_DETECTION'
+  | 'LIDAR_DETECTION'
+  | 'LIDAR_TRACKING'
+  | 'IMAGE_KEYPOINT_LIFTED_DETECTION';
+
 /** list item */
 export interface ModelListItem {
   id: number;
@@ -24,6 +30,7 @@ export interface ModelListItem {
   creatorName: string;
   datasetType: datasetTypeEnum;
   modelType: ModelType;
+  modelCode: ModelCode;
   isInteractive: boolean;
   img: string;
 }
@@ -89,6 +96,8 @@ export interface ResultsModelParam {
   minConfidence: number;
   maxConfidence: number;
   classes: string[];
+  associationIou?: number;
+  classMappings?: InferenceClassMapping[];
 }
 
 /** model run params */

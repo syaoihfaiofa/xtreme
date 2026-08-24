@@ -37,7 +37,12 @@ public class SceneInferenceFinalizer {
     public void replaceInferenceAnnotations(SceneInferenceRun run, List<Long> frameIds,
                                             SceneInferenceTrackingDTO.Response response) {
         Map<Long, List<DataAnnotationObject>> protectedByDataId = loadProtectedAnnotations(frameIds);
-        List<DataAnnotationObject> newObjects = buildAnnotations(run, response, protectedByDataId);
+        List<DataAnnotationObject> newObjects = buildAnnotations(
+                run,
+                response,
+                protectedByDataId,
+                DataAnnotationObjectSourceTypeEnum.INFERENCE,
+                run.getId());
 
         dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .in(DataAnnotationObject::getDataId, frameIds)
@@ -53,6 +58,32 @@ public class SceneInferenceFinalizer {
                 .completedFrames(run.getTotalFrames())
                 .affectedDataIds(frameIds)
                 .build());
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void replaceModelRunAnnotations(
+            SceneInferenceRun run,
+            List<Long> frameIds,
+            SceneInferenceTrackingDTO.Response response,
+            Long modelRunRecordId) {
+        if (modelRunRecordId == null) {
+            throw new UsecaseException("Model Run record id is required");
+        }
+        Map<Long, List<DataAnnotationObject>> protectedByDataId = loadProtectedAnnotations(frameIds);
+        List<DataAnnotationObject> newObjects = buildAnnotations(
+                run,
+                response,
+                protectedByDataId,
+                DataAnnotationObjectSourceTypeEnum.MODEL,
+                modelRunRecordId);
+
+        dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                .in(DataAnnotationObject::getDataId, frameIds)
+                .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.MODEL)
+                .eq(DataAnnotationObject::getSourceId, modelRunRecordId));
+        if (CollUtil.isNotEmpty(newObjects)) {
+            dataAnnotationObjectDAO.saveBatch(newObjects);
+        }
     }
 
     private Map<Long, List<DataAnnotationObject>> loadProtectedAnnotations(List<Long> frameIds) {
@@ -72,7 +103,9 @@ public class SceneInferenceFinalizer {
     private List<DataAnnotationObject> buildAnnotations(
             SceneInferenceRun run,
             SceneInferenceTrackingDTO.Response response,
-            Map<Long, List<DataAnnotationObject>> protectedByDataId) {
+            Map<Long, List<DataAnnotationObject>> protectedByDataId,
+            DataAnnotationObjectSourceTypeEnum sourceType,
+            Long sourceId) {
         if (response == null || response.getFrames() == null) {
             throw new UsecaseException("Tracking response frames are missing: runId=" + run.getId());
         }
@@ -92,9 +125,13 @@ public class SceneInferenceFinalizer {
             List<SceneInferenceTrackingDTO.Object> acceptedObjects = new ArrayList<>();
             for (SceneInferenceTrackingDTO.Object object : orderedObjects) {
                 validateTrackedObject(run.getId(), object);
+                if (isOutsideSyncDistance(object, config.getSyncDistance())) {
+                    continue;
+                }
                 if (overlapsProtected(object, protectedByDataId.get(frame.getDataId()),
                         config.getAssociationIou())
-                        || overlapsInference(object, acceptedObjects, config.getAssociationIou())) {
+                        || overlapsInference(object, acceptedObjects, config.getAssociationIou(),
+                        config.getAssociationDistance())) {
                     continue;
                 }
                 acceptedObjects.add(object);
@@ -102,13 +139,26 @@ public class SceneInferenceFinalizer {
                         .datasetId(run.getDatasetId())
                         .dataId(frame.getDataId())
                         .classId(object.getDatasetClassId())
-                        .sourceType(DataAnnotationObjectSourceTypeEnum.INFERENCE)
-                        .sourceId(run.getId())
+                        .sourceType(sourceType)
+                        .sourceId(sourceId)
                         .classAttributes(buildAttributes(object, config))
                         .build());
             }
         }
         return result;
+    }
+
+    static boolean isOutsideSyncDistance(
+            SceneInferenceTrackingDTO.Object object,
+            double syncDistance) {
+        return Math.hypot(object.getX(), object.getY()) > syncDistance;
+    }
+
+    static boolean isThisModelRun(DataAnnotationObject object, Long modelRunRecordId) {
+        return object != null
+                && object.getSourceType() == DataAnnotationObjectSourceTypeEnum.MODEL
+                && modelRunRecordId != null
+                && modelRunRecordId.equals(object.getSourceId());
     }
 
     private static void validateTrackedObject(Long runId, SceneInferenceTrackingDTO.Object object) {
@@ -140,8 +190,10 @@ public class SceneInferenceFinalizer {
                 .set("standardDataId", object.getStandardDataId())
                 .set("motionMode", object.getMotionMode().name())
                 .set("syncDistance", config.getSyncDistance())
+                .set("syncUseZ", false)
                 .set("maxOutsideFrames", config.getMaxOutsideFrames())
                 .set("associationIou", config.getAssociationIou())
+                .set("associationDistance", config.getAssociationDistance())
                 .set("modelClass", object.getLabel())
                 .set("modelClassCode", object.getLabel())
                 .set("confidence", object.getConfidence());
@@ -173,17 +225,32 @@ public class SceneInferenceFinalizer {
 
     private static boolean overlapsInference(SceneInferenceTrackingDTO.Object candidate,
                                              List<SceneInferenceTrackingDTO.Object> acceptedObjects,
-                                             double threshold) {
+                                             double iouThreshold,
+                                             double distanceThreshold) {
         Box candidateBox = new Box(candidate.getX(), candidate.getY(), candidate.getDx(), candidate.getDy(),
                 candidate.getRotZ());
         for (SceneInferenceTrackingDTO.Object accepted : acceptedObjects) {
             if (candidate.getDatasetClassId().equals(accepted.getDatasetClassId())
-                    && bevIou(candidateBox, new Box(accepted.getX(), accepted.getY(), accepted.getDx(),
-                    accepted.getDy(), accepted.getRotZ())) > threshold) {
+                    && isDuplicate(candidateBox,
+                    new Box(accepted.getX(), accepted.getY(), accepted.getDx(),
+                            accepted.getDy(), accepted.getRotZ()),
+                    iouThreshold, distanceThreshold)) {
                 return true;
             }
         }
         return false;
+    }
+
+    static boolean isDuplicate(
+            Box first,
+            Box second,
+            double iouThreshold,
+            double distanceThreshold) {
+        if (!first.isValid() || !second.isValid()) {
+            return false;
+        }
+        return bevIou(first, second) > iouThreshold
+                || Math.hypot(first.x - second.x, first.y - second.y) <= distanceThreshold;
     }
 
     private static Box boxFromAttributes(JSONObject attributes) {

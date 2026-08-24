@@ -7,6 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -29,4 +31,6 @@ public class ModelRunFilterDataBO {
      * Data annotation status
      */
     private DataAnnotationStatusEnum annotationStatus;
+
+    private List<Long> sceneIds;
 }

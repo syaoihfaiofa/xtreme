@@ -386,6 +386,7 @@ export interface IModelResult {
     recordId: string;
     id: string;
     version: string;
+    code?: string;
     state?: LoadStatus;
     config?: Record<string, any>;
 }

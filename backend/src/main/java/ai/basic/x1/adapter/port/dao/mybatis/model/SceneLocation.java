@@ -44,6 +44,16 @@ public class SceneLocation implements Serializable {
      */
     private Double yaw;
 
+    /**
+     * Roll, radians
+     */
+    private Double roll;
+
+    /**
+     * Pitch, radians
+     */
+    private Double pitch;
+
     @TableField(fill = FieldFill.INSERT)
     private OffsetDateTime createdAt;
 

@@ -17,5 +17,9 @@ public enum ModelCodeEnum {
     /**
      * LIDAR_TRACKING
      */
-    LIDAR_TRACKING
+    LIDAR_TRACKING,
+    /**
+     * IMAGE_KEYPOINT_LIFTED_DETECTION
+     */
+    IMAGE_KEYPOINT_LIFTED_DETECTION
 }

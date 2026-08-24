@@ -23,6 +23,9 @@
       :selectName="selectName"
       :title="title"
       :modelId="props.modelId"
+      :modelCode="props.overviewData?.modelCode"
+      :sceneOptions="sceneOptions"
+      v-model:selectedSceneIds="selectedSceneIds"
       @run="handleRun"
     >
       <template #select>
@@ -68,6 +71,8 @@
     ModelRunItem,
   } from '/@/api/business/model/modelsModel';
   import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
+  import { dataTypeEnum } from '/@/api/business/model/datasetModel';
+  import { datasetApi } from '/@/api/business/dataset';
   import { useRouter } from 'vue-router';
   import { detailType } from './typing';
   // import { Authority } from '/@/components/Authority';
@@ -240,7 +245,13 @@
         modelId: modelId,
         datasetId: datasetId,
         resultFilterParam: result,
-        dataFilterParam: data,
+        dataFilterParam: {
+          dataCountRatio: data?.dataCountRatio ?? 100,
+          isExcludeModelData: data?.isExcludeModelData ?? false,
+          splitType: data?.splitType,
+          annotationStatus: data?.annotationStatus,
+          sceneIds: selectedSceneIds.value,
+        },
       };
 
       // return;
@@ -274,8 +285,16 @@
       getSelectOptions();
     },
   );
+  watch(
+    () => props.overviewData?.modelCode,
+    () => {
+      loadScenes();
+    },
+  );
   const selectId = ref<string | number>('');
   const selectOptions = ref();
+  const sceneOptions = ref<Array<{ id: number; name: string }>>([]);
+  const selectedSceneIds = ref<number[]>([]);
   // 获取下拉框数据
   const getSelectOptions = async () => {
     let datasetType = [datasetTypeEnum.IMAGE];
@@ -285,11 +304,40 @@
     const res = await getAllDataset({ datasetTypes: datasetType.toString() });
     selectOptions.value = res;
     selectId.value = selectOptions.value?.[0]?.id;
+    await loadScenes();
   };
   // 下拉框选择事件
-  const handleSelect = (e) => {
+  const handleSelect = async (e) => {
     selectId.value = e;
+    await loadScenes();
   };
+
+  const loadScenes = async () => {
+    if (!selectId.value || props.datasetType === datasetTypeEnum.IMAGE) {
+      sceneOptions.value = [];
+      selectedSceneIds.value = [];
+      return;
+    }
+    const res = await datasetApi({
+      datasetId: Number(selectId.value),
+      type: dataTypeEnum.FRAME_SERIES,
+      pageNo: 1,
+      pageSize: 1000,
+    });
+    sceneOptions.value = (res.list || [])
+      .filter((item: any) => item.type === dataTypeEnum.FRAME_SERIES)
+      .map((item: any) => ({
+        id: Number(item.id),
+        name: item.name,
+      }));
+    selectedSceneIds.value = [];
+  };
+  watch(
+    () => selectId.value,
+    () => {
+      loadScenes();
+    },
+  );
 
   // rerun 事件
   async function handleRerun(record: ModelRunItem) {

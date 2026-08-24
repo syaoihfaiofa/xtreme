@@ -144,7 +144,7 @@ export default {
     location: '定位',
     uploadLocation: '上传定位文件',
     uploadLocationTip:
-      '上传 location.txt，每行格式为"<帧名>: x y z yaw"，用于记录每一帧的传感器位姿，跟踪时会用它来补偿传感器自身的运动。',
+      '上传 location.txt，每行格式为"<帧名>: x y z yaw" 或 "<帧名>: x y z yaw roll pitch"，用于记录每一帧的传感器位姿，跟踪/同步时会用它来补偿传感器自身的运动。',
     locationFileTypeError: '仅支持 .txt 文件',
     locationUploadSuccess: '定位文件上传成功，匹配帧数：',
     locationUploadFail: '定位文件上传失败',

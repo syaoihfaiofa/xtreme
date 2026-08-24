@@ -1,7 +1,11 @@
 import { get, post } from './base';
 import { IModel } from 'pc-editor';
 import { utils } from 'pc-editor';
-export async function getModelList() {
+
+const IMAGE_KEYPOINT_LIFTED_DETECTION = 'IMAGE_KEYPOINT_LIFTED_DETECTION';
+const LIDAR_FUSION = 'LIDAR_FUSION';
+
+export async function getModelList(datasetType?: string) {
     let url = '/api/model/list';
     let data = await get(url);
     data = data.data || [];
@@ -9,6 +13,12 @@ export async function getModelList() {
     let models = [] as IModel[];
     data.forEach((e: any) => {
         if (e.isInteractive || e.datasetType === 'IMAGE') return;
+        if (
+            e.modelCode === IMAGE_KEYPOINT_LIFTED_DETECTION &&
+            datasetType !== LIDAR_FUSION
+        ) {
+            return;
+        }
         // let classes = JSON.parse(e.classes || '[]');
         let classes = (e.classes || []).map((e: any) => {
             return { label: e.name, value: e.code };

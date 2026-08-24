@@ -150,7 +150,7 @@ export default {
     location: 'Location',
     uploadLocation: 'Upload Location',
     uploadLocationTip:
-      'Upload a location.txt with per-frame ego pose (one line per frame: "<frame name>: x y z yaw"). Matched frames will use it to improve tracking.',
+      'Upload a location.txt with per-frame ego pose (one line per frame: "<frame name>: x y z yaw" or "<frame name>: x y z yaw roll pitch"). Matched frames will use it to improve tracking.',
     locationFileTypeError: 'Only .txt files are supported',
     locationUploadSuccess: 'Location uploaded. Matched frames:',
     locationUploadFail: 'Failed to upload location file',

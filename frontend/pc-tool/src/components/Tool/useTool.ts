@@ -189,7 +189,7 @@ export default function useTool() {
         let config = {
             datasetId: bsState.datasetId,
             dataIds: [+data.id],
-            modelId: +model.id,
+            modelId: Number(model.id),
             modelVersion: model?.version,
             dataType: 'SINGLE_DATA',
             modelCode: model.code,
@@ -204,6 +204,7 @@ export default function useTool() {
                 recordId: result.data,
                 id: model.id,
                 version: model.version,
+                code: model.code,
                 state: 'loading',
             };
         } catch (error: any) {

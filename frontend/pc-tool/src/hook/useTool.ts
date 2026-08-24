@@ -23,7 +23,7 @@ export default function useTool() {
 
     async function loadModels() {
         try {
-            let models = await api.getModelList();
+            let models = await api.getModelList(bsState.datasetType);
             editor.state.models = models;
         } catch (error) {
             console.warn('load models error', error);

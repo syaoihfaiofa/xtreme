@@ -37,6 +37,10 @@ public class SceneLocationSample implements Serializable {
 
     private Double yaw;
 
+    private Double roll;
+
+    private Double pitch;
+
     @TableField(fill = FieldFill.INSERT)
     private OffsetDateTime createdAt;
 

@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -59,6 +60,8 @@ public class TrackSyncUseCase {
     private static final int DEFAULT_SYNC_LOCATION_GAP_MS = 200;
     private static final int DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES = 1;
     private static final int DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES = 1;
+    private static final double POLYLINE_OVERLAP_SNAP_M = 0.2;
+    private static final double GEOMETRY_EPSILON = 0.000000001;
 
     private static final String MOTION_STATIC = "STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
@@ -279,17 +282,18 @@ public class TrackSyncUseCase {
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
         Map<Long, Integer> segmentByDataId = buildSegmentByDataId(sceneId, frames, locationGapMs);
 
+        boolean syncWorldVertical = useWorldVerticalSync(attrs);
         if (isGroundPolygon(attrs) && MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
-            syncGroundPolygon(source, trackId, syncRadius, frames, poseByDataId);
+            syncGroundPolygon(source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical);
             return;
         }
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
                 requireScenePose(poseByDataId, source.getDataId());
                 double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
-                syncGroundPolyline(source, trackId, syncRadius, frames, poseByDataId);
+                syncGroundPolyline(source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical);
             }
             return;
         }
@@ -351,9 +355,9 @@ public class TrackSyncUseCase {
             double syncXOffset = getDouble(attrs, "syncXOffsetM");
             double syncYOffset = getDouble(attrs, "syncYOffsetM");
             syncStatic(source, trackId, center3D, size3D, contour.getJSONObject("rotation3D"),
-                    syncRadius, syncUseZ, syncYawOffset, syncXOffset, syncYOffset, frames, poseByDataId, existingByDataId,
-                    existingRows.duplicateObjectIds, reachableFrameIds, maxDisappearGap, segmentByDataId,
-                    locationGapMs, segmentsInitialized);
+                    syncRadius, syncUseZ, syncWorldVertical, syncYawOffset, syncXOffset, syncYOffset, frames,
+                    poseByDataId, existingByDataId, existingRows.duplicateObjectIds, reachableFrameIds,
+                    maxDisappearGap, segmentByDataId, locationGapMs, segmentsInitialized);
         } else if (dynamicRangeSyncEnabled) {
             requireScenePose(poseByDataId, source.getDataId());
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
@@ -373,7 +377,8 @@ public class TrackSyncUseCase {
                     maxDisappearGap,
                     segmentByDataId,
                     locationGapMs,
-                    syncUseZ
+                    syncUseZ,
+                    syncWorldVertical
             );
         } else {
             syncFixedSize(
@@ -405,7 +410,8 @@ public class TrackSyncUseCase {
             int maxDisappearGap,
             Map<Long, Integer> segmentByDataId,
             int locationGapMs,
-            boolean syncUseZ) {
+            boolean syncUseZ,
+            boolean syncWorldVertical) {
         int sourceIndex = findFrameIndex(frames, source.getDataId());
         Pose sourcePose = poseByDataId.get(source.getDataId());
         if (sourceIndex < 0 || sourcePose == null || !sourcePose.complete) {
@@ -443,7 +449,7 @@ public class TrackSyncUseCase {
                 continue;
             }
             ProjectedPose projected = projectPose(
-                    localX, localY, localZ, localYaw, sourcePose, targetPose, syncUseZ);
+                    localX, localY, localZ, localYaw, sourcePose, targetPose, syncUseZ, syncWorldVertical);
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
             JSONObject newAttrs = existing == null
                     ? JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes()))
@@ -467,7 +473,8 @@ public class TrackSyncUseCase {
                     maxDisappearGap,
                     segmentByDataId.get(frame.getId()),
                     locationGapMs,
-                    syncUseZ);
+                    syncUseZ,
+                    syncWorldVertical);
 
             if (existing != null) {
                 existing.setClassId(source.getClassId());
@@ -506,13 +513,15 @@ public class TrackSyncUseCase {
             int maxDisappearGap,
             Integer segmentId,
             int locationGapMs,
-            boolean syncUseZ) {
+            boolean syncUseZ,
+            boolean syncWorldVertical) {
         attrs.set("classId", source.getClassId());
         attrs.set("motionMode", motionMode);
         attrs.set("dynamicRangeSyncEnabled", true);
         attrs.set("dynamicSyncPreviousFrames", previousFrames);
         attrs.set("dynamicSyncNextFrames", nextFrames);
         attrs.set("syncUseZ", syncUseZ);
+        attrs.set("syncWorldVertical", syncWorldVertical);
         updateSyncMetadata(attrs, maxDisappearGap, segmentId, locationGapMs);
     }
 
@@ -522,7 +531,7 @@ public class TrackSyncUseCase {
      * are used only while transforming between source and target frames.
      */
     private void syncGroundPolygon(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
-                                   Map<Long, Pose> poseByDataId) {
+                                   Map<Long, Pose> poseByDataId, boolean syncWorldVertical) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
         JSONArray sourcePoints = sourceContour == null ? null : sourceContour.getJSONArray("points");
@@ -542,9 +551,8 @@ public class TrackSyncUseCase {
             double localX = getDouble(point, "x");
             double localY = getDouble(point, "y");
             double localZ = getDouble(point, "z");
-            double worldX = sourcePose.x + localX * Math.cos(sourcePose.yaw) - localY * Math.sin(sourcePose.yaw);
-            double worldY = sourcePose.y + localX * Math.sin(sourcePose.yaw) + localY * Math.cos(sourcePose.yaw);
-            worldPoints.add(new double[]{worldX, worldY, sourcePose.z + localZ});
+            double[] worldPoint = localToWorld(localX, localY, localZ, sourcePose, syncWorldVertical);
+            worldPoints.add(worldPoint);
         }
 
         Map<Long, DataAnnotationObject> existingByDataId = dataAnnotationObjectDAO.list(
@@ -580,12 +588,11 @@ public class TrackSyncUseCase {
             }
             JSONArray targetPoints = new JSONArray();
             for (double[] worldPoint : worldPoints) {
-                double dx = worldPoint[0] - targetPose.x;
-                double dy = worldPoint[1] - targetPose.y;
+                double[] localPoint = worldToLocal(worldPoint[0], worldPoint[1], worldPoint[2], targetPose, syncWorldVertical);
                 JSONObject targetPoint = new JSONObject();
-                targetPoint.set("x", dx * Math.cos(targetPose.yaw) + dy * Math.sin(targetPose.yaw));
-                targetPoint.set("y", -dx * Math.sin(targetPose.yaw) + dy * Math.cos(targetPose.yaw));
-                targetPoint.set("z", worldPoint[2] - targetPose.z);
+                targetPoint.set("x", localPoint[0]);
+                targetPoint.set("y", localPoint[1]);
+                targetPoint.set("z", localPoint[2]);
                 targetPoints.add(targetPoint);
             }
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
@@ -622,7 +629,7 @@ public class TrackSyncUseCase {
     }
 
     private void syncGroundPolyline(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
-                                    Map<Long, Pose> poseByDataId) {
+                                    Map<Long, Pose> poseByDataId, boolean syncWorldVertical) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
         JSONArray sourcePoints = sourceContour == null ? null : sourceContour.getJSONArray("points");
@@ -663,9 +670,15 @@ public class TrackSyncUseCase {
                 contour = new JSONObject();
                 attrs.set("contour", contour);
             }
-            JSONArray targetPoints = projectGroundPoints(sourcePoints, sourcePose, targetPose);
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
-            if (distanceToGroundShapeFootprint(targetPoints) > syncRadius) {
+            JSONArray existingPoints = null;
+            if (existing != null && existing.getClassAttributes() != null) {
+                JSONObject existingContour = existing.getClassAttributes().getJSONObject("contour");
+                existingPoints = existingContour == null ? null : existingContour.getJSONArray("points");
+            }
+            JSONArray targetPoints = resolveSyncedGroundPolyline(
+                    sourcePoints, sourcePose, existingPoints, targetPose, syncRadius, syncWorldVertical);
+            if (targetPoints.size() < 2) {
                 if (existing != null) {
                     deleteIds.add(existing.getId());
                 }
@@ -697,25 +710,291 @@ public class TrackSyncUseCase {
     }
 
     static JSONArray projectGroundPoints(JSONArray sourcePoints, Pose sourcePose, Pose targetPose) {
-        JSONArray targetPoints = new JSONArray();
-        for (int index = 0; index < sourcePoints.size(); index++) {
-            JSONObject sourcePoint = sourcePoints.getJSONObject(index);
-            if (sourcePoint == null) {
-                throw new IllegalArgumentException(String.format("Ground shape point is invalid: index=%s", index));
-            }
-            double localX = getDouble(sourcePoint, "x");
-            double localY = getDouble(sourcePoint, "y");
-            double localZ = getDouble(sourcePoint, "z");
-            double worldX = sourcePose.x + localX * Math.cos(sourcePose.yaw) - localY * Math.sin(sourcePose.yaw);
-            double worldY = sourcePose.y + localX * Math.sin(sourcePose.yaw) + localY * Math.cos(sourcePose.yaw);
-            double dx = worldX - targetPose.x;
-            double dy = worldY - targetPose.y;
-            targetPoints.add(point3D(
-                    dx * Math.cos(targetPose.yaw) + dy * Math.sin(targetPose.yaw),
-                    -dx * Math.sin(targetPose.yaw) + dy * Math.cos(targetPose.yaw),
-                    sourcePose.z + localZ - targetPose.z));
+        return projectGroundPoints(sourcePoints, sourcePose, targetPose, true);
+    }
+
+    static JSONArray projectGroundPoints(
+            JSONArray sourcePoints, Pose sourcePose, Pose targetPose, boolean syncWorldVertical) {
+        return polylineToLocal(polylineToWorld(sourcePoints, sourcePose, syncWorldVertical), targetPose, syncWorldVertical);
+    }
+
+    static JSONArray polylineToWorld(JSONArray localPoints, Pose pose) {
+        return polylineToWorld(localPoints, pose, true);
+    }
+
+    static JSONArray polylineToWorld(JSONArray localPoints, Pose pose, boolean syncWorldVertical) {
+        JSONArray worldPoints = new JSONArray();
+        for (int index = 0; index < localPoints.size(); index++) {
+            JSONObject point = requireGroundPoint(localPoints, index);
+            double localX = getDouble(point, "x");
+            double localY = getDouble(point, "y");
+            double localZ = getDouble(point, "z");
+            double[] worldPoint = localToWorld(localX, localY, localZ, pose, syncWorldVertical);
+            worldPoints.add(point3D(worldPoint[0], worldPoint[1], worldPoint[2]));
         }
-        return targetPoints;
+        return worldPoints;
+    }
+
+    static JSONArray polylineToLocal(JSONArray worldPoints, Pose pose) {
+        return polylineToLocal(worldPoints, pose, true);
+    }
+
+    static JSONArray polylineToLocal(JSONArray worldPoints, Pose pose, boolean syncWorldVertical) {
+        JSONArray localPoints = new JSONArray();
+        for (int index = 0; index < worldPoints.size(); index++) {
+            JSONObject point = requireGroundPoint(worldPoints, index);
+            double[] localPoint = worldToLocal(
+                    getDouble(point, "x"),
+                    getDouble(point, "y"),
+                    getDouble(point, "z"),
+                    pose,
+                    syncWorldVertical);
+            localPoints.add(point3D(localPoint[0], localPoint[1], localPoint[2]));
+        }
+        return localPoints;
+    }
+
+    static JSONArray resolveSyncedGroundPolyline(
+            JSONArray sourceLocal,
+            Pose sourcePose,
+            JSONArray existingTargetLocal,
+            Pose targetPose,
+            double radius) {
+        return resolveSyncedGroundPolyline(sourceLocal, sourcePose, existingTargetLocal, targetPose, radius, false);
+    }
+
+    static JSONArray resolveSyncedGroundPolyline(
+            JSONArray sourceLocal,
+            Pose sourcePose,
+            JSONArray existingTargetLocal,
+            Pose targetPose,
+            double radius,
+            boolean syncWorldVertical) {
+        JSONArray sourceWorld = polylineToWorld(sourceLocal, sourcePose, syncWorldVertical);
+        JSONArray existingWorld = existingTargetLocal == null
+                ? new JSONArray()
+                : polylineToWorld(existingTargetLocal, targetPose, syncWorldVertical);
+        JSONArray mergedWorld = mergeWorldPolylinesPreferringSource(existingWorld, sourceWorld);
+        return clipGroundPolylineToRadius(polylineToLocal(mergedWorld, targetPose, syncWorldVertical), radius);
+    }
+
+    static JSONArray mergeWorldPolylinesPreferringSource(JSONArray existingWorld, JSONArray sourceWorld) {
+        if (sourceWorld == null || sourceWorld.isEmpty()) {
+            return copyPoints(existingWorld);
+        }
+        if (existingWorld == null || existingWorld.isEmpty()) {
+            return copyPoints(sourceWorld);
+        }
+        JSONArray alignedExisting = alignPolylineDirection(existingWorld, sourceWorld);
+        JSONObject sourceStart = sourceWorld.getJSONObject(0);
+        JSONObject sourceEnd = sourceWorld.getJSONObject(sourceWorld.size() - 1);
+        double directionX = getDouble(sourceEnd, "x") - getDouble(sourceStart, "x");
+        double directionY = getDouble(sourceEnd, "y") - getDouble(sourceStart, "y");
+        double lengthSquared = directionX * directionX + directionY * directionY;
+        JSONArray prefix = new JSONArray();
+        JSONArray suffix = new JSONArray();
+        for (int index = 0; index < alignedExisting.size(); index++) {
+            JSONObject point = alignedExisting.getJSONObject(index);
+            if (distanceToPolyline(point, sourceWorld) <= POLYLINE_OVERLAP_SNAP_M) {
+                continue;
+            }
+            double projection = lengthSquared <= GEOMETRY_EPSILON ? 0
+                    : ((getDouble(point, "x") - getDouble(sourceStart, "x")) * directionX
+                    + (getDouble(point, "y") - getDouble(sourceStart, "y")) * directionY) / lengthSquared;
+            if (projection < 0) {
+                prefix.add(copyPoint(point));
+            } else if (projection > 1) {
+                suffix.add(copyPoint(point));
+            }
+        }
+        JSONArray merged = new JSONArray();
+        merged.addAll(prefix);
+        merged.addAll(copyPoints(sourceWorld));
+        merged.addAll(suffix);
+        return merged;
+    }
+
+    static JSONArray clipGroundPolylineToRadius(JSONArray points, double radius) {
+        if (points == null || points.size() < 2 || radius <= 0) {
+            return new JSONArray();
+        }
+        List<JSONArray> components = new ArrayList<>();
+        JSONArray current = new JSONArray();
+        for (int index = 1; index < points.size(); index++) {
+            JSONArray piece = clipSegmentToRadius(
+                    requireGroundPoint(points, index - 1),
+                    requireGroundPoint(points, index),
+                    radius);
+            if (piece.size() < 2) {
+                addComponent(components, current);
+                current = new JSONArray();
+                continue;
+            }
+            if (!current.isEmpty() && !samePoint(
+                    current.getJSONObject(current.size() - 1), piece.getJSONObject(0))) {
+                addComponent(components, current);
+                current = new JSONArray();
+            }
+            if (current.isEmpty()) {
+                current.addAll(piece);
+            } else {
+                for (int pieceIndex = 1; pieceIndex < piece.size(); pieceIndex++) {
+                    current.add(piece.get(pieceIndex));
+                }
+            }
+        }
+        addComponent(components, current);
+        JSONArray nearest = new JSONArray();
+        double nearestDistance = Double.POSITIVE_INFINITY;
+        for (JSONArray component : components) {
+            double distance = distanceToGroundShapeFootprint(component);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = component;
+            }
+        }
+        return nearest;
+    }
+
+    private static JSONArray clipSegmentToRadius(JSONObject start, JSONObject end, double radius) {
+        double startX = getDouble(start, "x");
+        double startY = getDouble(start, "y");
+        double endX = getDouble(end, "x");
+        double endY = getDouble(end, "y");
+        List<Double> parameters = new ArrayList<>();
+        parameters.add(0D);
+        parameters.addAll(circleSegmentIntersections(startX, startY, endX, endY, radius));
+        parameters.add(1D);
+        for (int index = 1; index < parameters.size(); index++) {
+            double from = parameters.get(index - 1);
+            double to = parameters.get(index);
+            double middle = (from + to) / 2;
+            double middleX = startX + middle * (endX - startX);
+            double middleY = startY + middle * (endY - startY);
+            if (Math.hypot(middleX, middleY) <= radius + GEOMETRY_EPSILON) {
+                JSONArray piece = new JSONArray();
+                piece.add(interpolatePoint(start, end, from));
+                piece.add(interpolatePoint(start, end, to));
+                return piece;
+            }
+        }
+        return new JSONArray();
+    }
+
+    private static List<Double> circleSegmentIntersections(
+            double startX, double startY, double endX, double endY, double radius) {
+        double deltaX = endX - startX;
+        double deltaY = endY - startY;
+        double a = deltaX * deltaX + deltaY * deltaY;
+        List<Double> intersections = new ArrayList<>();
+        if (a <= GEOMETRY_EPSILON) {
+            return intersections;
+        }
+        double b = 2 * (startX * deltaX + startY * deltaY);
+        double c = startX * startX + startY * startY - radius * radius;
+        double discriminant = b * b - 4 * a * c;
+        if (discriminant < 0) {
+            return intersections;
+        }
+        double root = Math.sqrt(Math.max(0, discriminant));
+        addIntersection(intersections, (-b - root) / (2 * a));
+        addIntersection(intersections, (-b + root) / (2 * a));
+        return intersections;
+    }
+
+    private static void addIntersection(List<Double> intersections, double parameter) {
+        if (parameter <= GEOMETRY_EPSILON || parameter >= 1 - GEOMETRY_EPSILON) {
+            return;
+        }
+        if (intersections.isEmpty()
+                || Math.abs(intersections.get(intersections.size() - 1) - parameter) > GEOMETRY_EPSILON) {
+            intersections.add(parameter);
+        }
+    }
+
+    private static JSONObject interpolatePoint(JSONObject start, JSONObject end, double parameter) {
+        return point3D(
+                getDouble(start, "x") + parameter * (getDouble(end, "x") - getDouble(start, "x")),
+                getDouble(start, "y") + parameter * (getDouble(end, "y") - getDouble(start, "y")),
+                getDouble(start, "z") + parameter * (getDouble(end, "z") - getDouble(start, "z")));
+    }
+
+    private static void addComponent(List<JSONArray> components, JSONArray component) {
+        if (component.size() >= 2) {
+            components.add(component);
+        }
+    }
+
+    private static boolean samePoint(JSONObject first, JSONObject second) {
+        return Math.abs(getDouble(first, "x") - getDouble(second, "x")) <= GEOMETRY_EPSILON
+                && Math.abs(getDouble(first, "y") - getDouble(second, "y")) <= GEOMETRY_EPSILON
+                && Math.abs(getDouble(first, "z") - getDouble(second, "z")) <= GEOMETRY_EPSILON;
+    }
+
+    private static JSONArray alignPolylineDirection(JSONArray existing, JSONArray source) {
+        JSONObject existingStart = existing.getJSONObject(0);
+        JSONObject existingEnd = existing.getJSONObject(existing.size() - 1);
+        JSONObject sourceStart = source.getJSONObject(0);
+        JSONObject sourceEnd = source.getJSONObject(source.size() - 1);
+        double aligned = squaredDistance(existingStart, sourceStart) + squaredDistance(existingEnd, sourceEnd);
+        double reversed = squaredDistance(existingStart, sourceEnd) + squaredDistance(existingEnd, sourceStart);
+        if (aligned <= reversed) {
+            return copyPoints(existing);
+        }
+        JSONArray result = new JSONArray();
+        for (int index = existing.size() - 1; index >= 0; index--) {
+            result.add(copyPoint(existing.getJSONObject(index)));
+        }
+        return result;
+    }
+
+    private static double squaredDistance(JSONObject first, JSONObject second) {
+        double deltaX = getDouble(first, "x") - getDouble(second, "x");
+        double deltaY = getDouble(first, "y") - getDouble(second, "y");
+        return deltaX * deltaX + deltaY * deltaY;
+    }
+
+    private static double distanceToPolyline(JSONObject point, JSONArray polyline) {
+        double pointX = getDouble(point, "x");
+        double pointY = getDouble(point, "y");
+        double distance = Double.POSITIVE_INFINITY;
+        for (int index = 0; index < polyline.size(); index++) {
+            JSONObject current = polyline.getJSONObject(index);
+            distance = Math.min(distance, Math.hypot(
+                    pointX - getDouble(current, "x"),
+                    pointY - getDouble(current, "y")));
+            if (index > 0) {
+                JSONObject previous = polyline.getJSONObject(index - 1);
+                distance = Math.min(distance, distanceToSegment(
+                        pointX, pointY,
+                        getDouble(previous, "x"), getDouble(previous, "y"),
+                        getDouble(current, "x"), getDouble(current, "y")));
+            }
+        }
+        return distance;
+    }
+
+    private static JSONArray copyPoints(JSONArray points) {
+        JSONArray copy = new JSONArray();
+        if (points == null) {
+            return copy;
+        }
+        for (int index = 0; index < points.size(); index++) {
+            copy.add(copyPoint(requireGroundPoint(points, index)));
+        }
+        return copy;
+    }
+
+    private static JSONObject copyPoint(JSONObject point) {
+        return point3D(getDouble(point, "x"), getDouble(point, "y"), getDouble(point, "z"));
+    }
+
+    private static JSONObject requireGroundPoint(JSONArray points, int index) {
+        JSONObject point = points.getJSONObject(index);
+        if (point == null) {
+            throw new IllegalArgumentException(String.format("Ground shape point is invalid: index=%s", index));
+        }
+        return point;
     }
 
     static double distanceToGroundShapeFootprint(JSONArray points) {
@@ -764,8 +1043,8 @@ public class TrackSyncUseCase {
     }
 
     private void syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,
-                             JSONObject rotation3D, double syncRadius, boolean syncUseZ, double syncYawOffset,
-                             double syncXOffset, double syncYOffset, List<DataInfo> frames,
+                             JSONObject rotation3D, double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
+                             double syncYawOffset, double syncXOffset, double syncYOffset, List<DataInfo> frames,
                              Map<Long, Pose> poseByDataId, Map<Long, DataAnnotationObject> existingByDataId,
                              List<Long> duplicateObjectIds, Set<Long> reachableFrameIds, int maxDisappearGap,
                              Map<Long, Integer> segmentByDataId, int locationGapMs, boolean segmentsInitialized) {
@@ -777,11 +1056,15 @@ public class TrackSyncUseCase {
         double rotY = rotation3D == null ? 0 : getDouble(rotation3D, "y");
 
         Pose srcPose = poseByDataId.get(source.getDataId());
-        double srcYaw = srcPose == null ? 0 : srcPose.yaw + syncYawOffset;
-        double worldX = srcPose == null ? 0 : srcPose.x + localX * Math.cos(srcYaw) - localY * Math.sin(srcYaw);
-        double worldY = srcPose == null ? 0 : srcPose.y + localX * Math.sin(srcYaw) + localY * Math.cos(srcYaw);
-        double worldZ = srcPose == null ? 0 : srcPose.z + localZ;
-        double worldYaw = srcPose == null ? 0 : localYaw + srcYaw;
+        Pose effectiveSourcePose = withYawOffset(srcPose, syncYawOffset);
+        boolean useWorldVertical = syncUseZ;
+        double[] worldPoint = effectiveSourcePose == null
+                ? new double[]{0, 0, localZ}
+                : localToWorld(localX, localY, localZ, effectiveSourcePose, useWorldVertical);
+        double worldX = worldPoint[0];
+        double worldY = worldPoint[1];
+        double worldZ = worldPoint[2];
+        double worldYaw = effectiveSourcePose == null ? 0 : localYaw + effectiveSourcePose.yaw;
         Integer sourceSegmentId = segmentByDataId.get(source.getDataId());
 
         var toInsert = new ArrayList<DataAnnotationObject>();
@@ -801,8 +1084,8 @@ public class TrackSyncUseCase {
                 if (existing != null && ObjectUtil.isNotNull(existing.getClassAttributes())) {
                     JSONObject existingAttrs = existing.getClassAttributes();
                     Object existingSyncDirty = existingAttrs.get("syncDirty");
-                    updateStaticMetadata(existingAttrs, source, size3D, syncRadius, syncUseZ, syncYawOffset,
-                            syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
+                    updateStaticMetadata(existingAttrs, source, size3D, syncRadius, syncUseZ, syncWorldVertical,
+                            syncYawOffset, syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
                     if (existingSyncDirty == null) {
                         existingAttrs.remove("syncDirty");
                     } else {
@@ -817,8 +1100,8 @@ public class TrackSyncUseCase {
             if (frame.getId().equals(source.getDataId())) {
                 if (existing != null) {
                     JSONObject sourceAttrs = JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes()));
-                    updateStaticMetadata(sourceAttrs, source, size3D, syncRadius, syncUseZ, syncYawOffset,
-                            syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
+                    updateStaticMetadata(sourceAttrs, source, size3D, syncRadius, syncUseZ, syncWorldVertical,
+                            syncYawOffset, syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
                     existing.setClassId(source.getClassId());
                     existing.setClassAttributes(sourceAttrs);
                     toUpdate.add(existing);
@@ -827,13 +1110,12 @@ public class TrackSyncUseCase {
             }
 
             Pose pose = poseByDataId.get(frame.getId());
-            double poseYaw = pose.yaw + syncYawOffset;
-            double dx = worldX - pose.x;
-            double dy = worldY - pose.y;
-            double tgtLocalX = dx * Math.cos(poseYaw) + dy * Math.sin(poseYaw) + syncXOffset;
-            double tgtLocalY = -dx * Math.sin(poseYaw) + dy * Math.cos(poseYaw) + syncYOffset;
-            double tgtLocalZ = syncUseZ ? worldZ - pose.z : localZ;
-            double tgtLocalYaw = worldYaw - poseYaw;
+            Pose effectiveTargetPose = withYawOffset(pose, syncYawOffset);
+            double[] targetLocal = worldToLocal(worldX, worldY, worldZ, effectiveTargetPose, useWorldVertical);
+            double tgtLocalX = targetLocal[0] + syncXOffset;
+            double tgtLocalY = targetLocal[1] + syncYOffset;
+            double tgtLocalZ = syncUseZ ? targetLocal[2] : localZ;
+            double tgtLocalYaw = worldYaw - effectiveTargetPose.yaw;
             // Gate by the closest point of the oriented 3D box footprint in the XY plane, not by
             // the box center. A large static object should still be considered nearby if its
             // visible/physical edge is within the configured distance.
@@ -866,7 +1148,7 @@ public class TrackSyncUseCase {
             newRotation.set("z", tgtLocalYaw);
             newContour.set("rotation3D", newRotation);
             newAttrs.set("trackId", trackId);
-            updateStaticMetadata(newAttrs, source, size3D, syncRadius, syncUseZ, syncYawOffset,
+            updateStaticMetadata(newAttrs, source, size3D, syncRadius, syncUseZ, syncWorldVertical, syncYawOffset,
                     syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
 
             if (existing != null) {
@@ -891,9 +1173,9 @@ public class TrackSyncUseCase {
     }
 
     private void updateStaticMetadata(JSONObject attrs, DataAnnotationObjectBO source, JSONObject size3D,
-                                      double syncRadius, boolean syncUseZ, double syncYawOffset,
-                                      double syncXOffset, double syncYOffset, int maxDisappearGap,
-                                      Integer segmentId, int locationGapMs) {
+                                      double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
+                                      double syncYawOffset, double syncXOffset, double syncYOffset,
+                                      int maxDisappearGap, Integer segmentId, int locationGapMs) {
         JSONObject contour = attrs.getJSONObject("contour");
         if (contour != null) {
             contour.set("size3D", JSONUtil.parseObj(JSONUtil.toJsonStr(size3D)));
@@ -902,6 +1184,7 @@ public class TrackSyncUseCase {
         attrs.set("motionMode", MOTION_STATIC);
         attrs.set("syncDistance", syncRadius);
         attrs.set("syncUseZ", syncUseZ);
+        attrs.set("syncWorldVertical", syncWorldVertical);
         attrs.set("syncYawOffsetDeg", Math.toDegrees(syncYawOffset));
         attrs.set("syncXOffsetM", syncXOffset);
         attrs.set("syncYOffsetM", syncYOffset);
@@ -1043,7 +1326,16 @@ public class TrackSyncUseCase {
                 if (pose == null) {
                     continue;
                 }
-                poseByDataId.put(frame.getId(), new Pose(pose[0], pose[1], pose[2], pose[3]));
+                Double roll = toOptionalAngle(pose[4]);
+                Double explicitPitch = toOptionalAngle(pose[5]);
+                if (explicitPitch == null) {
+                    double estimatedPitch = LocationPoseInterpolator.estimatePitch(timestampNs, sortedSamples);
+                    poseByDataId.put(frame.getId(), new Pose(
+                            pose[0], pose[1], pose[2], pose[3], roll, estimatedPitch, roll != null, false));
+                } else {
+                    poseByDataId.put(frame.getId(), new Pose(
+                            pose[0], pose[1], pose[2], pose[3], roll, explicitPitch));
+                }
                 interpolatedCount++;
                 if (samplePoses.size() < 3) {
                     Map<String, Object> entry = new HashMap<>();
@@ -1072,9 +1364,18 @@ public class TrackSyncUseCase {
 
         var locations = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
                 .in(SceneLocation::getDataId, frameIds));
-        locations.forEach(location -> poseByDataId.put(
+        Map<Long, Pose> tablePoseByDataId = new HashMap<>();
+        locations.forEach(location -> tablePoseByDataId.put(
                 location.getDataId(),
-                new Pose(location.getPosX(), location.getPosY(), location.getPosZ(), location.getYaw())));
+                new Pose(
+                        location.getPosX(),
+                        location.getPosY(),
+                        location.getPosZ(),
+                        location.getYaw(),
+                        location.getRoll(),
+                        location.getPitch())));
+        attachEstimatedPitchFromFrames(frames, tablePoseByDataId);
+        poseByDataId.putAll(tablePoseByDataId);
         // #region agent log
         Map<String, Object> logData = new HashMap<>();
         logData.put("sceneId", sceneId);
@@ -1083,6 +1384,49 @@ public class TrackSyncUseCase {
         SyncPoseDebugLog.log("H2", "buildPoseByDataId fallback to table", logData);
         // #endregion
         return poseByDataId;
+    }
+
+    private static void attachEstimatedPitchFromFrames(List<DataInfo> frames, Map<Long, Pose> poseByDataId) {
+        List<DataInfo> orderedFrames = frames.stream()
+                .filter(frame -> poseByDataId.containsKey(frame.getId()))
+                .sorted(Comparator.comparing(DataInfo::getOrderName, Comparator.nullsLast(String::compareTo)))
+                .collect(Collectors.toList());
+        for (int index = 0; index < orderedFrames.size(); index++) {
+            DataInfo frame = orderedFrames.get(index);
+            Pose current = poseByDataId.get(frame.getId());
+            Pose previous = index > 0 ? poseByDataId.get(orderedFrames.get(index - 1).getId()) : null;
+            Pose next = index + 1 < orderedFrames.size()
+                    ? poseByDataId.get(orderedFrames.get(index + 1).getId())
+                    : null;
+            Double pitch = current.explicitPitch ? current.pitch : estimatePitchFromNeighbors(previous, next);
+            poseByDataId.put(frame.getId(), new Pose(
+                    current.x,
+                    current.y,
+                    current.z,
+                    current.yaw,
+                    current.explicitRoll ? current.roll : null,
+                    pitch,
+                    current.explicitRoll,
+                    current.explicitPitch));
+        }
+    }
+
+    private static Double toOptionalAngle(double value) {
+        return Double.isNaN(value) ? null : value;
+    }
+
+    private static double estimatePitchFromNeighbors(Pose previous, Pose next) {
+        if (previous == null || next == null) {
+            return 0;
+        }
+        double deltaX = next.x - previous.x;
+        double deltaY = next.y - previous.y;
+        double deltaZ = next.z - previous.z;
+        double horizontal = Math.hypot(deltaX, deltaY);
+        if (horizontal < 1e-6) {
+            return 0;
+        }
+        return Math.atan2(-deltaZ, horizontal);
     }
 
     private Map<Long, Integer> buildSegmentByDataId(Long sceneId, List<DataInfo> frames, int locationGapMs) {
@@ -1176,24 +1520,111 @@ public class TrackSyncUseCase {
             Pose sourcePose,
             Pose targetPose,
             boolean syncUseZ) {
+        return projectPose(localX, localY, localZ, localYaw, sourcePose, targetPose, syncUseZ, false);
+    }
+
+    static ProjectedPose projectPose(
+            double localX,
+            double localY,
+            double localZ,
+            double localYaw,
+            Pose sourcePose,
+            Pose targetPose,
+            boolean syncUseZ,
+            boolean syncWorldVertical) {
         if (sourcePose == null || targetPose == null || !sourcePose.complete || !targetPose.complete) {
             throw new IllegalArgumentException("Complete source and target poses are required");
         }
-        double worldX = sourcePose.x
-                + localX * Math.cos(sourcePose.yaw)
-                - localY * Math.sin(sourcePose.yaw);
-        double worldY = sourcePose.y
-                + localX * Math.sin(sourcePose.yaw)
-                + localY * Math.cos(sourcePose.yaw);
-        double dx = worldX - targetPose.x;
-        double dy = worldY - targetPose.y;
-        double targetX = dx * Math.cos(targetPose.yaw) + dy * Math.sin(targetPose.yaw);
-        double targetY = -dx * Math.sin(targetPose.yaw) + dy * Math.cos(targetPose.yaw);
+        boolean useWorldVertical = syncUseZ;
+        double[] worldPoint = localToWorld(localX, localY, localZ, sourcePose, useWorldVertical);
+        double[] targetLocal = worldToLocal(worldPoint[0], worldPoint[1], worldPoint[2], targetPose, useWorldVertical);
+        if (!syncUseZ) {
+            targetLocal[2] = localZ;
+        }
         return new ProjectedPose(
-                targetX,
-                targetY,
-                syncUseZ ? sourcePose.z + localZ - targetPose.z : localZ,
+                targetLocal[0],
+                targetLocal[1],
+                targetLocal[2],
                 localYaw + sourcePose.yaw - targetPose.yaw);
+    }
+
+    /**
+     * Ground polylines/polygons always use pose.z together with x/y/yaw so synced geometry
+     * matches the same world-fixed transform as 3D boxes when syncUseZ is enabled.
+     */
+    private static boolean useWorldVerticalSync(JSONObject attrs) {
+        return true;
+    }
+
+    private static double[] localToWorld(
+            double localX,
+            double localY,
+            double localZ,
+            Pose pose,
+            boolean useWorldVertical) {
+        double yaw = pose.yaw;
+        double pitch = useWorldVertical ? pose.pitch : 0;
+        double roll = useWorldVertical ? pose.roll : 0;
+        double cosYaw = Math.cos(yaw);
+        double sinYaw = Math.sin(yaw);
+        double cosPitch = Math.cos(pitch);
+        double sinPitch = Math.sin(pitch);
+        double cosRoll = Math.cos(roll);
+        double sinRoll = Math.sin(roll);
+        double rxX = localX;
+        double rxY = localY * cosRoll - localZ * sinRoll;
+        double rxZ = localY * sinRoll + localZ * cosRoll;
+        double bodyX = rxX * cosPitch + rxZ * sinPitch;
+        double bodyY = rxY;
+        double bodyZ = -rxX * sinPitch + rxZ * cosPitch;
+        double worldX = pose.x + bodyX * cosYaw - bodyY * sinYaw;
+        double worldY = pose.y + bodyX * sinYaw + bodyY * cosYaw;
+        double worldZ = useWorldVertical ? pose.z + bodyZ : localZ;
+        return new double[]{worldX, worldY, worldZ};
+    }
+
+    private static double[] worldToLocal(
+            double worldX,
+            double worldY,
+            double worldZ,
+            Pose pose,
+            boolean useWorldVertical) {
+        double yaw = pose.yaw;
+        double pitch = useWorldVertical ? pose.pitch : 0;
+        double roll = useWorldVertical ? pose.roll : 0;
+        double cosYaw = Math.cos(yaw);
+        double sinYaw = Math.sin(yaw);
+        double cosPitch = Math.cos(pitch);
+        double sinPitch = Math.sin(pitch);
+        double cosRoll = Math.cos(roll);
+        double sinRoll = Math.sin(roll);
+        double deltaX = worldX - pose.x;
+        double deltaY = worldY - pose.y;
+        double bodyX = deltaX * cosYaw + deltaY * sinYaw;
+        double bodyY = -deltaX * sinYaw + deltaY * cosYaw;
+        double bodyZ = useWorldVertical ? worldZ - pose.z : worldZ;
+        double rxX = bodyX * cosPitch - bodyZ * sinPitch;
+        double rxY = bodyY;
+        double rxZ = bodyX * sinPitch + bodyZ * cosPitch;
+        double localX = rxX;
+        double localY = rxY * cosRoll + rxZ * sinRoll;
+        double localZ = -rxY * sinRoll + rxZ * cosRoll;
+        return new double[]{localX, localY, localZ};
+    }
+
+    private static Pose withYawOffset(Pose pose, double syncYawOffset) {
+        if (pose == null || syncYawOffset == 0) {
+            return pose;
+        }
+        return new Pose(
+                pose.x,
+                pose.y,
+                pose.z,
+                pose.yaw + syncYawOffset,
+                pose.explicitRoll ? pose.roll : null,
+                pose.pitch,
+                pose.explicitRoll,
+                pose.explicitPitch);
     }
 
     private static void addReachableFrames(
@@ -1392,14 +1823,86 @@ public class TrackSyncUseCase {
         final double y;
         final double z;
         final double yaw;
+        final double roll;
+        final double pitch;
+        final boolean explicitRoll;
+        final boolean explicitPitch;
         final boolean complete;
 
         Pose(Double x, Double y, Double z, Double yaw) {
-            this.x = x == null ? 0 : x;
-            this.y = y == null ? 0 : y;
-            this.z = z == null ? 0 : z;
-            this.yaw = yaw == null ? 0 : yaw;
-            this.complete = x != null && y != null && z != null && yaw != null;
+            this(value(x), value(y), value(z), value(yaw), 0, 0, false, false, x != null && y != null && z != null && yaw != null);
+        }
+
+        Pose(Double x, Double y, Double z, Double yaw, Double pitch) {
+            this(
+                    value(x),
+                    value(y),
+                    value(z),
+                    value(yaw),
+                    0,
+                    value(pitch),
+                    false,
+                    pitch != null,
+                    x != null && y != null && z != null && yaw != null);
+        }
+
+        Pose(Double x, Double y, Double z, Double yaw, Double roll, Double pitch) {
+            this(
+                    value(x),
+                    value(y),
+                    value(z),
+                    value(yaw),
+                    roll == null ? 0 : roll,
+                    pitch == null ? 0 : pitch,
+                    roll != null,
+                    pitch != null,
+                    x != null && y != null && z != null && yaw != null);
+        }
+
+        Pose(
+                double x,
+                double y,
+                double z,
+                double yaw,
+                Double roll,
+                double pitch,
+                boolean explicitRoll,
+                boolean explicitPitch) {
+            this(
+                    x,
+                    y,
+                    z,
+                    yaw,
+                    roll == null ? 0 : roll,
+                    pitch,
+                    explicitRoll,
+                    explicitPitch,
+                    true);
+        }
+
+        private Pose(
+                double x,
+                double y,
+                double z,
+                double yaw,
+                double roll,
+                double pitch,
+                boolean explicitRoll,
+                boolean explicitPitch,
+                boolean complete) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.yaw = yaw;
+            this.roll = roll;
+            this.pitch = pitch;
+            this.explicitRoll = explicitRoll;
+            this.explicitPitch = explicitPitch;
+            this.complete = complete;
+        }
+
+        private static double value(Double value) {
+            return value == null ? 0 : value;
         }
     }
 

@@ -6,9 +6,11 @@ import * as bsUtils from '../utils';
 import { AnnotateObject } from 'pc-render';
 import { pollModelTrack } from '../utils/model';
 import { IInferenceTask } from '../type';
+import { expandKeypointLiftedCandidates } from '../utils/keypointLiftedResult';
 
 const INFERENCE_POLL_INTERVAL_MS = 1500;
 const INFERENCE_STATUS_MAX_RETRIES = 3;
+const IMAGE_KEYPOINT_LIFTED_DETECTION = 'IMAGE_KEYPOINT_LIFTED_DETECTION';
 
 export default class DataManager extends BaseDataManager {
     editor: Editor;
@@ -206,6 +208,7 @@ export default class DataManager extends BaseDataManager {
                         if (info) {
                             let modelResult = info.modelResult;
                             let objects = (modelResult.objects || []) as IObject[];
+                            const modelCode = model.code || data.modelCode;
 
                             const code = modelResult.code;
                             const resultOk =
@@ -223,10 +226,13 @@ export default class DataManager extends BaseDataManager {
                                 model.state = 'complete';
                                 // Keep objects when confidence is missing (e.g. tracking); only drop low scores when present.
                                 objects = objects.filter((e) => {
-                                    const c = (e as any).confidence;
-                                    if (c == null || c === '') return true;
-                                    return Number(c) >= 0.5;
+                                    const confidence: unknown = e.confidence;
+                                    if (confidence == null || confidence === '') return true;
+                                    return Number(confidence) >= 0.5;
                                 });
+                                if (modelCode === IMAGE_KEYPOINT_LIFTED_DETECTION) {
+                                    objects = expandKeypointLiftedCandidates(objects);
+                                }
                                 editor.modelManager.modelMap.set(dataMeta.id, objects);
                             } else {
                                 dataMeta.model = undefined;

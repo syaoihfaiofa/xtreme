@@ -1,0 +1,17 @@
+[
+  "car",
+  "bus",
+  "truck",
+  "tricycle",
+  "bike",
+  "parkinglock_locked",
+  "parkinglock_unlocked",
+  "board_no_parking",
+  "handcart",
+  "person",
+  "pillar",
+  "cone",
+  "pole",
+  "barrier",
+  "concrete_ball"
+]

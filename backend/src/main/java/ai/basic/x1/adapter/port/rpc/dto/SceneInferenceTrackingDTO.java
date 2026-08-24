@@ -28,6 +28,7 @@ public final class SceneInferenceTrackingDTO {
     @AllArgsConstructor
     public static class Config {
         private Double iouThreshold;
+        private Double distanceThreshold;
         private Double syncDistance;
         private Integer maxOutsideFrames;
     }

@@ -18,6 +18,28 @@
           <slot name="select"></slot>
         </Form.Item>
 
+        <Form.Item
+          v-if="isSceneTrackingModel"
+          :label="t('business.models.runModel.scenes')"
+          required
+        >
+          <Select
+            v-model:value="selectedSceneIdsModel"
+            mode="multiple"
+            optionFilterProp="label"
+            :placeholder="t('business.models.runModel.selectScenes')"
+          >
+            <Select.Option
+              v-for="scene in props.sceneOptions"
+              :key="scene.id"
+              :value="scene.id"
+              :label="scene.name"
+            >
+              {{ scene.name }}
+            </Select.Option>
+          </Select>
+        </Form.Item>
+
         <template v-if="props.modelType !== 'model' && false">
           <Form.Item>
             <Checkbox v-model:checked="formState.checkedData">
@@ -72,12 +94,15 @@
             </Form.Item>
           </div>
         </template>
-        <Form.Item>
+        <Form.Item v-if="!isSceneTrackingModel">
           <Checkbox v-model:checked="formState.checkedResult">
             {{ t('business.models.runModel.FliterModel') }}
           </Checkbox>
         </Form.Item>
-        <div style="margin-left: 35px" v-show="formState.checkedResult">
+        <div
+          :style="isSceneTrackingModel ? '' : 'margin-left: 35px'"
+          v-show="formState.checkedResult || isSceneTrackingModel"
+        >
           <Form.Item
             :label="t('business.models.runModel.classes')"
             :label-col="{ span: 24 }"
@@ -93,10 +118,61 @@
               </div>
             </div>
           </Form.Item>
+          <Form.Item
+            v-if="isSceneTrackingModel"
+            :label="t('business.models.runModel.classDetails')"
+            :label-col="{ span: 24 }"
+            :wrapper-col="{ span: 24 }"
+          >
+            <div class="mapping-list">
+              <div class="mapping-header">
+                <span>{{ t('business.models.runModel.modelClass') }}</span>
+                <span>{{ t('business.models.runModel.datasetClass') }}</span>
+                <span>{{ t('business.models.runModel.motionMode') }}</span>
+              </div>
+              <div v-for="row in formState.mappingRows" :key="row.code" class="mapping-row">
+                <div>
+                  <span>{{ row.name }}</span>
+                  <small>{{ row.code }}</small>
+                </div>
+                <Select v-model:value="row.datasetClassId">
+                  <Select.Option
+                    v-for="datasetClass in datasetClasses"
+                    :key="datasetClass.id"
+                    :value="datasetClass.id"
+                  >
+                    {{ datasetClass.name }}
+                  </Select.Option>
+                </Select>
+                <Select v-model:value="row.motionMode">
+                  <Select.Option value="STATIC">
+                    {{ t('business.models.runModel.motionStatic') }}
+                  </Select.Option>
+                  <Select.Option value="DYNAMIC_FIXED_SIZE">
+                    {{ t('business.models.runModel.motionDynamicFixedSize') }}
+                  </Select.Option>
+                  <Select.Option value="DYNAMIC_VARIABLE_SIZE">
+                    {{ t('business.models.runModel.motionDynamicVariableSize') }}
+                  </Select.Option>
+                </Select>
+              </div>
+            </div>
+          </Form.Item>
           <Form.Item :label="t('business.models.runModel.confidence')">
             <TheSlider
               v-model:start="formState.sliderValue[0]"
               v-model:end="formState.sliderValue[1]"
+            />
+          </Form.Item>
+          <Form.Item
+            v-if="isSceneTrackingModel"
+            :label="t('business.models.runModel.associationIou')"
+          >
+            <InputNumber
+              v-model:value="associationIou"
+              :min="0"
+              :max="1"
+              :step="0.05"
             />
           </Form.Item>
         </div>
@@ -110,7 +186,7 @@
   // 组件
   import { useMessage } from '/@/hooks/web/useMessage';
   import { BasicModal, useModalInner } from '/@/components/Modal';
-  import { Form, Checkbox, RadioGroup, Radio, Slider } from 'ant-design-vue';
+  import { Form, Checkbox, InputNumber, RadioGroup, Radio, Select, Slider } from 'ant-design-vue';
   import TheSlider from './TheSlider.vue';
   import TheTags from './TheTags.vue';
   // 工具
@@ -120,9 +196,11 @@
     ResultsModelParam,
     DataModelParam,
     ModelDataCountParams,
+    ModelCode,
   } from '/@/api/business/model/modelsModel';
   import { getModelByIdApi, getModelDataCountApi } from '/@/api/business/models';
-  import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
+  import { getDatasetClassApi } from '/@/api/business/classes';
+  import { datasetTypeEnum, MotionMode } from '/@/api/business/model/datasetModel';
   import { SplitedTypeEnum } from '/@/views/datasets/datasetContent/components/data';
 
   const { t } = useI18n();
@@ -132,7 +210,7 @@
     changeOkLoading(false);
   });
 
-  const emits = defineEmits(['run']);
+  const emits = defineEmits(['run', 'update:selectedSceneIds']);
   const props = defineProps<{
     modelType?: string;
     selectName: string; // 下拉框的label
@@ -140,7 +218,21 @@
     modelId: string | number; // 需要传入 modelId 以获取 classes
     datasetId?: string | number;
     classes?: Array<any>;
+    sceneOptions?: Array<{ id: number; name: string }>;
+    selectedSceneIds?: number[];
+    modelCode?: ModelCode;
   }>();
+
+  const isSceneTrackingModel = computed(
+    () =>
+      props.modelCode === 'LIDAR_DETECTION' ||
+      props.modelCode === 'IMAGE_KEYPOINT_LIFTED_DETECTION',
+  );
+
+  const selectedSceneIdsModel = computed<number[]>({
+    get: () => props.selectedSceneIds || [],
+    set: (value) => emits('update:selectedSceneIds', value),
+  });
 
   const labelCol = { span: 4 };
   const wrapperCol = { span: 24 };
@@ -154,6 +246,12 @@
     isExcludeModelData: boolean;
     splitType: string;
     annotationStatus: string;
+    mappingRows: Array<{
+      name: string;
+      code: string;
+      datasetClassId?: number;
+      motionMode: MotionMode;
+    }>;
   }
   const formState = reactive<IFormState>({
     checkedResult: false,
@@ -164,11 +262,19 @@
     isExcludeModelData: false,
     splitType: '',
     annotationStatus: '',
+    mappingRows: [],
   });
   const defaultFormState = reactive<IFormState>({
     sliderValue: [0.5, 1],
     tagsList: [],
+    dataCountRatio: 100,
+    isExcludeModelData: false,
+    splitType: '',
+    annotationStatus: '',
+    mappingRows: [],
   });
+  const datasetClasses = ref<Array<{ id: number; name: string }>>([]);
+  const associationIou = ref<number>(0.3);
   // 全选、半选 状态
   const showSelectAll = computed(() => {
     return formState.tagsList.every((item) => item.checked);
@@ -181,7 +287,7 @@
     let preModelResults: Nullable<ResultsModelParam> = null;
     let preModelData: Nullable<DataModelParam> = null;
 
-    if (formState.checkedResult) {
+    if (formState.checkedResult || isSceneTrackingModel.value) {
       const classes: string[] = [];
       formState.tagsList.forEach((item) => {
         if (item.subClasses) {
@@ -196,6 +302,17 @@
         minConfidence: formState.sliderValue[0],
         maxConfidence: formState.sliderValue[1],
         classes: JSON.parse(JSON.stringify(classes)),
+        associationIou: associationIou.value,
+        classMappings:
+          isSceneTrackingModel.value
+            ? formState.mappingRows
+                .filter((row) => classes.includes(row.code))
+                .map((row) => ({
+                  modelClassCode: row.code,
+                  datasetClassId: row.datasetClassId as number,
+                  motionMode: row.motionMode,
+                }))
+            : undefined,
       };
     } else {
       // 未勾选状态 -- 全部传
@@ -222,12 +339,14 @@
         isExcludeModelData: formState.isExcludeModelData,
         splitType: formState.splitType,
         annotationStatus: formState.annotationStatus,
+        sceneIds: selectedSceneIdsModel.value,
       };
     } else {
       // 未勾选状态 -- 全部传
       preModelData = {
         dataCountRatio: 100,
         isExcludeModelData: false,
+        sceneIds: selectedSceneIdsModel.value,
       };
     }
     // console.log(preModel);
@@ -240,8 +359,15 @@
       }, 500);
       return;
     }
+    if (isSceneTrackingModel.value) {
+      if (selectedSceneIdsModel.value.length === 0) {
+        createMessage.error(t('business.models.runModel.selectScenes'));
+        changeOkLoading(false);
+        return;
+      }
+    }
     // 判断data
-    if (props.modelType !== 'model' && getDataCount.value == 0) {
+    if (props.modelType !== 'model' && Number(getDataCount.value) === 0) {
       createMessage.error(t('business.models.runModel.noData'));
       setTimeout(() => {
         changeOkLoading(false);
@@ -257,6 +383,28 @@
   const datasetType = ref<datasetTypeEnum>(datasetTypeEnum.LIDAR_BASIC);
   // 当前获取到的处理之后的 classes
   let classes = reactive<any[]>([]);
+
+  const rebuildMappingRows = () => {
+    const flattened = classes.flatMap((item) => item.subClasses || [item]);
+    formState.mappingRows = flattened.map((item) => {
+      const normalizedName = String(item.name || '').toLowerCase();
+      const normalizedCode = String(item.code || '').toLowerCase();
+      const matched = datasetClasses.value.find((datasetClass) => {
+        const datasetClassName = datasetClass.name.toLowerCase();
+        return datasetClassName === normalizedName || datasetClassName === normalizedCode;
+      });
+      return {
+        name: item.name,
+        code: item.code,
+        datasetClassId: matched?.id,
+        motionMode:
+          normalizedName === 'person'
+            ? MotionMode.DYNAMIC_VARIABLE_SIZE
+            : MotionMode.STATIC,
+      };
+    });
+  };
+
   // 获取 Classes
   const getClasses = async () => {
     // 先置空，防止切换 modelId 时数据重复添加
@@ -267,7 +415,8 @@
       datasetType.value = res.datasetType;
       // 处理数据，添加 checked 属性
       if (res?.classes) {
-        classes = res.classes.map((item) => {
+        classes = res.classes.map((source) => {
+          const item: any = { ...source };
           item.checked = true;
           if (item.subClasses) {
             item.subClasses.forEach((child) => {
@@ -282,6 +431,28 @@
     formState.tagsList = JSON.parse(JSON.stringify(classes));
     // 初始值
     defaultFormState.tagsList = JSON.parse(JSON.stringify(classes));
+    formState.checkedResult = isSceneTrackingModel.value;
+    rebuildMappingRows();
+  };
+
+  const loadDatasetClasses = async () => {
+    if (!props.datasetId || !isSceneTrackingModel.value) {
+      datasetClasses.value = [];
+      formState.mappingRows = [];
+      return;
+    }
+    const response = await getDatasetClassApi({
+      datasetId: Number(props.datasetId),
+      pageNo: 1,
+      pageSize: 1000,
+    });
+    datasetClasses.value = (response.list || [])
+      .filter((item) => item.toolType === 'CUBOID')
+      .map((item) => ({
+        id: Number(item.id),
+        name: item.name,
+      }));
+    rebuildMappingRows();
   };
   // 监听 modelId 变化，获取 classes
   watch(
@@ -297,6 +468,20 @@
       getClasses();
     },
     { immediate: true },
+  );
+  watch(
+    () => props.datasetId,
+    () => {
+      loadDatasetClasses();
+    },
+    { immediate: true },
+  );
+  watch(
+    () => props.modelCode,
+    () => {
+      formState.checkedResult = isSceneTrackingModel.value;
+      loadDatasetClasses();
+    },
   );
   // 切换选择 classes
   const handleToggleSelect = (isCheck: boolean) => {
@@ -333,7 +518,7 @@
     if (!props.datasetId) {
       return;
     }
-    let res = await getModelDataCountApi(pa);
+    const res = (await getModelDataCountApi(pa)) as unknown as number;
     dataCount.value = res;
   });
 
@@ -344,7 +529,7 @@
   // 重置 formState
 
   const handleReset = () => {
-    formState.checkedResult = false;
+    formState.checkedResult = isSceneTrackingModel.value;
     formState.checkedData = false;
     formState.sliderValue = [0.5, 1];
     formState.tagsList = JSON.parse(JSON.stringify(classes));
@@ -353,6 +538,8 @@
     formState.isExcludeModelData = false;
     formState.splitType = '';
     formState.annotationStatus = '';
+    associationIou.value = 0.3;
+    rebuildMappingRows();
   };
 </script>
 <style lang="less" scoped>
@@ -375,6 +562,36 @@
       color: #57ccef;
       cursor: pointer;
       user-select: none;
+    }
+
+    .mapping-list {
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .mapping-header,
+    .mapping-row {
+      display: grid;
+      grid-template-columns: minmax(140px, 1fr) minmax(160px, 1fr) minmax(180px, 1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+    }
+
+    .mapping-header {
+      color: #666;
+      font-weight: 600;
+      background: #f7f8fa;
+    }
+
+    .mapping-row {
+      border-top: 1px solid #e5e7eb;
+
+      small {
+        display: block;
+        color: #999;
+      }
     }
 
     :deep(.ant-form) {

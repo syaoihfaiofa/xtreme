@@ -248,11 +248,13 @@ public class DatasetUseCase {
                     "inferenceConfig.modelId and classMappings are required");
         }
         if (!isPositive(config.getSyncDistance())
+                || !isPositive(config.getAssociationDistance())
                 || config.getMaxOutsideFrames() == null || config.getMaxOutsideFrames() < 0
                 || !isUnitInterval(config.getAssociationIou())
                 || !isUnitInterval(config.getMinConfidence())) {
             throw new UsecaseException(UsecaseCode.PARAM_ERROR,
-                    "Invalid inferenceConfig thresholds: syncDistance must be > 0, maxOutsideFrames >= 0, "
+                    "Invalid inferenceConfig thresholds: syncDistance and associationDistance must be > 0, "
+                            + "maxOutsideFrames >= 0, "
                             + "associationIou and minConfidence must be within [0, 1]");
         }
         Model model = modelDAO.getById(config.getModelId());

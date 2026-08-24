@@ -6,7 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Per-frame ego pose (x, y, z, yaw), sourced from a Scene's uploaded location.txt.
+ * Per-frame ego pose (x, y, z, yaw, roll, pitch), sourced from a Scene's uploaded location.txt.
  */
 @Data
 @Builder
@@ -23,4 +23,8 @@ public class SceneLocationBO {
     private Double posZ;
 
     private Double yaw;
+
+    private Double roll;
+
+    private Double pitch;
 }

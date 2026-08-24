@@ -1,31 +1,24 @@
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
-import MainRenderView from '../renderView/MainRenderView';
 import * as THREE from 'three';
+
+import MainRenderView from '../renderView/MainRenderView';
 import Action from './Action';
-import { Event } from '../config';
-import * as _ from 'lodash';
 
 export default class OrbitControlsAction extends Action {
     static actionName: string = 'orbit-control';
     renderView: MainRenderView;
     control: OrbitControls;
+
     constructor(renderView: MainRenderView) {
         super();
 
         this.renderView = renderView;
-
-        this.control = new OrbitControls(renderView.camera, renderView.renderer.domElement);
-        this.control.maxDistance = 1000;
-        this.control.minDistance = 10;
-        // this.control.autoRotate = false;
-        // this.control.update();
-
         this.controlChange = this.controlChange.bind(this);
-        this.control.addEventListener('change', this.controlChange);
-
-        // this.selectChange = this.selectChange.bind(this);
-        // this.transformChange = this.transformChange.bind(this);
-        // this.focus = _.throttle(this.focus.bind(this), 100);
+        this.control = this.createControl(
+            renderView.renderer.domElement,
+            new THREE.Vector3(),
+            true,
+        );
     }
 
     init(): void {
@@ -62,6 +55,14 @@ export default class OrbitControlsAction extends Action {
         this.control.enabled = enabled;
     }
 
+    useDrawingElement(domElement: HTMLElement): void {
+        this.replaceControl(domElement, true);
+    }
+
+    restoreRenderElement(): void {
+        this.replaceControl(this.renderView.renderer.domElement, false);
+    }
+
     controlChange() {
         this.renderView.render();
     }
@@ -69,5 +70,33 @@ export default class OrbitControlsAction extends Action {
     destroy(): void {
         this.control.removeEventListener('change', this.controlChange);
         this.control.dispose();
+    }
+
+    private createControl(
+        domElement: HTMLElement,
+        target: THREE.Vector3,
+        enabled: boolean,
+    ): OrbitControls {
+        const control = new OrbitControls(this.renderView.camera, domElement);
+        control.maxDistance = 1000;
+        control.minDistance = 10;
+        control.target.copy(target);
+        control.enabled = enabled;
+        control.addEventListener('change', this.controlChange);
+        return control;
+    }
+
+    private replaceControl(domElement: HTMLElement, drawing: boolean): void {
+        const target = this.control.target.clone();
+        const enabled = this.control.enabled;
+        this.control.removeEventListener('change', this.controlChange);
+        this.control.dispose();
+        this.control = this.createControl(domElement, target, enabled);
+        if (drawing) {
+            this.control.mouseButtons.LEFT = -1 as THREE.MOUSE;
+            this.control.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE;
+            this.control.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+        }
+        this.control.update();
     }
 }
