@@ -1,0 +1,15 @@
+car: 1.5
+bus: 3.2
+truck: 3.5
+tricycle: 1.6
+bike: 1.2
+parkinglock_locked: 0.5
+parkinglock_unlocked: 0.3
+board_no_parking: 1.5
+handcart: 1.0
+person: 1.7
+pillar: 2.8
+cone: 0.7
+pole: 3.0
+barrier: 1.0
+concrete_ball: 0.5

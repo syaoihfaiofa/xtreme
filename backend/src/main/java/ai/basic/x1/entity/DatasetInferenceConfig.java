@@ -27,6 +27,9 @@ public class DatasetInferenceConfig {
     private Double associationIou = 0.3;
 
     @Builder.Default
+    private Double associationDistance = 0.5;
+
+    @Builder.Default
     private Double minConfidence = 0.5;
 
     @Builder.Default

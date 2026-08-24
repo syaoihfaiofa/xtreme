@@ -17,6 +17,9 @@ ORDER=(
   "V19__Add_scene_location_table.sql"
   "V20__Add_parking_slot_tool_type.sql"
   "V21__Add_curb_wall_tool_type.sql"
+  "V22__Update_bevfusion_lidar_camera_model.sql"
+  "V23__Add_image_keypoint_lifted_detection_model.sql"
+  "V24__Add_image_keypoint_lifted_polyline_classes.sql"
 )
 
 for migration in "${ORDER[@]}"; do

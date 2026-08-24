@@ -105,6 +105,7 @@
     scenario: '',
     classes: [],
     url: '',
+    modelCode: undefined,
   });
   const headerData: IHeader = reactive({
     type: '',
@@ -128,6 +129,7 @@
     overviewData.scenario = res.scenario;
     overviewData.classes = res.classes ?? [];
     overviewData.url = res.url ?? '';
+    overviewData.modelCode = res.modelCode;
 
     headerData.type = res?.datasetType;
     headerData.name = res.name;

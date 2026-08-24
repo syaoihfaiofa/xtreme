@@ -1,5 +1,6 @@
 package ai.basic.x1.usecase;
 
+import ai.basic.x1.adapter.api.job.converter.ImageKeypointLiftedModelReqConverter;
 import ai.basic.x1.adapter.api.job.converter.PointCloudDetectionModelReqConverter;
 import ai.basic.x1.adapter.dto.ApiResult;
 import ai.basic.x1.adapter.port.dao.DataAnnotationRecordDAO;
@@ -16,8 +17,10 @@ import ai.basic.x1.adapter.port.dao.mybatis.model.Dataset;
 import ai.basic.x1.adapter.port.dao.mybatis.model.Model;
 import ai.basic.x1.adapter.port.dao.mybatis.model.SceneInferenceRun;
 import ai.basic.x1.adapter.port.dao.mybatis.model.SceneLocation;
+import ai.basic.x1.adapter.port.rpc.ImageKeypointLiftedDetectionHttpCaller;
 import ai.basic.x1.adapter.port.rpc.PointCloudDetectionModelHttpCaller;
 import ai.basic.x1.adapter.port.rpc.SceneInferenceTrackingHttpCaller;
+import ai.basic.x1.adapter.port.rpc.dto.ImageKeypointLiftedDetectionRespDTO;
 import ai.basic.x1.adapter.port.rpc.dto.PointCloudDetectionObject;
 import ai.basic.x1.adapter.port.rpc.dto.PointCloudDetectionRespDTO;
 import ai.basic.x1.adapter.port.rpc.dto.SceneInferenceTrackingDTO;
@@ -40,6 +43,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -90,6 +94,9 @@ public class SceneInferenceUseCase {
 
     @Autowired
     private PointCloudDetectionModelHttpCaller detectionModelHttpCaller;
+
+    @Autowired
+    private ImageKeypointLiftedDetectionHttpCaller keypointLiftedDetectionHttpCaller;
 
     @Autowired
     private SceneInferenceTrackingHttpCaller trackingHttpCaller;
@@ -149,6 +156,218 @@ public class SceneInferenceUseCase {
         return run;
     }
 
+    public void runForModelRun(
+            Long modelRunRecordId,
+            Long datasetId,
+            Long sceneId,
+            Model model,
+            DatasetInferenceConfig config) {
+        if (model == null || !supportsSceneTracking(model.getModelCode())
+                || model.getUrl() == null || model.getUrl().isBlank()) {
+            throw new UsecaseException("Model does not support scene tracking: modelId="
+                    + (model == null ? null : model.getId()) + ", modelCode="
+                    + (model == null ? null : model.getModelCode()));
+        }
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sceneId)
+                .eq(DataInfo::getIsDeleted, false)
+                .orderByAsc(DataInfo::getOrderName)
+                .orderByAsc(DataInfo::getId));
+        if (frames.isEmpty()) {
+            throw new UsecaseException("Scene has no frames: datasetId=" + datasetId + ", sceneId=" + sceneId);
+        }
+        Map<Long, SceneLocation> poses = loadPoses(modelRunRecordId, frames);
+        Map<String, DatasetInferenceConfig.ClassMapping> mappings = config.getClassMappings()
+                .stream().collect(Collectors.toMap(
+                        DatasetInferenceConfig.ClassMapping::getModelClassCode,
+                        mapping -> mapping));
+        List<SceneInferenceTrackingDTO.Frame> trackingFrames = new ArrayList<>(frames.size());
+        for (int index = 0; index < frames.size(); index++) {
+            DataInfo frame = frames.get(index);
+            List<SceneInferenceTrackingDTO.Object> objects = detectForModelRun(
+                    modelRunRecordId, datasetId, model, frame, index, mappings, config.getMinConfidence());
+            SceneLocation pose = poses.get(frame.getId());
+            trackingFrames.add(SceneInferenceTrackingDTO.Frame.builder()
+                    .dataId(frame.getId())
+                    .frameIndex(index)
+                    .pose(SceneInferenceTrackingDTO.Pose.builder()
+                            .x(pose.getPosX()).y(pose.getPosY()).z(pose.getPosZ()).yaw(pose.getYaw()).build())
+                    .objects(objects)
+                    .build());
+        }
+        SceneInferenceTrackingDTO.Request request = SceneInferenceTrackingDTO.Request.builder()
+                .config(SceneInferenceTrackingDTO.Config.builder()
+                        .iouThreshold(config.getAssociationIou())
+                        .distanceThreshold(config.getAssociationDistance())
+                        .syncDistance(config.getSyncDistance())
+                        .maxOutsideFrames(config.getMaxOutsideFrames())
+                        .build())
+                .frames(trackingFrames)
+                .build();
+        SceneInferenceTrackingDTO.Response tracked = trackingHttpCaller.associate(request);
+        enrichTrackedFrames(modelRunRecordId, trackingFrames, tracked);
+        List<SceneInferenceTrackingDTO.Frame> extrapolated = StaticTrackExtrapolation.apply(
+                tracked.getFrames(), config.getSyncDistance());
+        SceneInferenceRun run = SceneInferenceRun.builder()
+                .datasetId(datasetId)
+                .sceneId(sceneId)
+                .configSnapshot(config)
+                .totalFrames(frames.size())
+                .build();
+        List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        finalizer.replaceModelRunAnnotations(
+                run,
+                frameIds,
+                SceneInferenceTrackingDTO.Response.builder().frames(extrapolated).build(),
+                modelRunRecordId);
+    }
+
+    static boolean supportsSceneTracking(ModelCodeEnum modelCode) {
+        return modelCode == ModelCodeEnum.LIDAR_DETECTION
+                || modelCode == ModelCodeEnum.IMAGE_KEYPOINT_LIFTED_DETECTION;
+    }
+
+    private List<SceneInferenceTrackingDTO.Object> detectForModelRun(
+            Long modelRunRecordId,
+            Long datasetId,
+            Model model,
+            DataInfo frame,
+            int frameIndex,
+            Map<String, DatasetInferenceConfig.ClassMapping> mappings,
+            double minConfidence) {
+        ModelMessageBO message = ModelMessageBO.builder()
+                .datasetId(datasetId)
+                .dataId(frame.getId())
+                .modelId(model.getId())
+                .modelCode(model.getModelCode())
+                .modelVersion(model.getVersion())
+                .url(model.getUrl())
+                .dataInfo(dataInfoUseCase.findById(frame.getId()))
+                .build();
+        if (model.getModelCode() == ModelCodeEnum.LIDAR_DETECTION) {
+            PointCloudDetectionRespDTO frameResult = requirePointCloudFrameResult(
+                    callDetectionWithRetry(message, modelRunRecordId),
+                    modelRunRecordId,
+                    frame.getId());
+            return SceneInferenceDetectionAdapter.fromPointCloud(
+                    modelRunRecordId,
+                    frameIndex,
+                    frame.getId(),
+                    frameResult.getObjects(),
+                    mappings,
+                    minConfidence);
+        }
+        ImageKeypointLiftedDetectionRespDTO frameResult = requireKeypointFrameResult(
+                callKeypointLiftedWithRetry(message, modelRunRecordId),
+                modelRunRecordId,
+                frame.getId());
+        return SceneInferenceDetectionAdapter.fromKeypointLifted(
+                modelRunRecordId,
+                frameIndex,
+                frame.getId(),
+                frameResult.getObjects(),
+                mappings,
+                minConfidence);
+    }
+
+    private static PointCloudDetectionRespDTO requirePointCloudFrameResult(
+            ApiResult<List<PointCloudDetectionRespDTO>> result,
+            Long runId,
+            Long dataId) {
+        if (result == null || result.getCode() != UsecaseCode.OK || CollUtil.isEmpty(result.getData())) {
+            throw new UsecaseException("Detection model returned an invalid result: runId=" + runId
+                    + ", dataId=" + dataId + ", code=" + (result == null ? null : result.getCode())
+                    + ", message=" + (result == null ? null : result.getMessage()));
+        }
+        PointCloudDetectionRespDTO frameResult = result.getData().stream()
+                .filter(item -> dataId.equals(item.getId()))
+                .findFirst()
+                .orElseThrow(() -> new UsecaseException(
+                        "Detection response is missing frame: runId=" + runId + ", dataId=" + dataId));
+        if (!UsecaseCode.OK.getCode().equals(frameResult.getCode())) {
+            throw new UsecaseException("Detection failed for frame: runId=" + runId
+                    + ", dataId=" + dataId + ", code=" + frameResult.getCode()
+                    + ", message=" + frameResult.getMessage());
+        }
+        return frameResult;
+    }
+
+    private static ImageKeypointLiftedDetectionRespDTO requireKeypointFrameResult(
+            ApiResult<List<ImageKeypointLiftedDetectionRespDTO>> result,
+            Long runId,
+            Long dataId) {
+        if (result == null || result.getCode() != UsecaseCode.OK || CollUtil.isEmpty(result.getData())) {
+            throw new UsecaseException("Keypoint-lifted model returned an invalid result: runId=" + runId
+                    + ", dataId=" + dataId + ", code=" + (result == null ? null : result.getCode())
+                    + ", message=" + (result == null ? null : result.getMessage()));
+        }
+        ImageKeypointLiftedDetectionRespDTO frameResult = result.getData().stream()
+                .filter(item -> dataId.equals(item.getId()))
+                .findFirst()
+                .orElseThrow(() -> new UsecaseException(
+                        "Keypoint-lifted response is missing frame: runId=" + runId + ", dataId=" + dataId));
+        if (!UsecaseCode.OK.getCode().equals(frameResult.getCode())) {
+            throw new UsecaseException("Keypoint-lifted detection failed for frame: runId=" + runId
+                    + ", dataId=" + dataId + ", code=" + frameResult.getCode()
+                    + ", message=" + frameResult.getMessage());
+        }
+        return frameResult;
+    }
+
+    private ApiResult<List<ImageKeypointLiftedDetectionRespDTO>> callKeypointLiftedWithRetry(
+            ModelMessageBO message,
+            Long runId) {
+        Exception lastError = null;
+        for (int attempt = 1; attempt <= MAX_EXTERNAL_ATTEMPTS; attempt++) {
+            try {
+                return keypointLiftedDetectionHttpCaller.call(
+                        ImageKeypointLiftedModelReqConverter.convert(message),
+                        message.getUrl());
+            } catch (IOException | RuntimeException exception) {
+                lastError = exception;
+                log.warn("Scene inference keypoint-lifted call failed: runId={}, dataId={}, modelId={}, "
+                                + "attempt={}, maxAttempts={}, url={}, error={}",
+                        runId, message.getDataId(), message.getModelId(), attempt, MAX_EXTERNAL_ATTEMPTS,
+                        message.getUrl(), exception.getMessage());
+                if (attempt < MAX_EXTERNAL_ATTEMPTS) {
+                    sleepBeforeRetry(INITIAL_BACKOFF_MS << (attempt - 1));
+                }
+            }
+        }
+        throw new UsecaseException("Keypoint-lifted model failed after retries: runId=" + runId
+                + ", dataId=" + message.getDataId() + ", modelId=" + message.getModelId()
+                + ", url=" + message.getUrl() + ", attempts=" + MAX_EXTERNAL_ATTEMPTS
+                + ", error=" + (lastError == null ? null : lastError.getMessage()));
+    }
+
+    private static void enrichTrackedFrames(
+            Long runId,
+            List<SceneInferenceTrackingDTO.Frame> inputFrames,
+            SceneInferenceTrackingDTO.Response response) {
+        if (response == null || response.getFrames() == null) {
+            throw new UsecaseException("Tracking response frames are missing: runId=" + runId);
+        }
+        Map<Long, SceneInferenceTrackingDTO.Frame> responseByDataId = response.getFrames().stream()
+                .filter(frame -> frame != null && frame.getDataId() != null)
+                .collect(Collectors.toMap(
+                        SceneInferenceTrackingDTO.Frame::getDataId,
+                        frame -> frame,
+                        (first, ignored) -> first));
+        List<SceneInferenceTrackingDTO.Frame> enriched = new ArrayList<>(inputFrames.size());
+        for (SceneInferenceTrackingDTO.Frame input : inputFrames) {
+            SceneInferenceTrackingDTO.Frame tracked = responseByDataId.get(input.getDataId());
+            enriched.add(SceneInferenceTrackingDTO.Frame.builder()
+                    .dataId(input.getDataId())
+                    .frameIndex(input.getFrameIndex())
+                    .pose(input.getPose())
+                    .objects(tracked == null || tracked.getObjects() == null
+                            ? new ArrayList<>()
+                            : tracked.getObjects())
+                    .build());
+        }
+        response.setFrames(enriched);
+    }
+
     private void execute(Long runId) {
         SceneInferenceRun run = sceneInferenceRunDAO.getById(runId);
         if (run == null) {
@@ -188,6 +407,7 @@ public class SceneInferenceUseCase {
             SceneInferenceTrackingDTO.Request request = SceneInferenceTrackingDTO.Request.builder()
                     .config(SceneInferenceTrackingDTO.Config.builder()
                             .iouThreshold(config.getAssociationIou())
+                            .distanceThreshold(config.getAssociationDistance())
                             .syncDistance(config.getSyncDistance())
                             .maxOutsideFrames(config.getMaxOutsideFrames())
                             .build())
@@ -379,6 +599,9 @@ public class SceneInferenceUseCase {
         if (config.getAssociationIou() == null) {
             config.setAssociationIou(0.3);
         }
+        if (config.getAssociationDistance() == null) {
+            config.setAssociationDistance(0.5);
+        }
         if (config.getMinConfidence() == null) {
             config.setMinConfidence(0.5);
         }
@@ -391,6 +614,7 @@ public class SceneInferenceUseCase {
         canonical.put("syncDistance", config.getSyncDistance());
         canonical.put("maxOutsideFrames", config.getMaxOutsideFrames());
         canonical.put("associationIou", config.getAssociationIou());
+        canonical.put("associationDistance", config.getAssociationDistance());
         canonical.put("minConfidence", config.getMinConfidence());
         canonical.put("classMappings", config.getClassMappings());
         try {

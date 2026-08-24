@@ -2,6 +2,7 @@ package ai.basic.x1.usecase;
 
 import ai.basic.x1.adapter.api.config.ImageDatasetInitialInfo;
 import ai.basic.x1.adapter.api.config.PointCloudDatasetInitialInfo;
+import ai.basic.x1.adapter.api.job.converter.ImageKeypointLiftedModelReqConverter;
 import ai.basic.x1.adapter.api.job.converter.ModelCocoRequestConverter;
 import ai.basic.x1.adapter.api.job.converter.PointCloudDetectionModelReqConverter;
 import ai.basic.x1.adapter.api.job.converter.PointCloudTrackingModelReqConverter;
@@ -15,10 +16,13 @@ import ai.basic.x1.adapter.port.dao.redis.ModelSerialNoCountDAO;
 import ai.basic.x1.adapter.port.dao.redis.ModelSerialNoIncrDAO;
 import ai.basic.x1.adapter.port.rpc.dto.PointCloudDetectionRespDTO;
 import ai.basic.x1.entity.*;
+import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.entity.enums.DatasetTypeEnum;
+import ai.basic.x1.entity.enums.ItemTypeEnum;
 import ai.basic.x1.entity.enums.ModelCodeEnum;
 import ai.basic.x1.entity.enums.ModelDatasetTypeEnum;
 import ai.basic.x1.entity.enums.RunStatusEnum;
+import ai.basic.x1.entity.enums.ToolTypeEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
 import ai.basic.x1.usecase.exception.UsecaseException;
 import ai.basic.x1.util.Constants;
@@ -35,6 +39,8 @@ import cn.hutool.core.util.IdUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.*;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.alibaba.ttl.TtlRunnable;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -81,9 +87,18 @@ public class ModelUseCase {
     private DatasetDAO datasetDAO;
 
     @Autowired
+    private DatasetClassDAO datasetClassDAO;
+
+    @Autowired
     private ModelRunRecordDAO modelRunRecordDAO;
     @Autowired
     private ModelDatasetResultDAO modelDatasetResultDAO;
+
+    @Autowired
+    private DataInfoDAO dataInfoDAO;
+
+    @Autowired
+    private DataAnnotationObjectDAO dataAnnotationObjectDAO;
 
     @Autowired
     private ModelSerialNoCountDAO modelSerialNoCountDAO;
@@ -92,6 +107,9 @@ public class ModelUseCase {
 
     @Autowired
     private DataInfoUseCase dataInfoUseCase;
+
+    @Autowired
+    private SceneInferenceUseCase sceneInferenceUseCase;
 
     @Autowired
     private PointCloudDatasetInitialInfo pointCloudDatasetInitialInfo;
@@ -215,6 +233,16 @@ public class ModelUseCase {
         if (ObjectUtil.isNull(dataset)) {
             throw new UsecaseException(UsecaseCode.DATASET__NOT_EXIST);
         }
+        Model model = modelDAO.getById(modelRunBO.getModelId());
+        if (ObjectUtil.isNull(model)) {
+            throw new UsecaseException(UsecaseCode.DATASET__MODEL_NOT_EXIST);
+        }
+        checkDatasetType(dataset.getType(), model.getDatasetType());
+        if (SceneInferenceUseCase.supportsSceneTracking(model.getModelCode())
+                && ModelRunSceneTrackingParamBO.hasClassMappings(modelRunBO.getResultFilterParam())) {
+            startSceneTrackingModelRun(modelRunBO, dataset, model);
+            return;
+        }
         var modelRunFilterDataBO = modelRunBO.getDataFilterParam();
         var totalDataNum = dataInfoUseCase.findModelRunDataCount(modelRunFilterDataBO, modelRunBO.getDatasetId(), modelRunBO.getModelId());
         totalDataNum = (long) Math.ceil(BigDecimal.valueOf(totalDataNum).multiply(BigDecimal.valueOf(modelRunFilterDataBO.getDataCountRatio())).divide(BigDecimal.valueOf(100)).doubleValue());
@@ -227,7 +255,6 @@ public class ModelUseCase {
         }
         var dataIds = dataInfoUseCase.findModelRunDataIds(modelRunBO.getDataFilterParam(),
                 modelRunBO.getDatasetId(), modelRunBO.getModelId(), totalDataNum);
-        checkDatasetType(dataset.getType(), modelBO.getDatasetType());
         ModelRunRecord modelRunRecord = ModelRunRecord.builder()
                 .modelId(modelRunBO.getModelId())
                 .modelVersion(modelBO.getVersion())
@@ -240,6 +267,198 @@ public class ModelUseCase {
                 .dataCount(totalDataNum).build();
         modelRunRecordDAO.save(modelRunRecord);
         this.sendModelMessageAsync(modelRunRecord, modelBO, totalDataNum, dataIds);
+    }
+
+    private void startSceneTrackingModelRun(ModelRunBO modelRunBO, Dataset dataset, Model model) {
+        List<Long> sceneIds = requireSceneIds(modelRunBO.getDataFilterParam());
+        long totalFrames = validateScenesAndCountFrames(dataset.getId(), sceneIds);
+        ModelRunSceneTrackingParamBO trackingParam =
+                ModelRunSceneTrackingParamBO.parse(modelRunBO.getResultFilterParam());
+        resolveSceneTrackingMappings(dataset.getId(), model.getId(), trackingParam);
+        JSONObject resolvedResultFilterParam = JSONUtil.parseObj(trackingParam);
+        ModelRunRecord modelRunRecord = ModelRunRecord.builder()
+                .modelId(model.getId())
+                .modelVersion(model.getVersion())
+                .modelSerialNo(IdUtil.getSnowflakeNextId())
+                .dataFilterParam(DefaultConverter.convert(
+                        modelRunBO.getDataFilterParam(), ModelRunFilterData.class))
+                .runNo(DateUtil.format(
+                        OffsetDateTime.now().toLocalDateTime(), DatePattern.PURE_DATETIME_PATTERN))
+                .datasetId(dataset.getId())
+                .status(RunStatusEnum.STARTED)
+                .resultFilterParam(resolvedResultFilterParam)
+                .dataCount(totalFrames)
+                .build();
+        modelRunRecordDAO.save(modelRunRecord);
+        DatasetInferenceConfig config = trackingParam.toInferenceConfig(model.getId());
+        executorService.execute(() -> executeSceneTrackingModelRun(
+                modelRunRecord, model, sceneIds, config));
+    }
+
+    private void resolveSceneTrackingMappings(
+            Long datasetId,
+            Long modelId,
+            ModelRunSceneTrackingParamBO trackingParam) {
+        List<DatasetClass> datasetClasses = datasetClassDAO.list(
+                Wrappers.lambdaQuery(DatasetClass.class)
+                        .eq(DatasetClass::getDatasetId, datasetId));
+        Map<Long, DatasetClass> datasetClassById = datasetClasses.stream()
+                .collect(Collectors.toMap(DatasetClass::getId, datasetClass -> datasetClass));
+        Map<String, DatasetClass> cuboidClassByName = datasetClasses.stream()
+                .filter(datasetClass -> datasetClass.getToolType() == ToolTypeEnum.CUBOID)
+                .collect(Collectors.toMap(
+                        datasetClass -> normalizeClassName(datasetClass.getName()),
+                        datasetClass -> datasetClass,
+                        (first, ignored) -> first));
+        Map<String, ModelClass> modelClassByCode = modelClassDAO.list(
+                        Wrappers.lambdaQuery(ModelClass.class)
+                                .eq(ModelClass::getModelId, modelId))
+                .stream()
+                .collect(Collectors.toMap(
+                        modelClass -> normalizeClassName(modelClass.getCode()),
+                        modelClass -> modelClass,
+                        (first, ignored) -> first));
+
+        for (DatasetInferenceConfig.ClassMapping mapping : trackingParam.getClassMappings()) {
+            if (mapping.getDatasetClassId() != null) {
+                DatasetClass selected = datasetClassById.get(mapping.getDatasetClassId());
+                if (selected == null || selected.getToolType() != ToolTypeEnum.CUBOID) {
+                    throw new UsecaseException(PARAM_ERROR,
+                            "Mapped dataset class must be a CUBOID in the selected dataset: datasetId="
+                                    + datasetId + ", datasetClassId=" + mapping.getDatasetClassId()
+                                    + ", modelClassCode=" + mapping.getModelClassCode());
+                }
+                continue;
+            }
+            String normalizedCode = normalizeClassName(mapping.getModelClassCode());
+            ModelClass modelClass = modelClassByCode.get(normalizedCode);
+            String className = modelClass == null || StrUtil.isBlank(modelClass.getName())
+                    ? mapping.getModelClassCode() : modelClass.getName();
+            DatasetClass datasetClass = cuboidClassByName.get(normalizeClassName(className));
+            if (datasetClass == null) {
+                datasetClass = cuboidClassByName.get(normalizedCode);
+            }
+            if (datasetClass == null) {
+                datasetClass = createCuboidDatasetClass(datasetId, className);
+                cuboidClassByName.put(normalizeClassName(datasetClass.getName()), datasetClass);
+            }
+            mapping.setDatasetClassId(datasetClass.getId());
+        }
+    }
+
+    private DatasetClass createCuboidDatasetClass(Long datasetId, String className) {
+        DatasetClass datasetClass = DatasetClass.builder()
+                .datasetId(datasetId)
+                .name(className)
+                .color(colorForClass(className))
+                .toolType(ToolTypeEnum.CUBOID)
+                .toolTypeOptions(JSONUtil.createObj()
+                        .set("width", Arrays.asList(null, null))
+                        .set("height", Arrays.asList(null, null))
+                        .set("length", Arrays.asList(null, null))
+                        .set("isStandard", false)
+                        .set("isConstraints", false))
+                .attributes(new JSONArray())
+                .build();
+        try {
+            datasetClassDAO.save(datasetClass);
+            return datasetClass;
+        } catch (DuplicateKeyException exception) {
+            DatasetClass existing = datasetClassDAO.getOne(
+                    Wrappers.lambdaQuery(DatasetClass.class)
+                            .eq(DatasetClass::getDatasetId, datasetId)
+                            .eq(DatasetClass::getName, className)
+                            .eq(DatasetClass::getToolType, ToolTypeEnum.CUBOID));
+            if (existing != null) {
+                return existing;
+            }
+            throw exception;
+        }
+    }
+
+    private static String normalizeClassName(String value) {
+        return StrUtil.blankToDefault(value, "").trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static String colorForClass(String className) {
+        int rgb = Math.floorMod(Objects.requireNonNull(className).hashCode(), 0x1000000);
+        return String.format(Locale.ROOT, "#%06x", rgb);
+    }
+
+    private long validateScenesAndCountFrames(Long datasetId, List<Long> sceneIds) {
+        long totalFrames = 0L;
+        for (Long sceneId : sceneIds) {
+            DataInfo scene = dataInfoDAO.getById(sceneId);
+            if (scene == null || scene.getType() != ItemTypeEnum.SCENE
+                    || !datasetId.equals(scene.getDatasetId())
+                    || Boolean.TRUE.equals(scene.getIsDeleted())) {
+                throw new UsecaseException(PARAM_ERROR,
+                        "Invalid scene selection: datasetId=" + datasetId + ", sceneId=" + sceneId);
+            }
+            totalFrames += dataInfoDAO.count(Wrappers.lambdaQuery(DataInfo.class)
+                    .eq(DataInfo::getParentId, sceneId)
+                    .eq(DataInfo::getIsDeleted, false));
+        }
+        if (totalFrames == 0) {
+            throw new UsecaseException(UsecaseCode.DATASET_DATA_SCENARIO_NOT_FOUND);
+        }
+        return totalFrames;
+    }
+
+    private void executeSceneTrackingModelRun(
+            ModelRunRecord modelRunRecord,
+            Model model,
+            List<Long> sceneIds,
+            DatasetInferenceConfig config) {
+        modelRunRecordDAO.update(Wrappers.lambdaUpdate(ModelRunRecord.class)
+                .eq(ModelRunRecord::getId, modelRunRecord.getId())
+                .set(ModelRunRecord::getStatus, RunStatusEnum.RUNNING)
+                .set(ModelRunRecord::getErrorReason, null));
+        int successCount = 0;
+        List<String> failures = new ArrayList<>();
+        for (Long sceneId : sceneIds) {
+            try {
+                sceneInferenceUseCase.runForModelRun(
+                        modelRunRecord.getId(),
+                        modelRunRecord.getDatasetId(),
+                        sceneId,
+                        model,
+                        config);
+                successCount++;
+            } catch (RuntimeException exception) {
+                failures.add(sceneId + ":" + exception.getClass().getSimpleName()
+                        + ": " + exception.getMessage());
+                log.error("Scene tracking Model Run failed: runRecordId={}, datasetId={}, sceneId={}, modelId={}",
+                        modelRunRecord.getId(), modelRunRecord.getDatasetId(), sceneId, model.getId(), exception);
+            }
+        }
+        RunStatusEnum status = summarizeSceneRunStatus(successCount, failures.size());
+        String errorReason = failures.isEmpty() ? null : JSONUtil.toJsonStr(failures);
+        if (errorReason != null && errorReason.length() > 8000) {
+            errorReason = errorReason.substring(0, 8000);
+        }
+        modelRunRecordDAO.update(Wrappers.lambdaUpdate(ModelRunRecord.class)
+                .eq(ModelRunRecord::getId, modelRunRecord.getId())
+                .set(ModelRunRecord::getStatus, status)
+                .set(ModelRunRecord::getErrorReason, errorReason));
+    }
+
+    static List<Long> requireSceneIds(ModelRunFilterDataBO filter) {
+        if (filter == null || CollUtil.isEmpty(filter.getSceneIds())) {
+            throw new UsecaseException(PARAM_ERROR,
+                    "sceneIds cannot be empty for a scene tracking Model Run");
+        }
+        return new ArrayList<>(new LinkedHashSet<>(filter.getSceneIds()));
+    }
+
+    static RunStatusEnum summarizeSceneRunStatus(int successCount, int failureCount) {
+        if (failureCount == 0) {
+            return RunStatusEnum.SUCCESS;
+        }
+        if (successCount == 0) {
+            return RunStatusEnum.FAILURE;
+        }
+        return RunStatusEnum.SUCCESS_WITH_ERROR;
     }
 
     private void checkDatasetType(DatasetTypeEnum datasetType, ModelDatasetTypeEnum modelDatasetType) {
@@ -257,6 +476,10 @@ public class ModelUseCase {
         ModelRunRecord modelRunRecord = modelRunRecordDAO.getById(modelRunRecordBO.getId());
         if (ObjectUtil.isNull(modelRunRecord)) {
             throw new UsecaseException(UsecaseCode.DATASET__MODEL_RUN_RECORD_NOT_EXIST);
+        }
+        if (ModelRunSceneTrackingParamBO.hasClassMappings(modelRunRecord.getResultFilterParam())) {
+            reRunSceneTracking(modelRunRecord);
+            return;
         }
         var queryWrapper = Wrappers.lambdaQuery(ModelDatasetResult.class);
         queryWrapper.eq(ModelDatasetResult::getRunRecordId, modelRunRecordBO.getId());
@@ -289,6 +512,43 @@ public class ModelUseCase {
         }
     }
 
+    private void reRunSceneTracking(ModelRunRecord modelRunRecord) {
+        Model model = modelDAO.getById(modelRunRecord.getModelId());
+        if (model == null || !SceneInferenceUseCase.supportsSceneTracking(model.getModelCode())) {
+            throw new UsecaseException(UsecaseCode.DATASET__MODEL_NOT_EXIST);
+        }
+        if (StrUtil.isEmpty(model.getUrl())) {
+            throw new UsecaseException(PARAM_ERROR, "Please first configure the model URL.");
+        }
+        ModelRunFilterDataBO filter = DefaultConverter.convert(
+                modelRunRecord.getDataFilterParam(), ModelRunFilterDataBO.class);
+        List<Long> sceneIds = requireSceneIds(filter);
+        long totalFrames = validateScenesAndCountFrames(modelRunRecord.getDatasetId(), sceneIds);
+        boolean updated = modelRunRecordDAO.update(
+                ModelRunRecord.builder().build(),
+                Wrappers.lambdaUpdate(ModelRunRecord.class)
+                        .set(ModelRunRecord::getDataCount, totalFrames)
+                        .set(ModelRunRecord::getStatus, RunStatusEnum.STARTED)
+                        .set(ModelRunRecord::getErrorReason, null)
+                        .eq(ModelRunRecord::getId, modelRunRecord.getId())
+                        .in(ModelRunRecord::getStatus,
+                                RunStatusEnum.SUCCESS,
+                                RunStatusEnum.FAILURE,
+                                RunStatusEnum.SUCCESS_WITH_ERROR));
+        if (!updated) {
+            throw new UsecaseException(UsecaseCode.DATASET__MODEL_RERUN_ERROR);
+        }
+        dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.MODEL)
+                .eq(DataAnnotationObject::getSourceId, modelRunRecord.getId()));
+        DatasetInferenceConfig config = ModelRunSceneTrackingParamBO
+                .parse(modelRunRecord.getResultFilterParam())
+                .toInferenceConfig(model.getId());
+        modelRunRecord.setDataCount(totalFrames);
+        executorService.execute(() -> executeSceneTrackingModelRun(
+                modelRunRecord, model, sceneIds, config));
+    }
+
     public ModelResponseBO testModelUrlConnection(Long modelId, String url) {
         ModelBO modelBO = getModelById(modelId);
         if (ObjectUtil.isNull(modelBO)) {
@@ -318,6 +578,11 @@ public class ModelUseCase {
                                 .build()))
                         .build();
                 requestBody = JSONUtil.toJsonStr(PointCloudTrackingModelReqConverter.buildRequestParam(trackingMessage, dataInfoBO));
+                break;
+            case IMAGE_KEYPOINT_LIFTED_DETECTION:
+                dataInfoBO = dataInfoUseCase.getInitDataInfoBO(pointCloudDatasetInitialInfo);
+                requestBody = JSONUtil.toJsonStr(ImageKeypointLiftedModelReqConverter.convert(
+                        ModelMessageBO.builder().dataInfo(dataInfoBO).build()));
                 break;
             default:
         }
@@ -507,6 +772,7 @@ public class ModelUseCase {
             case IMAGE_DETECTION:
             case LIDAR_DETECTION:
             case LIDAR_TRACKING:
+            case IMAGE_KEYPOINT_LIFTED_DETECTION:
                 var missFiled = new ArrayList<>();
                 var content = modelResponseBO.getContent();
                 if (!content.containsKey(Constants.MODEL_RUN_RESULT_CODE)) {

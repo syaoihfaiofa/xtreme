@@ -2,12 +2,15 @@ package ai.basic.x1.usecase;
 
 import ai.basic.x1.entity.DatasetInferenceConfig;
 import ai.basic.x1.entity.enums.InferenceMotionModeEnum;
+import ai.basic.x1.entity.enums.ModelCodeEnum;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SceneInferenceUseCaseTest {
 
@@ -30,6 +33,14 @@ class SceneInferenceUseCaseTest {
 
         assertEquals(SceneInferenceUseCase.configHash(first), SceneInferenceUseCase.configHash(same));
         assertNotEquals(SceneInferenceUseCase.configHash(first), SceneInferenceUseCase.configHash(changed));
+    }
+
+    @Test
+    void test_supportsSceneTracking_allowsThreeDimensionalDetectionModels() {
+        assertTrue(SceneInferenceUseCase.supportsSceneTracking(ModelCodeEnum.LIDAR_DETECTION));
+        assertTrue(SceneInferenceUseCase.supportsSceneTracking(
+                ModelCodeEnum.IMAGE_KEYPOINT_LIFTED_DETECTION));
+        assertFalse(SceneInferenceUseCase.supportsSceneTracking(ModelCodeEnum.IMAGE_DETECTION));
     }
 
     private static DatasetInferenceConfig config(Long datasetClassId) {

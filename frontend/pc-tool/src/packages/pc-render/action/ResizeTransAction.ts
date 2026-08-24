@@ -98,7 +98,8 @@ export default class ResizeTransAction extends Action {
             } else if (!this.editConfig.transform || !object.editConfig.resize) return;
 
             this.renderView.needFit = false;
-            const { left, right } = this.renderView.camera;
+            const camera = this.renderView.camera;
+            const { left, right } = camera;
             const scaleSize = (right - left) / this.renderView.container.clientWidth;
             const { scale } = object;
 
@@ -109,8 +110,9 @@ export default class ResizeTransAction extends Action {
                 -(center.y / container.clientHeight) * 2 + 1,
             );
 
-            _position.set(center.x, center.y, 0);
-            _position.unproject(this.renderView.camera);
+            const projectedDepth = object.getWorldPosition(_position).project(camera).z;
+            _position.set(center.x, center.y, projectedDepth).unproject(camera);
+            object.parent?.worldToLocal(_position);
             _scale.set(size.x, size.y, 0);
             this.translateToLocalV(_scale);
             let axis = this.renderView.axis;
@@ -140,8 +142,12 @@ export default class ResizeTransAction extends Action {
             );
         };
         const onEnd = (event: IRectEvent) => {
-            this.updateEnd();
             this.renderView.needFit = true;
+            if (event.info === 'bg') {
+                this.render();
+            } else {
+                this.updateEnd();
+            }
             this.onResizeEnd(event);
         };
         this.rectTool.addEventListener('start', this.onResizeStart);

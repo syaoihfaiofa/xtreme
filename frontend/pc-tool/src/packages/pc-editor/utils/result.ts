@@ -253,6 +253,8 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         let classConfig = editor.getClassType(obj.classId as string);
         if (!obj.classId && obj.classType) {
             classConfig = editor.getClassType(obj.classType);
+        } else if (!obj.classId && obj.modelClass) {
+            classConfig = editor.getClassType(obj.modelClass);
         }
         userData.id = obj.frontId || obj.id;
         userData.backId = obj.backId;
@@ -283,9 +285,9 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.reviewedCorrectVisible =
             (editor as any).bsState?.reviewMode === true && userData.reviewedCorrect;
 
-        userData.classType = classConfig?.name || '';
+        userData.classType = classConfig?.name || obj.classType || obj.modelClass || '';
         userData.classId = obj.classId || '';
-        userData.confidence = obj.confidence || undefined;
+        userData.confidence = obj.confidence ?? undefined;
         userData.modelClass = obj.modelClass || '';
         userData.modelRun = obj.modelRun || '';
         userData.modelRunLabel = obj.modelRunLabel || '';
@@ -492,7 +494,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             classId: classConfig ? classConfig.id : undefined,
             classType: classConfig ? classConfig.name : undefined,
             color: classConfig ? classConfig.color : undefined,
-            confidence: userData.confidence || undefined,
+            confidence: userData.confidence ?? undefined,
             modelRun: userData.modelRun || '',
             modelClass: userData.modelClass || '',
             modelRunLabel: userData.modelRunLabel || '',
@@ -551,7 +553,7 @@ export function get2DPoints(object: Rect | Box2D | ProjectedPolygon | ProjectedP
     } else if (object instanceof Box2D) {
         points = [...object.positions1, ...object.positions2];
     }
-    else if (object instanceof ProjectedPolygon) {
+    else if (object instanceof ProjectedPolygon || object instanceof ProjectedPolyline) {
         points = object.points.map((point) => point.clone());
     } else if (object instanceof ProjectedPolyline) {
         points = object.points.map((point) => point.clone());

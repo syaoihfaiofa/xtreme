@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import * as _ from 'lodash';
+
+import { Event } from '../config';
 import MainRenderView from '../renderView/MainRenderView';
 import Action from './Action';
-import Box from '../objects/Box';
-import * as _ from 'lodash';
+import OrbitControlsAction from './OrbitControlsAction';
 
 interface Point {
     x: number;
@@ -28,6 +30,7 @@ interface IStartOption {
     startClick?: boolean;
     startMouseDown?: boolean;
     endOnDoubleClick?: boolean;
+    pointSpace?: 'canvas' | 'ground';
 }
 
 export default class CreateAction extends Action {
@@ -44,7 +47,23 @@ export default class CreateAction extends Action {
     endOnDoubleClick: boolean = false;
     callback: ICallback | undefined | null = null;
     onChange: ICallback | undefined | null = null;
+    pointSpace: 'canvas' | 'ground' = 'canvas';
     private pendingClick?: { event: MouseEvent; timer: number };
+    private readonly worldPoints: THREE.Vector3[] = [];
+    private lastPointer: Point | null = null;
+    private rightDragStart: THREE.Vector2 | null = null;
+    private rightDragMoved: boolean = false;
+    private readonly rightDragThreshold: number = 4;
+    private readonly onRender = (): void => {
+        if (
+            this.pointSpace === 'ground' &&
+            this.canvas.style.display === 'block' &&
+            this.lastPointer
+        ) {
+            this.drawPoint3(this.lastPointer);
+        }
+    };
+
     constructor(renderView: MainRenderView) {
         super();
 
@@ -88,6 +107,7 @@ export default class CreateAction extends Action {
         this.canvas.addEventListener('mousemove', this.onMouseMove);
         this.canvas.addEventListener('dblclick', this.onDoubleClick);
         this.canvas.addEventListener('contextmenu', this.onContextMenu);
+        this.renderView.addEventListener(Event.RENDER_AFTER, this.onRender);
     }
 
     destroy() {
@@ -97,9 +117,10 @@ export default class CreateAction extends Action {
         this.canvas.removeEventListener('mousemove', this.onMouseMove);
         this.canvas.removeEventListener('dblclick', this.onDoubleClick);
         this.canvas.removeEventListener('contextmenu', this.onContextMenu);
+        this.renderView.removeEventListener(Event.RENDER_AFTER, this.onRender);
     }
 
-    start(option: IStartOption, callback: ICallback, onChange?: ICallback) {
+    start(option: IStartOption, callback: ICallback, onChange?: ICallback): void {
         if (this.canvas.style.display === 'block') return;
 
         let {
@@ -108,6 +129,7 @@ export default class CreateAction extends Action {
             startClick = true,
             startMouseDown = false,
             endOnDoubleClick = false,
+            pointSpace = 'canvas',
         } = option;
 
         this.drawType = type;
@@ -115,19 +137,35 @@ export default class CreateAction extends Action {
         this.startClick = startClick;
         this.startMouseDown = startMouseDown;
         this.endOnDoubleClick = endOnDoubleClick;
+        this.pointSpace = pointSpace;
         // this.toggle(true);
         this.callback = callback;
         this.onChange = onChange;
 
         this.canvas.style.display = 'block';
         this.points = [];
+        this.worldPoints.splice(0);
+        this.lastPointer = null;
+        this.rightDragStart = null;
+        this.rightDragMoved = false;
         this.clearPendingClick();
+        if (this.pointSpace === 'ground') {
+            const orbit = this.renderView.getAction('orbit-control') as OrbitControlsAction;
+            orbit.useDrawingElement(this.canvas);
+        }
 
         this.clear();
     }
 
-    end() {
+    end(): void {
         this.clearPendingClick();
+        if (this.pointSpace === 'ground' && this.canvas.style.display === 'block') {
+            const orbit = this.renderView.getAction('orbit-control') as OrbitControlsAction;
+            orbit.restoreRenderElement();
+        }
+        this.lastPointer = null;
+        this.rightDragStart = null;
+        this.rightDragMoved = false;
         this.canvas.style.display = 'none';
     }
 
@@ -186,8 +224,9 @@ export default class CreateAction extends Action {
         context.setLineDash([]);
     }
 
-    drawPoint3(pos: Point) {
+    drawPoint3(pos: Point): void {
         let context = this.context;
+        this.lastPointer = { x: pos.x, y: pos.y };
 
         this.clear();
 
@@ -196,12 +235,13 @@ export default class CreateAction extends Action {
         context.beginPath();
         this.setStyle();
 
-        this.points.forEach((p, index) => {
+        const previewPoints = this.getPreviewPoints();
+        previewPoints.forEach((p, index) => {
             if (index === 0) context.moveTo(p.x, p.y);
             else context.lineTo(p.x, p.y);
         });
 
-        if (this.points.length > 0) context.lineTo(pos.x, pos.y);
+        if (previewPoints.length > 0) context.lineTo(pos.x, pos.y);
         else {
             this.drawPointer(pos);
         }
@@ -261,9 +301,16 @@ export default class CreateAction extends Action {
         this.context.fillRect(pos.x - 3, pos.y - 3, 6, 6);
     }
 
-    onMouseMove(event: MouseEvent) {
+    onMouseMove(event: MouseEvent): void {
         event.stopPropagation();
-        let pos = { x: event.offsetX, y: event.offsetY };
+        if (this.rightDragStart) {
+            const distance = this.rightDragStart.distanceTo(
+                new THREE.Vector2(event.clientX, event.clientY),
+            );
+            if (distance > this.rightDragThreshold) this.rightDragMoved = true;
+        }
+        const canvasPoint = this.canvasEventPoint(event);
+        let pos = { x: canvasPoint.x, y: canvasPoint.y };
         switch (this.drawType) {
             case 'points-1':
             case 'points-3':
@@ -292,25 +339,33 @@ export default class CreateAction extends Action {
         }
     }
 
-    handleCallback() {
+    handleCallback(): void {
         if (this.callback) {
-            this.callback(this.points);
+            this.callback(
+                this.pointSpace === 'ground'
+                    ? this.worldPoints.map((point) => point.clone())
+                    : this.points,
+            );
         }
     }
 
-    onMouseUp(event: MouseEvent) {
+    onMouseUp(event: MouseEvent): void {
         event.stopPropagation();
         if (!this.enabled || !this.startMouseDown) return;
         this.handleMouse(event);
     }
 
-    onMouseDown(event: MouseEvent) {
+    onMouseDown(event: MouseEvent): void {
         event.stopPropagation();
+        if (event.button === 2 && this.pointSpace === 'ground') {
+            this.rightDragStart = new THREE.Vector2(event.clientX, event.clientY);
+            this.rightDragMoved = false;
+        }
         if (!this.enabled || !this.startMouseDown) return;
         this.handleMouse(event);
     }
 
-    onClick(event: MouseEvent) {
+    onClick(event: MouseEvent): void {
         event.stopPropagation();
         if (!this.enabled || !this.startClick) return;
         if (this.endOnDoubleClick) {
@@ -327,30 +382,32 @@ export default class CreateAction extends Action {
         }
         this.handleMouse(event);
     }
-    onDoubleClick(event: MouseEvent) {
+    onDoubleClick(event: MouseEvent): void {
         event.stopPropagation();
         if (!this.enabled || !this.endOnDoubleClick) return;
         this.clearPendingClick();
-        if (this.points.length < 2) return;
+        if (this.getPointCount() < 2) return;
         this.end();
         this.handleCallback();
     }
-    onContextMenu(event: MouseEvent) {
+    onContextMenu(event: MouseEvent): void {
         if (!this.enabled || !this.endOnDoubleClick) return;
         event.preventDefault();
         event.stopPropagation();
         this.commitPendingClick();
-        if (this.points.length < 2) return;
+        if (this.rightDragMoved || this.getPointCount() < 2) return;
         this.end();
         this.handleCallback();
     }
 
-    handleMouse(event: MouseEvent) {
-        this.points.push({ x: event.offsetX, y: event.offsetY });
+    handleMouse(event: MouseEvent): void {
+        this.addPoint(event);
 
-        if (this.onChange) this.onChange(this.points);
+        if (this.onChange) {
+            this.onChange(this.pointSpace === 'ground' ? this.worldPoints : this.points);
+        }
 
-        if (this.points.length >= TypePoints[this.drawType]) {
+        if (this.getPointCount() >= TypePoints[this.drawType]) {
             this.end();
             this.handleCallback();
         }
@@ -367,5 +424,36 @@ export default class CreateAction extends Action {
         if (!this.pendingClick) return;
         window.clearTimeout(this.pendingClick.timer);
         this.pendingClick = undefined;
+    }
+
+    private canvasEventPoint(event: MouseEvent): THREE.Vector2 {
+        const rect = this.canvas.getBoundingClientRect();
+        return new THREE.Vector2(event.clientX - rect.left, event.clientY - rect.top);
+    }
+
+    private addPoint(event: MouseEvent): void {
+        const canvasPoint = this.canvasEventPoint(event);
+        if (this.pointSpace === 'ground') {
+            const worldPoint = this.renderView.canvasToWorld(canvasPoint);
+            worldPoint.z = this.renderView.pointCloud.ground.plane.constant;
+            this.worldPoints.push(worldPoint);
+            return;
+        }
+        this.points.push({ x: canvasPoint.x, y: canvasPoint.y });
+    }
+
+    private getPreviewPoints(): Point[] {
+        if (this.pointSpace !== 'ground') return this.points;
+        return this.worldPoints.map((worldPoint) => {
+            const projected = worldPoint.clone().project(this.renderView.camera);
+            return {
+                x: ((projected.x + 1) / 2) * this.canvas.clientWidth,
+                y: (1 - (projected.y + 1) / 2) * this.canvas.clientHeight,
+            };
+        });
+    }
+
+    private getPointCount(): number {
+        return this.pointSpace === 'ground' ? this.worldPoints.length : this.points.length;
     }
 }

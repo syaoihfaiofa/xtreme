@@ -1,6 +1,7 @@
 local/
 application-local.yml
 target/
+.worktrees/
 
 dist/
 node_modules/

@@ -324,15 +324,14 @@ export const createGroundPolyline = define({
         editor.showMsg('info', '地面折线：左键连续添加点，双击结束');
         return new Promise<GroundPolyline | null>((resolve) => {
             action.start(
-                { type: 'polyline', startClick: true, endOnDoubleClick: true },
-                (canvasPoints: THREE.Vector2[]) => {
+                {
+                    type: 'polyline',
+                    startClick: true,
+                    endOnDoubleClick: true,
+                    pointSpace: 'ground',
+                },
+                (points: THREE.Vector3[]) => {
                     try {
-                        const groundZ = editor.pc.ground.plane.constant;
-                        const points = canvasPoints.map((point) => {
-                            const worldPoint = view.canvasToWorld(point);
-                            worldPoint.z = groundZ;
-                            return worldPoint;
-                        });
                         if (points.length < 2) {
                             editor.showMsg('warning', '地面折线至少需要两个点');
                             resolve(null);
@@ -346,7 +345,9 @@ export const createGroundPolyline = define({
                             classId: classConfig?.id,
                             motionMode: 'STATIC' as any,
                         };
-                        const polyline = new GroundPolyline(points);
+                        const polyline = new GroundPolyline(
+                            points.map((point) => point.clone()),
+                        );
                         polyline.userData = userData;
                         polyline.setColor(classConfig?.color || '#00e5ff');
                         setIdInfo(editor, polyline.userData);

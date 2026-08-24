@@ -185,6 +185,11 @@ public class JobConfig {
     }
 
     @Bean
+    public ImageKeypointLiftedDetectionModelMessageHandler imageKeypointLiftedDetectionModelMessageHandler() {
+        return new ImageKeypointLiftedDetectionModelMessageHandler();
+    }
+
+    @Bean
     public PointCloudTrackingModelMessageHandler pointCloudTrackingModelMessageHandler() {
         return new PointCloudTrackingModelMessageHandler();
     }

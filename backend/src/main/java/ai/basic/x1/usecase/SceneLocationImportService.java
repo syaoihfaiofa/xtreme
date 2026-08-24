@@ -14,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,6 +60,8 @@ public class SceneLocationImportService {
                     .posY(pose[1])
                     .posZ(pose[2])
                     .yaw(pose[3])
+                    .roll(toStoredAngle(pose[4]))
+                    .pitch(toStoredAngle(pose[5]))
                     .build());
         }
 
@@ -84,6 +85,8 @@ public class SceneLocationImportService {
                             .posY(sample.y)
                             .posZ(sample.z)
                             .yaw(sample.yaw)
+                            .roll(sample.roll)
+                            .pitch(sample.pitch)
                             .build())
                     .collect(Collectors.toList());
             sceneLocationSampleDAO.saveBatch(storedSamples);
@@ -114,6 +117,10 @@ public class SceneLocationImportService {
         }
     }
 
+    static ParseResult parseLocationLines(Collection<String> lines) {
+        return parse(lines);
+    }
+
     private static ParseResult parse(Collection<String> lines) {
         int totalLines = 0;
         int invalidCount = 0;
@@ -136,12 +143,16 @@ public class SceneLocationImportService {
                 continue;
             }
             try {
+                Double roll = parts.length >= 5 ? Double.parseDouble(parts[4]) : null;
+                Double pitch = parts.length >= 6 ? Double.parseDouble(parts[5]) : null;
                 samplesByTimestamp.put(timestampNs, new LocationSample(
                         timestampNs,
                         Double.parseDouble(parts[0]),
                         Double.parseDouble(parts[1]),
                         Double.parseDouble(parts[2]),
-                        Double.parseDouble(parts[3])));
+                        Double.parseDouble(parts[3]),
+                        roll,
+                        pitch));
             } catch (NumberFormatException e) {
                 invalidCount++;
             }
@@ -156,12 +167,16 @@ public class SceneLocationImportService {
         List<LocationPoseInterpolator.TimestampedPoseSample> sorted = new ArrayList<>(samples.size());
         for (LocationSample sample : samples) {
             sorted.add(new LocationPoseInterpolator.TimestampedPoseSample(
-                    sample.timestampNs, sample.x, sample.y, sample.z, sample.yaw));
+                    sample.timestampNs, sample.x, sample.y, sample.z, sample.yaw, sample.roll, sample.pitch));
         }
         return sorted;
     }
 
-    private static final class ParseResult {
+    private static Double toStoredAngle(double value) {
+        return Double.isNaN(value) ? null : value;
+    }
+
+    static final class ParseResult {
         private final int totalLines;
         private final int invalidCount;
         private final List<LocationSample> samples;
@@ -171,21 +186,60 @@ public class SceneLocationImportService {
             this.invalidCount = invalidCount;
             this.samples = samples;
         }
+
+        List<LocationSample> samples() {
+            return samples;
+        }
     }
 
-    private static final class LocationSample {
+    static final class LocationSample {
         private final long timestampNs;
         private final double x;
         private final double y;
         private final double z;
         private final double yaw;
+        private final Double roll;
+        private final Double pitch;
 
-        private LocationSample(long timestampNs, double x, double y, double z, double yaw) {
+        private LocationSample(
+                long timestampNs,
+                double x,
+                double y,
+                double z,
+                double yaw,
+                Double roll,
+                Double pitch) {
             this.timestampNs = timestampNs;
             this.x = x;
             this.y = y;
             this.z = z;
             this.yaw = yaw;
+            this.roll = roll;
+            this.pitch = pitch;
+        }
+
+        double x() {
+            return x;
+        }
+
+        double y() {
+            return y;
+        }
+
+        double z() {
+            return z;
+        }
+
+        double yaw() {
+            return yaw;
+        }
+
+        Double roll() {
+            return roll;
+        }
+
+        Double pitch() {
+            return pitch;
         }
     }
 

@@ -10,6 +10,7 @@ import Render2DAction from './action/Render2DAction';
 import Edit2DAction from './action/Edit2DAction';
 import Transform2DAction from './action/Transform2DAction';
 import ViewHelperAction from './action/ViewHelperAction';
+import EditGroundPolylineAction from './action/EditGroundPolylineAction';
 
 import { registryAction } from './action/index';
 
@@ -25,6 +26,7 @@ import { registryAction } from './action/index';
     Edit2DAction,
     Transform2DAction,
     ViewHelperAction,
+    EditGroundPolylineAction,
 ].forEach((action) => {
     registryAction(action.actionName, action as any);
 });
@@ -54,6 +56,7 @@ export {
     Edit2DAction,
     Transform2DAction,
     ViewHelperAction,
+    EditGroundPolylineAction,
 };
 
 export * from './objects';

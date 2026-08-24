@@ -271,6 +271,8 @@ public class DataInfoUseCase {
                 .posY(e.getPosY())
                 .posZ(e.getPosZ())
                 .yaw(e.getYaw())
+                .roll(e.getRoll())
+                .pitch(e.getPitch())
                 .build()));
     }
 

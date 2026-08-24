@@ -1,4 +1,6 @@
 flask==2.3.3
 gunicorn==21.2.0
 numpy==1.26.4
+opencv-python-headless==4.11.0.86
 requests==2.32.3
+spconv-cu118==2.3.6

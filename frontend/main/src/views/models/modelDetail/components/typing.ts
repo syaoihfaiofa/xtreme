@@ -1,4 +1,6 @@
 /** models详情页类型 */
+import { ModelCode } from '/@/api/business/model/modelsModel';
+
 export enum detailType {
   overview = 'OVERVIEW',
   runs = 'RUNS',
@@ -12,6 +14,7 @@ export interface IOverview {
   isType: boolean;
   classes: IClasses[];
   url?: string;
+    modelCode?: ModelCode;
 }
 
 /** detailHeader 接收数据类型 */

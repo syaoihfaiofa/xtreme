@@ -15,6 +15,7 @@ const defaultActions = [
     'select',
     'create-obj',
     'view-helper',
+    'edit-ground-polyline',
 ];
 export type wayToFocus = 'zTop' | 'auto';
 
