@@ -20,6 +20,10 @@ interface IProjectedPolylineSegment {
     points: THREE.Vector2[];
 }
 
+function isValidImagePoint(point: THREE.Vector2 | undefined): point is THREE.Vector2 {
+    return Boolean(point && Number.isFinite(point.x) && Number.isFinite(point.y));
+}
+
 function closestHitOnPolylineSegments(
     segments: IProjectedPolylineSegment[],
     imagePoint: THREE.Vector2,
@@ -35,6 +39,9 @@ function closestHitOnPolylineSegments(
         for (let index = 0; index < points.length - 1; index++) {
             const start = points[index];
             const end = points[index + 1];
+            if (!isValidImagePoint(start) || !isValidImagePoint(end)) {
+                continue;
+            }
             const dx = end.x - start.x;
             const dy = end.y - start.y;
             const lengthSquared = dx * dx + dy * dy;
@@ -265,7 +272,11 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
                     candidate.uuid === sourceId ||
                     (trackId && candidate.userData?.trackId === trackId),
             );
-            if (source) {
+            const hasMatchingValidPoints =
+                source &&
+                projection.points.length === source.points3D.length &&
+                projection.points.every(isValidImagePoint);
+            if (source && hasMatchingValidPoints) {
                 result.set(source, projection.points);
             }
         });
