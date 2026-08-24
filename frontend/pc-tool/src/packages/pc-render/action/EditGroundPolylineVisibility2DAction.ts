@@ -249,9 +249,12 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
 
     private getImagePoint(event: PointerEvent): THREE.Vector2 {
         const rect = this.renderView.container.getBoundingClientRect();
-        return this.renderView.domToImg(
-            new THREE.Vector2(event.clientX - rect.left, event.clientY - rect.top),
+        const imagePoint = new THREE.Vector2(
+            event.clientX - rect.left,
+            event.clientY - rect.top,
         );
+        this.renderView.domToImg(imagePoint);
+        return imagePoint;
     }
 
     private getProjectedPolylineBySource(
