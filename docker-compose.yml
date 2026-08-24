@@ -174,12 +174,7 @@ services:
       POLYLINE_FUSION_DISTANCE_THRESHOLD: ${KEYPOINT_LIFTED_POLYLINE_FUSION_DISTANCE_THRESHOLD:-0.3}
       REQUEST_TIMEOUT_SECONDS: ${KEYPOINT_LIFTED_REQUEST_TIMEOUT_SECONDS:-30}
     volumes:
-      - type: bind
-        source: ${KEYPOINT_LIFTED_ONNX_PATH:?KEYPOINT_LIFTED_ONNX_PATH must point to an existing ONNX model file}
-        target: /models/keypoint-lifted.onnx
-        read_only: true
-        bind:
-          create_host_path: false
+      - ./deploy/image-keypoint-lifted-detection/models/keypoint-lifted.onnx:/models/keypoint-lifted.onnx:ro
       - ./deploy/image-keypoint-lifted-detection/config/labels.json:/config/labels.json:ro
       - ./deploy/image-keypoint-lifted-detection/config/polyline-labels.json:/config/polyline-labels.json:ro
       - ./deploy/image-keypoint-lifted-detection/config/heights.yaml:/config/heights.yaml:ro
