@@ -23,6 +23,10 @@ import {
 import Editor from '../Editor';
 import * as createUtils from './create';
 import { empty } from './common';
+import {
+    applyGroundPolylineSegmentVisibilityImport,
+    getGroundPolylineSegmentVisibilityExport,
+} from './groundPolylineVisibility';
 import { copyClassAttrs, isClassAttrHasValue, isClassAttrVisible } from './classType';
 
 let position = new THREE.Vector3();
@@ -208,6 +212,9 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
     if (object.center3D) objectV2.contour.center3D = object.center3D;
     if (object.size3D) objectV2.contour.size3D = object.size3D;
     if (object.rotation3D) objectV2.contour.rotation3D = object.rotation3D;
+    if (object.objType === ObjectType.TYPE_GROUND_POLYLINE && object.segmentVisibilityByView) {
+        objectV2.contour.segmentVisibilityByView = object.segmentVisibilityByView;
+    }
     return objectV2;
 }
 export function translateToObject(objectV2: IObjectV2): IObject {
@@ -325,6 +332,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
                 return;
             }
             const polyline = createUtils.createGroundPolyline(editor, points, userData);
+            applyGroundPolylineSegmentVisibilityImport(polyline, obj.segmentVisibilityByView);
             if (classConfig) polyline.setColor(getObjectDisplayColor(classConfig.color, userData));
             bindInfo(polyline, obj);
             annotates.push(polyline);
@@ -517,6 +525,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             info.objType = ObjectType.TYPE_GROUND_POLYGON;
         } else if (obj instanceof GroundPolyline) {
             info.objType = ObjectType.TYPE_GROUND_POLYLINE;
+            info.segmentVisibilityByView = getGroundPolylineSegmentVisibilityExport(obj);
         } else {
             info.viewIndex = parseInt((obj.viewId.match(/[0-9]{1,5}$/) as any)[0]);
         }

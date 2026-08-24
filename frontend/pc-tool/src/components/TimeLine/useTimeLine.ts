@@ -1,6 +1,13 @@
 import { reactive, onMounted, onBeforeUnmount, watch, ref } from 'vue';
-import { Event as EditorEvent, Const, ObjectType } from 'pc-editor';
-import { IUserData } from 'pc-editor';
+import {
+    Event as EditorEvent,
+    Const,
+    ObjectType,
+    IFrame,
+    IObject,
+    IUserData,
+    utils,
+} from 'pc-editor';
 import * as THREE from 'three';
 import * as _ from 'lodash';
 import * as api from '../../api/common';
@@ -121,7 +128,12 @@ export default function useBottom() {
         },
     });
     let reviewProgressRequest = 0;
+    let trackLineRequest = 0;
     let segmentBoundaryRequest = 0;
+    const trackLineCache = new Map<string, IUserData[]>();
+    let trackLineCacheKey = '';
+    let trackLineLoadingKey = '';
+    let trackLineCachePromise: Promise<void> | null = null;
     const segmentBoundaryCache = new Map<string, boolean[]>();
     const maxSegmentBoundaryCacheEntries = 20;
     const cacheSegmentBoundaries = (key: string, boundaries: boolean[]) => {
@@ -163,6 +175,7 @@ export default function useBottom() {
             }
             updateReviewProgress();
             updateTrackFrameMask();
+            void prefetchTrackLines();
             if (editor.bsState.reviewMode) refreshReviewProgressFromServer();
         },
         {
@@ -199,7 +212,7 @@ export default function useBottom() {
         // editor.addEventListener(EditorEvent.UPDATE_TIME_LINE, onUpdate);
         editor.addEventListener(EditorEvent.ANNOTATE_CHANGE, onUpdate);
         editor.addEventListener(EditorEvent.ANNOTATE_ADD, onUpdate);
-        editor.addEventListener(EditorEvent.ANNOTATE_LOAD, onUpdate);
+        editor.addEventListener(EditorEvent.ANNOTATE_LOAD, onAnnotateLoad);
         // editor.addEventListener(EditorEvent.ANNOTATE_CLEAR, onUpdate);
         editor.addEventListener(EditorEvent.ANNOTATE_TRANSFORM_CHANGE, onUpdate);
         // editor.addEventListener(EditorEvent.VALID_CHANGE, onUpdate);
@@ -220,7 +233,7 @@ export default function useBottom() {
         editor.playManager.removeEventListener(EditorEvent.PLAY_STOP, onFrameStop);
         editor.removeEventListener(EditorEvent.ANNOTATE_CHANGE, onUpdate);
         editor.removeEventListener(EditorEvent.ANNOTATE_ADD, onUpdate);
-        editor.removeEventListener(EditorEvent.ANNOTATE_LOAD, onUpdate);
+        editor.removeEventListener(EditorEvent.ANNOTATE_LOAD, onAnnotateLoad);
         editor.removeEventListener(EditorEvent.ANNOTATE_TRANSFORM_CHANGE, onUpdate);
         // editor.removeEventListener(EditorEvent.PRE_MERGE_ACTION, onPreMergeEvent);
         // editor.removeEventListener(EditorEvent.PRE_SPLIT_ACTION, onPreSplitEvent);
@@ -236,7 +249,10 @@ export default function useBottom() {
         }
         refreshSegmentBoundaries.cancel();
         reviewProgressRequest += 1;
+        trackLineRequest += 1;
         segmentBoundaryRequest += 1;
+        trackLineCache.clear();
+        trackLineCacheKey = '';
         segmentBoundaryCache.clear();
         //@ts-ignore
         if (window.iSState === iState) window.iSState = undefined;
@@ -576,8 +592,44 @@ export default function useBottom() {
             editor.showMsg('error', editor.lang('errorSplit'));
         }
     }
+    function updateTrackFrameSlot(frameIndex: number, refreshSegments: boolean = false) {
+        const trackId = editor.currentTrack;
+        if (!trackId || trackId !== iState.trackTargetLine.trackId) return;
+        if (frameIndex < 0 || frameIndex >= iState.trackTargetLine.list.length) return;
+        iState.trackTargetLine.list[frameIndex] = getTrackFrameData(
+            trackId,
+            frameIndex,
+        ) as IUserData;
+        if (refreshSegments) {
+            iState.segmentBoundaries = getSegmentBoundaries(iState.trackTargetLine.list);
+            refreshSegmentBoundaries(trackId, iState.trackTargetLine.list);
+        }
+    }
+
+    function handleTrackActionPreview() {
+        const trackIds = [
+            ...iState.trackList.map((item) => item.trackId),
+            iState.trackMergeResult.trackId,
+        ];
+        if (editor.currentTrack && trackIds.indexOf(editor.currentTrack) < 0) return;
+        const { trackAction } = iState;
+        switch (trackAction) {
+            case 'PreMergeFrom':
+            case 'PreMergeTo':
+                updateMergeCodeMsg();
+            // falls through
+            case 'PreSplit':
+                onPreTrackAction(trackAction);
+                break;
+        }
+    }
+
     // 更新当前TrackLine
-    function updateTrackLine(force: boolean = false, refreshSegments: boolean = false) {
+    function updateTrackLine(
+        force: boolean = false,
+        refreshSegments: boolean = false,
+        refreshFromServer: boolean = true,
+    ) {
         const trackId = editor.currentTrack;
         if (trackId && trackId === iState.trackTargetLine.trackId && !force) return;
         if (trackId) {
@@ -590,6 +642,9 @@ export default function useBottom() {
             if (trackChanged || refreshSegments) {
                 iState.segmentBoundaries = getSegmentBoundaries(iState.trackTargetLine.list);
                 refreshSegmentBoundaries(trackId, iState.trackTargetLine.list);
+            }
+            if (refreshFromServer) {
+                refreshTrackLineFromServer(trackId);
             }
         } else {
             segmentBoundaryRequest++;
@@ -728,9 +783,127 @@ export default function useBottom() {
     function getTrackLine(trackId: string) {
         const length = editor.state.frames.length;
         if (!trackId) return Array(length);
-        const list = editor.trackManager.getTrackObjectMap(trackId)[trackId];
-        if (!list) return Array(length);
-        return list.map(toTrackFrameData);
+        const localList = editor.trackManager.getTrackObjectMap(trackId)[trackId] || Array(length);
+        const cachedList = trackLineCache.get(trackId);
+        return editor.state.frames.map(
+            (_, frameIndex) =>
+                toTrackFrameData(localList[frameIndex]) ?? cachedList?.[frameIndex],
+        );
+    }
+
+    function toTrackFrameDataFromServer(objects: IObject[]): IUserData | undefined {
+        if (!objects || objects.length === 0) return undefined;
+        const object = objects[0];
+        return {
+            trackId: object.trackId,
+            trackName: object.trackName,
+            classId: object.classId,
+            classType: object.classType,
+            motionMode: object.motionMode,
+            syncPoseSegmentId: object.syncPoseSegmentId,
+            syncPoseSegmentsInitialized: object.syncPoseSegmentsInitialized,
+            syncLocationGapMs: object.syncLocationGapMs,
+            syncDirty: object.syncDirty === true,
+            occluded: object.occluded === true,
+            reviewedCorrect: object.reviewedCorrect === true,
+            invalid: false,
+            trueValue: object.resultStatus === Const.True_Value,
+        } as IUserData;
+    }
+
+    function applyTrackLineList(serverList: IUserData[]) {
+        if (iState.trackTargetLine.list.length !== serverList.length) {
+            iState.trackTargetLine.list = serverList;
+            return;
+        }
+        serverList.forEach((userData, frameIndex) => {
+            iState.trackTargetLine.list[frameIndex] = userData;
+        });
+    }
+
+    function getFramesCacheKey(frames: IFrame[]): string {
+        return frames.map((frame) => String(frame.id)).join(',');
+    }
+
+    async function prefetchTrackLines(force: boolean = false): Promise<void> {
+        const frames = [...editor.state.frames];
+        const cacheKey = getFramesCacheKey(frames);
+        if (frames.length === 0) {
+            trackLineCache.clear();
+            trackLineCacheKey = '';
+            return;
+        }
+        if (!force && trackLineCacheKey === cacheKey) return;
+        if (trackLineCachePromise && trackLineLoadingKey === cacheKey) {
+            await trackLineCachePromise;
+            return;
+        }
+
+        trackLineLoadingKey = cacheKey;
+        const loadPromise = (async (): Promise<void> => {
+            const data = await editor.businessManager.getFrameObject(frames);
+            if (getFramesCacheKey(editor.state.frames) !== cacheKey) return;
+
+            const nextCache = new Map<string, IUserData[]>();
+            frames.forEach((frame, frameIndex) => {
+                const objects = utils.objectsMapForFrame(
+                    data.objectsMap,
+                    frame.id,
+                ) as IObject[];
+                const objectsByTrack = new Map<string, IObject[]>();
+                objects.forEach((object) => {
+                    if (!object.trackId) return;
+                    const trackId = String(object.trackId);
+                    const trackObjects = objectsByTrack.get(trackId) || [];
+                    trackObjects.push(object);
+                    objectsByTrack.set(trackId, trackObjects);
+                });
+                objectsByTrack.forEach((trackObjects, trackId) => {
+                    const userData = toTrackFrameDataFromServer(trackObjects);
+                    if (!userData) return;
+                    const list = nextCache.get(trackId) || Array(frames.length);
+                    list[frameIndex] = userData;
+                    nextCache.set(trackId, list);
+                });
+            });
+            trackLineCache.clear();
+            nextCache.forEach((list, trackId) => trackLineCache.set(trackId, list));
+            trackLineCacheKey = cacheKey;
+        })();
+        trackLineCachePromise = loadPromise;
+        try {
+            await loadPromise;
+        } catch (error) {
+            console.warn('prefetch track lines failed', error);
+        } finally {
+            if (trackLineCachePromise === loadPromise) {
+                trackLineCachePromise = null;
+                trackLineLoadingKey = '';
+            }
+        }
+    }
+
+    async function refreshTrackLineFromServer(trackId: string): Promise<void> {
+        const frames = editor.state.frames;
+        if (!trackId || frames.length === 0) return;
+        const requestId = ++trackLineRequest;
+        try {
+            await prefetchTrackLines(true);
+            if (requestId !== trackLineRequest || editor.currentTrack !== trackId) return;
+            const serverList = getTrackLine(trackId);
+            const frameIndices: number[] = [];
+            serverList.forEach((userData, frameIndex) => {
+                if (userData) frameIndices.push(frameIndex);
+            });
+            editor.trackManager.setTrackFrameIndices(trackId, frameIndices);
+            if (editor.currentTrack !== trackId) return;
+            applyTrackLineList(serverList);
+            iState.segmentBoundaries = getSegmentBoundaries(serverList);
+            refreshSegmentBoundaries(trackId, serverList);
+            updateTrackFrameMask();
+        } catch (error) {
+            console.warn('load track line failed', error);
+        }
     }
 
     function getTrackFrameData(trackId: string, frameIndex: number): IUserData | undefined {
@@ -755,45 +928,75 @@ export default function useBottom() {
         };
     }
 
-    // Object userData change Event
-    const onUpdate = _.throttle((data: any) => {
-        if (data?.type === EditorEvent.ANNOTATE_TRANSFORM_CHANGE && editor.currentTrack) {
-            const frameIndex = editor.state.frameIndex;
-            iState.trackTargetLine.list[frameIndex] = getTrackFrameData(
-                editor.currentTrack,
-                frameIndex,
-            ) as IUserData;
-            updateReviewProgress();
-            return;
-        }
+    function hasSegmentMetadataPatch(data: any): boolean {
         const patches = Array.isArray(data?.data?.datas)
             ? data.data.datas
             : [data?.data?.datas].filter(Boolean);
-        const segmentMetadataChanged = patches.some(
+        return patches.some(
             (patch: Partial<IUserData>) =>
                 !!patch &&
                 (patch.syncLocationGapMs !== undefined ||
                     patch.syncPoseSegmentId !== undefined ||
                     patch.syncPoseSegmentsInitialized !== undefined),
         );
-        updateTrackLine(true, segmentMetadataChanged);
+    }
+
+    function updateReviewProgressAt(frameIndex: number) {
+        const frames = editor.state.frames;
+        if (frameIndex < 0 || frameIndex >= frames.length) return;
+        if (iState.reviewProgress.length !== frames.length) {
+            updateReviewProgress();
+            return;
+        }
+        const frame = frames[frameIndex];
+        const loaded =
+            editor.dataManager.dataMap.has(frame.id) ||
+            editor.dataManager.dataMap.has(String(frame.id));
+        if (!loaded) return;
+        const objects = (editor.dataManager.getFrameObject(frame.id) || []).filter(isReviewTarget);
+        iState.reviewProgress[frameIndex] = objects.every(isReviewTargetReviewed);
+    }
+
+    function onAnnotateLoad() {
+        const trackId = editor.currentTrack;
+        if (!trackId || trackId !== iState.trackTargetLine.trackId) return;
+        updateTrackFrameSlot(editor.state.frameIndex);
+        updateReviewProgressAt(editor.state.frameIndex);
+        handleTrackActionPreview();
+    }
+
+    // Object userData change Event
+    const onUpdate = _.throttle((data: any) => {
+        const trackId = editor.currentTrack;
+        const eventType = data?.type;
+        const segmentMetadataChanged = hasSegmentMetadataPatch(data);
+
+        if (trackId && trackId === iState.trackTargetLine.trackId) {
+            if (eventType === EditorEvent.ANNOTATE_TRANSFORM_CHANGE) {
+                updateTrackFrameSlot(editor.state.frameIndex);
+                updateReviewProgress();
+                return;
+            }
+            const frameId = data?.data?.frame?.id;
+            if (
+                frameId &&
+                (eventType === EditorEvent.ANNOTATE_CHANGE || eventType === EditorEvent.ANNOTATE_ADD)
+            ) {
+                const frameIndex = editor.getFrameIndex(String(frameId));
+                if (frameIndex >= 0) {
+                    updateTrackFrameSlot(frameIndex, segmentMetadataChanged);
+                    updateReviewProgress();
+                    if (data?.data?.type === 'reviewMode') refreshReviewProgressFromServer();
+                    handleTrackActionPreview();
+                    return;
+                }
+            }
+        }
+
+        updateTrackLine(true, segmentMetadataChanged, false);
         updateReviewProgress();
         if (data?.data?.type === 'reviewMode') refreshReviewProgressFromServer();
-        const trackIds = [
-            ...iState.trackList.map((item) => item.trackId),
-            iState.trackMergeResult.trackId,
-        ];
-        if (editor.currentTrack && trackIds.indexOf(editor.currentTrack) < 0) return;
-        const { trackAction } = iState;
-        switch (trackAction) {
-            case 'PreMergeFrom':
-            case 'PreMergeTo':
-                updateMergeCodeMsg();
-            // falls through
-            case 'PreSplit':
-                onPreTrackAction(trackAction);
-                break;
-        }
+        handleTrackActionPreview();
     }, 200);
 
     function emptyTrackObject(): ITrackObject {
@@ -805,12 +1008,13 @@ export default function useBottom() {
         };
     }
     // object select event
-    const onSelect = _.debounce(() => {
+    function onSelect() {
+        const trackId = editor.currentTrack;
+        if (trackId === iState.trackTargetLine.trackId) return;
         onClear();
         updateTrackLine();
         updateReviewProgress();
-        // updateAnnotationStatus();
-    }, 200);
+    }
     // 重置
     function onClear() {
         iState.trackAction = '';

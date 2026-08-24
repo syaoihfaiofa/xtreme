@@ -8,7 +8,7 @@ import SetHelper2D from './setHelper2D.vue';
 import { ILocale } from './lang/type';
 export interface IItemConfig {
     action: string;
-    // label: string;
+    label?: string;
     title: ($$: (name: keyof ILocale, args?: Record<string, any>) => string) => string;
     getStyle?: (editor: Editor) => any;
     extra?: () => Component;
@@ -112,6 +112,20 @@ export const allItems: IItemConfig[] = [
         },
         isActive: function () {
             return false;
+        },
+    },
+    {
+        action: 'groundPolylineVisibility',
+        label: '遮挡',
+        title: () => '遮挡标注：点击后，在相机图折线上选任意两点，两点之间设为不可见',
+        getIcon: function () {
+            return 'iconfont icon-yingshe';
+        },
+        isDisplay: function () {
+            return true;
+        },
+        isActive: function (editor: Editor) {
+            return editor.state.config.groundPolylineVisibilityEdit === true;
         },
     },
     {

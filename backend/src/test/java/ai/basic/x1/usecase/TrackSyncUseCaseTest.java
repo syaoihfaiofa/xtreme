@@ -151,6 +151,25 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void mergeWorldPolylinesPreferringSource_dropsDivergentWings() {
+        JSONArray existing = new JSONArray();
+        existing.add(point(0, 5, 0));
+        existing.add(point(5, 0, 0));
+        existing.add(point(10, 0, 0));
+        existing.add(point(15, 0, 0));
+        JSONArray source = new JSONArray();
+        source.add(point(5, 0, 1));
+        source.add(point(10, 0, 1));
+
+        JSONArray merged = TrackSyncUseCase.mergeWorldPolylinesPreferringSource(existing, source);
+
+        assertEquals(3, merged.size());
+        assertPoint(merged.getJSONObject(0), 5, 0, 1);
+        assertPoint(merged.getJSONObject(1), 10, 0, 1);
+        assertPoint(merged.getJSONObject(2), 15, 0, 0);
+    }
+
+    @Test
     void resolveSyncedGroundPolyline_mergesLengthThenClipsTargetFrame() {
         JSONArray source = new JSONArray();
         source.add(point(5, 0, 0));

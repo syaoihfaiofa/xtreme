@@ -1,4 +1,12 @@
-import { Editor as BaseEditor, IFrame, SourceType, MotionMode, Event, OPType } from 'pc-editor';
+import {
+    Editor as BaseEditor,
+    IFrame,
+    SourceType,
+    MotionMode,
+    Event,
+    OPType,
+    ObjectType,
+} from 'pc-editor';
 import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
@@ -8,6 +16,7 @@ import hotkeys from 'hotkeys-js';
 import * as api from '../api';
 import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
+import { refreshGroundPolylineBevDisplay } from '../packages/pc-editor/utils/groundPolylineVisibility';
 
 const SYNCABLE_MOTION_MODES: string[] = [
     MotionMode.STATIC,
@@ -16,6 +25,67 @@ const SYNCABLE_MOTION_MODES: string[] = [
 ];
 const DEFAULT_SYNC_LOCATION_GAP_MS = 200;
 const DEFAULT_DYNAMIC_SYNC_FRAME_COUNT = 1;
+
+type SyncableGroundShape = GroundPolygon | GroundPolyline;
+
+function isSyncableGroundShape(object: unknown): object is SyncableGroundShape {
+    return object instanceof GroundPolygon || object instanceof GroundPolyline;
+}
+
+function matchesSyncedTrack(
+    candidate: { trackId?: string; classId?: unknown; classType?: string },
+    trackId: string,
+    sourceClass: { classId?: string | number; classType?: string },
+): boolean {
+    if (candidate.trackId !== trackId) return false;
+    if (sourceClass.classId != null || sourceClass.classType) {
+        return utils.sameAnnotationClass(candidate, sourceClass);
+    }
+    return true;
+}
+
+const REVIEW_PRESERVE_USER_DATA_KEYS = ['reviewedCorrect', 'reviewedCorrectVisible'] as const;
+
+function buildSyncedUserDataPatch(
+    fresh: Record<string, any>,
+    existing: { userData?: IUserData } | undefined,
+    reviewMode: boolean,
+): IUserData {
+    const userDataPatch: IUserData = {
+        attrs: fresh.attrs,
+        classType: fresh.classType,
+        classId: fresh.classId,
+        motionMode: fresh.motionMode,
+        syncDistance: fresh.syncDistance,
+        syncMaxDisappearGap: fresh.syncMaxDisappearGap,
+        syncLocationGapMs: fresh.syncLocationGapMs,
+        dynamicRangeSyncEnabled: fresh.dynamicRangeSyncEnabled,
+        dynamicSyncPreviousFrames: fresh.dynamicSyncPreviousFrames,
+        dynamicSyncNextFrames: fresh.dynamicSyncNextFrames,
+        syncPoseSegmentId: fresh.syncPoseSegmentId,
+        syncPoseSegmentsInitialized: fresh.syncPoseSegmentsInitialized,
+        syncUseZ: fresh.syncUseZ,
+        syncYawOffsetDeg: fresh.syncYawOffsetDeg,
+        syncXOffsetM: fresh.syncXOffsetM,
+        syncYOffsetM: fresh.syncYOffsetM,
+        occluded: fresh.occluded === true,
+        syncDirty: fresh.syncDirty === true,
+        reviewedCorrect: fresh.reviewedCorrect === true,
+    };
+    if (reviewMode && existing?.userData) {
+        const localUserData = existing.userData as IUserData;
+        REVIEW_PRESERVE_USER_DATA_KEYS.forEach((key) => {
+            if (localUserData[key] !== undefined) {
+                userDataPatch[key] = localUserData[key];
+            }
+        });
+    }
+    return userDataPatch;
+}
+
+function toGroundShapePoints(points: Array<{ x: number; y: number; z: number }>): THREE.Vector3[] {
+    return points.map((point) => new THREE.Vector3(Number(point.x), Number(point.y), Number(point.z)));
+}
 
 const OCCLUSION_HOTKEY = 'o';
 const REVIEW_CORRECT_HOTKEY = 'r';
@@ -505,7 +575,9 @@ export default class Editor extends BaseEditor {
         const framesToSave = this.state.frames.filter((frame) => {
             if (!frame.needSave) return false;
             return (this.dataManager.getFrameObject(frame.id) || []).some(
-                (object) => object instanceof Box && object.userData?.trackId === trackId,
+                (object) =>
+                    (object instanceof Box || isSyncableGroundShape(object)) &&
+                    object.userData?.trackId === trackId,
             );
         });
         if (!framesToSave.some((frame) => String(frame.id) === String(sourceFrame.id))) {
@@ -537,109 +609,219 @@ export default class Editor extends BaseEditor {
         }
 
         let addDatas: { objects: any[]; frame: IFrame }[] = [];
+        let removeDatas: { objects: SyncableGroundShape[]; frame: IFrame }[] = [];
         let updateTrans: { objects: Box[]; transforms: any[] } = { objects: [], transforms: [] };
-        let updateDatas: { objects: Box[]; data: IUserData[] } = { objects: [], data: [] };
+        let updateDatas: { objects: Array<Box | SyncableGroundShape>; data: IUserData[] } = {
+            objects: [],
+            data: [],
+        };
+        let groundShapePointUpdates: {
+            object: SyncableGroundShape;
+            points: THREE.Vector3[];
+            frame: IFrame;
+        }[] = [];
         const sourceClass = { classId, classType };
+
+        const resolvePrimaryShape = <T extends Box | SyncableGroundShape>(
+            shapes: T[],
+        ): T | undefined => {
+            if (shapes.length === 0) return undefined;
+            return (
+                shapes.find((shape) => (shape.userData as IUserData).backId) ||
+                shapes[0]
+            );
+        };
+
+        const dedupeSyncedShapes = <T extends Box | SyncableGroundShape>(
+            shapes: T[],
+            frame: IFrame,
+        ): T | undefined => {
+            if (shapes.length <= 1) return shapes[0];
+            const primary = resolvePrimaryShape(shapes);
+            const duplicates = shapes.filter((shape) => shape !== primary);
+            if (duplicates.length > 0) {
+                this.dataManager.removeAnnotates(duplicates, frame, false);
+            }
+            return primary;
+        };
 
         frames.forEach((frame) => {
             const frameObjects = this.dataManager.getFrameObject(frame.id) || [];
-            const duplicateBoxes = frameObjects.filter((object) => {
-                if (!(object instanceof Box)) return false;
-                const userData = object.userData as IUserData;
-                if (userData.trackId !== trackId) return false;
-                if (classId != null || classType) {
-                    return utils.sameAnnotationClass(userData, sourceClass);
-                }
-                return true;
-            }) as Box[];
+            const frameObjectsFromServer = utils.objectsMapForFrame(
+                data.objectsMap,
+                frame.id,
+            ) as any[];
 
-            let fresh = (
-                utils.objectsMapForFrame(data.objectsMap, frame.id) as any[]
-            ).find((o) => {
-                if (o.trackId !== trackId || !o.center3D || !o.size3D) return false;
-                if (classId != null || classType) {
-                    return utils.sameAnnotationClass(o, sourceClass);
-                }
-                return true;
+            const duplicateBoxes = frameObjects.filter(
+                (object) =>
+                    object instanceof Box &&
+                    matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
+            ) as Box[];
+            const duplicateGroundShapes = frameObjects.filter(
+                (object) =>
+                    isSyncableGroundShape(object) &&
+                    matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
+            ) as SyncableGroundShape[];
+
+            const freshBox = frameObjectsFromServer.find(
+                (object) =>
+                    matchesSyncedTrack(object, trackId, sourceClass) &&
+                    object.center3D &&
+                    object.size3D,
+            );
+            const freshGroundPolyline = frameObjectsFromServer.find((object) => {
+                const objType = object.objType || object.type;
+                return (
+                    matchesSyncedTrack(object, trackId, sourceClass) &&
+                    objType === ObjectType.TYPE_GROUND_POLYLINE &&
+                    Array.isArray(object.points) &&
+                    object.points.length >= 2
+                );
             });
-            let existing = duplicateBoxes[0];
+            const freshGroundPolygon = frameObjectsFromServer.find((object) => {
+                const objType = object.objType || object.type;
+                return (
+                    matchesSyncedTrack(object, trackId, sourceClass) &&
+                    objType === ObjectType.TYPE_GROUND_POLYGON &&
+                    Array.isArray(object.points) &&
+                    object.points.length === 4
+                );
+            });
 
-            if (duplicateBoxes.length > 1) {
-                const primary =
-                    existing ||
-                    duplicateBoxes.find((box) => (box.userData as IUserData).backId) ||
-                    duplicateBoxes[0];
-                const duplicates = duplicateBoxes.filter((box) => box !== primary);
-                if (duplicates.length > 0) {
-                    this.dataManager.removeAnnotates(duplicates, frame, false);
-                }
-                existing = primary;
-            }
+            let existingBox = dedupeSyncedShapes(duplicateBoxes, frame);
+            let existingGroundPolyline = dedupeSyncedShapes(
+                duplicateGroundShapes.filter((object) => object instanceof GroundPolyline),
+                frame,
+            );
+            let existingGroundPolygon = dedupeSyncedShapes(
+                duplicateGroundShapes.filter((object) => object instanceof GroundPolygon),
+                frame,
+            );
 
-            if (fresh && !existing) {
-                let annotate = utils.convertObject2Annotate([fresh], this)[0];
+            if (freshBox && !existingBox) {
+                const annotate = utils.convertObject2Annotate([freshBox], this)[0];
                 if (annotate) addDatas.push({ objects: [annotate], frame });
-            } else if (fresh && existing) {
+            } else if (freshBox && existingBox) {
                 if (String(frame.id) !== sourceFrameKey) {
-                    updateTrans.objects.push(existing);
+                    updateTrans.objects.push(existingBox);
                     updateTrans.transforms.push({
                         position: new THREE.Vector3(
-                            fresh.center3D.x,
-                            fresh.center3D.y,
-                            fresh.center3D.z,
+                            freshBox.center3D.x,
+                            freshBox.center3D.y,
+                            freshBox.center3D.z,
                         ),
-                        scale: new THREE.Vector3(fresh.size3D.x, fresh.size3D.y, fresh.size3D.z),
+                        scale: new THREE.Vector3(
+                            freshBox.size3D.x,
+                            freshBox.size3D.y,
+                            freshBox.size3D.z,
+                        ),
                         rotation: new THREE.Euler(
-                            fresh.rotation3D?.x || 0,
-                            fresh.rotation3D?.y || 0,
-                            fresh.rotation3D?.z || 0,
+                            freshBox.rotation3D?.x || 0,
+                            freshBox.rotation3D?.y || 0,
+                            freshBox.rotation3D?.z || 0,
                         ),
                     });
                 }
-                updateDatas.objects.push(existing);
-                const userDataPatch: IUserData = {
-                    attrs: fresh.attrs,
-                    classType: fresh.classType,
-                    classId: fresh.classId,
-                    motionMode: fresh.motionMode,
-                    syncDistance: fresh.syncDistance,
-                    syncMaxDisappearGap: fresh.syncMaxDisappearGap,
-                    syncLocationGapMs: fresh.syncLocationGapMs,
-                    dynamicRangeSyncEnabled: fresh.dynamicRangeSyncEnabled,
-                    dynamicSyncPreviousFrames: fresh.dynamicSyncPreviousFrames,
-                    dynamicSyncNextFrames: fresh.dynamicSyncNextFrames,
-                    syncPoseSegmentId: fresh.syncPoseSegmentId,
-                    syncPoseSegmentsInitialized: fresh.syncPoseSegmentsInitialized,
-                    syncUseZ: fresh.syncUseZ,
-                    syncYawOffsetDeg: fresh.syncYawOffsetDeg,
-                    syncXOffsetM: fresh.syncXOffsetM,
-                    syncYOffsetM: fresh.syncYOffsetM,
-                    occluded: fresh.occluded === true,
-                    syncDirty: fresh.syncDirty === true,
-                    reviewedCorrect: fresh.reviewedCorrect === true,
-                };
-                if (this.bsState.reviewMode && existing.userData) {
-                    const localUserData = existing.userData as IUserData;
-                    Editor.REVIEW_PRESERVE_USER_DATA_KEYS.forEach((key) => {
-                        if (localUserData[key] !== undefined) {
-                            userDataPatch[key] = localUserData[key];
-                        }
+                updateDatas.objects.push(existingBox);
+                updateDatas.data.push(
+                    buildSyncedUserDataPatch(freshBox, existingBox, this.bsState.reviewMode),
+                );
+            }
+
+            if (freshGroundPolyline && !existingGroundPolyline) {
+                const annotate = utils.convertObject2Annotate([freshGroundPolyline], this)[0];
+                if (annotate) addDatas.push({ objects: [annotate], frame });
+            } else if (freshGroundPolyline && existingGroundPolyline) {
+                if (String(frame.id) !== sourceFrameKey) {
+                    groundShapePointUpdates.push({
+                        object: existingGroundPolyline,
+                        points: toGroundShapePoints(freshGroundPolyline.points),
+                        frame,
                     });
                 }
-                updateDatas.data.push(userDataPatch);
+                updateDatas.objects.push(existingGroundPolyline);
+                updateDatas.data.push(
+                    buildSyncedUserDataPatch(
+                        freshGroundPolyline,
+                        existingGroundPolyline,
+                        this.bsState.reviewMode,
+                    ),
+                );
+            } else if (!freshGroundPolyline && existingGroundPolyline) {
+                removeDatas.push({ objects: [existingGroundPolyline], frame });
+            }
+
+            if (freshGroundPolygon && !existingGroundPolygon) {
+                const annotate = utils.convertObject2Annotate([freshGroundPolygon], this)[0];
+                if (annotate) addDatas.push({ objects: [annotate], frame });
+            } else if (freshGroundPolygon && existingGroundPolygon) {
+                if (String(frame.id) !== sourceFrameKey) {
+                    groundShapePointUpdates.push({
+                        object: existingGroundPolygon,
+                        points: toGroundShapePoints(freshGroundPolygon.points),
+                        frame,
+                    });
+                }
+                updateDatas.objects.push(existingGroundPolygon);
+                updateDatas.data.push(
+                    buildSyncedUserDataPatch(
+                        freshGroundPolygon,
+                        existingGroundPolygon,
+                        this.bsState.reviewMode,
+                    ),
+                );
+            } else if (!freshGroundPolygon && existingGroundPolygon) {
+                removeDatas.push({ objects: [existingGroundPolygon], frame });
             }
         });
 
         this.withEventSource(Editor.SYNC_EVENT_SOURCE, () => {
             this.cmdManager.withGroup(() => {
+                removeDatas.forEach(({ objects, frame }) => {
+                    this.dataManager.removeAnnotates(objects, frame, false);
+                });
                 if (addDatas.length > 0) this.cmdManager.execute('add-object', addDatas);
+                groundShapePointUpdates.forEach(({ object, points, frame }) => {
+                    if (object instanceof GroundPolyline) {
+                        const oldPointCount = object.points3D.length;
+                        const newPointCount = points.length;
+                        if (
+                            String(frame.id) !== sourceFrameKey &&
+                            newPointCount > oldPointCount
+                        ) {
+                            object.padNewSegmentsForAllViews(
+                                oldPointCount,
+                                newPointCount,
+                                false,
+                            );
+                        }
+                    }
+                    this.dataManager.setGroundPolygonPoints(object, points, frame);
+                });
                 if (updateTrans.objects.length > 0)
                     this.cmdManager.execute('update-transform-batch', updateTrans);
                 if (updateDatas.objects.length > 0)
                     this.cmdManager.execute('update-object-user-data', updateDatas);
             });
+            if (
+                removeDatas.length > 0 ||
+                groundShapePointUpdates.length > 0 ||
+                addDatas.length > 0
+            ) {
+                this.dataManager.loadDataFromManager();
+            }
         });
         this.invalidateTrackDisplayCaches();
+        const syncedPolylines = frames.flatMap((frame) =>
+            (this.dataManager.getFrameObject(frame.id) || []).filter(
+                (object): object is GroundPolyline =>
+                    object instanceof GroundPolyline &&
+                    matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
+            ),
+        );
+        if (syncedPolylines.length > 0) {
+            refreshGroundPolylineBevDisplay(this, syncedPolylines);
+        }
         this.selectByTrackId(trackId);
         this.pc.render();
     }

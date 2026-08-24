@@ -125,6 +125,7 @@ function getDefaultConfig(): IConfig {
         active3DBox: false,
         activeAnnotation: false,
         activeTranslate: false,
+        groundPolylineVisibilityEdit: false,
         activeTrack: false,
         circleRadius: 100,
         activeHelper2d: ['aux_line'],

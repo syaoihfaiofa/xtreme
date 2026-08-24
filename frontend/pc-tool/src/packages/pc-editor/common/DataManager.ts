@@ -19,6 +19,7 @@ import * as utils from '../utils';
 import { Const, ICmdName, IFilter, IUserData } from '../type';
 import Event from '../config/event';
 import * as THREE from 'three';
+import { refreshGroundPolylineBevDisplay } from '../utils/groundPolylineVisibility';
 
 interface ITransform2DBox {
     positions2?: Record<number, THREE.Vector2>;
@@ -54,11 +55,21 @@ export default class DataManager {
         this.displayCacheFrameIndex = undefined;
     }
 
+    private isTrackDedupeTarget(
+        object: AnnotateObject,
+    ): object is Box | GroundPolygon | GroundPolyline {
+        return (
+            object instanceof Box ||
+            object instanceof GroundPolygon ||
+            object instanceof GroundPolyline
+        );
+    }
+
     private dedupeFrameObjectsByTrackId(objects: AnnotateObject[]): AnnotateObject[] {
         const keptByTrack = new Map<string, AnnotateObject>();
         const withoutTrack: AnnotateObject[] = [];
         objects.forEach((object) => {
-            if (!(object instanceof Box)) {
+            if (!this.isTrackDedupeTarget(object)) {
                 withoutTrack.push(object);
                 return;
             }
@@ -67,15 +78,16 @@ export default class DataManager {
                 withoutTrack.push(object);
                 return;
             }
-            const existing = keptByTrack.get(trackId);
+            const dedupeKey = `${trackId}:${object.objectType}`;
+            const existing = keptByTrack.get(dedupeKey);
             if (!existing) {
-                keptByTrack.set(trackId, object);
+                keptByTrack.set(dedupeKey, object);
                 return;
             }
             const existingBackId = (existing.userData as IUserData).backId;
             const newBackId = (object.userData as IUserData).backId;
             if (!existingBackId && newBackId) {
-                keptByTrack.set(trackId, object);
+                keptByTrack.set(dedupeKey, object);
             }
         });
         return [...withoutTrack, ...keptByTrack.values()];
@@ -141,11 +153,13 @@ export default class DataManager {
 
         objects.forEach((object) => {
             if (this.hasObject(object.uuid, frame)) return;
-            if (object instanceof Box && object.userData?.trackId) {
+            if (this.isTrackDedupeTarget(object) && object.userData?.trackId) {
                 const trackId = object.userData.trackId;
                 const duplicateIndex = allObjects.findIndex(
                     (item) =>
-                        item instanceof Box && (item.userData as IUserData).trackId === trackId,
+                        this.isTrackDedupeTarget(item) &&
+                        item.objectType === object.objectType &&
+                        (item.userData as IUserData).trackId === trackId,
                 );
                 if (duplicateIndex >= 0) {
                     const removed = allObjects[duplicateIndex];
@@ -296,6 +310,9 @@ export default class DataManager {
         frame?: IFrame,
     ): void {
         object.setPoints(points);
+        if (object instanceof GroundPolyline) {
+            refreshGroundPolylineBevDisplay(this.editor, object);
+        }
         this.updateGroundShapeProjections(object);
         this.onAnnotatesChange([object], frame, {
             type: 'transform',
@@ -316,18 +333,26 @@ export default class DataManager {
             ) as Array<ProjectedPolygon | ProjectedPolyline>;
 
         projections.forEach((projection) => {
-            const view = views.find((item) => item.id === projection.viewId || item.renderId === projection.viewId);
-            if (!view || projection.points.length !== object.points3D.length) return;
+            const view = views.find(
+                (item) => item.id === projection.viewId || item.renderId === projection.viewId,
+            );
+            if (!view) return;
+
+            const targetLength = object.points3D.length;
+            if (projection instanceof ProjectedPolyline) {
+                while (projection.points.length < targetLength) {
+                    projection.points.push(new THREE.Vector2());
+                }
+                if (projection.points.length > targetLength) {
+                    projection.points.splice(targetLength);
+                }
+            } else if (projection.points.length !== targetLength) {
+                return;
+            }
+
             object.points3D.forEach((point, index) => {
                 const projected = view.worldToImg(point.clone());
-                if (
-                    Number.isFinite(projected.x) &&
-                    Number.isFinite(projected.y) &&
-                    projected.x >= 0 &&
-                    projected.x <= view.imgSize.x &&
-                    projected.y >= 0 &&
-                    projected.y <= view.imgSize.y
-                ) {
+                if (Number.isFinite(projected.x) && Number.isFinite(projected.y)) {
                     projection.points[index].set(projected.x, projected.y);
                 }
             });
@@ -378,6 +403,12 @@ export default class DataManager {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
         this.clearDisplayCache();
+        const polylines = objects.filter(
+            (object): object is GroundPolyline => object instanceof GroundPolyline,
+        );
+        if (polylines.length > 0) {
+            refreshGroundPolylineBevDisplay(this.editor, polylines);
+        }
         this.editor.pc.render();
         this.editor.trackManager.addTrackCount(objects, frame);
         this.editor.dispatchEvent({ type: Event.ANNOTATE_ADD, data: { objects, frame } });

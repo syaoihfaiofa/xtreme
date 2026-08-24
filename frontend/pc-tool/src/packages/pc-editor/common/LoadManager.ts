@@ -21,27 +21,32 @@ export default class LoadManager {
         const currentTrack = this.editor.currentTrack;
         const currentTrackName = this.editor.currentTrackName;
 
-        // The current selection belongs to the outgoing frame. Clear it before
-        // mounting the next frame's annotations so render views never fit a detached object.
-        this.editor.pc.selectObject();
-        this.editor.state.frameIndex = index;
-
-        this.editor.actionManager.stopCurrentAction();
-
-        showLoading && this.editor.showLoading(true);
+        this.editor.navigatingFrame = true;
         try {
-            await this.editor.getResultSources();
-            await Promise.all([this.loadObjectAndClassification(), this.loadResource()]);
-            this.editor.dataResource.load(index);
-        } catch (error: any) {
-            this.editor.handleErr(error);
+            // The current selection belongs to the outgoing frame. Clear it before
+            // mounting the next frame's annotations so render views never fit a detached object.
+            this.editor.pc.selectObject();
+            this.editor.state.frameIndex = index;
+
+            this.editor.actionManager.stopCurrentAction();
+
+            showLoading && this.editor.showLoading(true);
+            try {
+                await this.editor.getResultSources();
+                await Promise.all([this.loadObjectAndClassification(), this.loadResource()]);
+                this.editor.dataResource.load(index);
+            } catch (error: any) {
+                this.editor.handleErr(error);
+            }
+
+            if (currentTrack) this.editor.selectByTrackId(currentTrack);
+            else this.editor.pc.selectObject();
+
+            showLoading && this.editor.showLoading(false);
+            this.editor.setCurrentTrack(currentTrack, currentTrackName);
+        } finally {
+            this.editor.navigatingFrame = false;
         }
-
-        if (currentTrack) this.editor.selectByTrackId(currentTrack);
-        else this.editor.pc.selectObject();
-
-        showLoading && this.editor.showLoading(false);
-        this.editor.setCurrentTrack(currentTrack, currentTrackName);
         this.editor.dispatchEvent({ type: Event.FRAME_CHANGE, data: this.editor.state.frameIndex });
     }
 

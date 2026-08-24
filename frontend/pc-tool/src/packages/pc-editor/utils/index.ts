@@ -10,3 +10,5 @@ export * from './create';
 export * from './track';
 export * from './iou';
 export * from './motion';
+export * from './groundPolylineVisibility';
+export * from './polylineSegmentVisibility';

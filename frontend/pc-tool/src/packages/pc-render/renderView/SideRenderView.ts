@@ -65,6 +65,13 @@ export default class SideRenderView extends Render {
     onGroundPolylinePointsChange?: (object: GroundPolyline, points: THREE.Vector3[]) => void;
     private readonly vertexHandleLayer: HTMLDivElement;
     private readonly vertexHandles: HTMLDivElement[] = [];
+    private readonly groundPolylineEditLine = new THREE.Line(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({
+            depthTest: false,
+            toneMapped: false,
+        }),
+    );
     private selectedVertexIndex: number | null = null;
     private readonly onSelect = () => {
         const object = this.resolveSideTarget();
@@ -198,8 +205,13 @@ export default class SideRenderView extends Render {
         camera.updateMatrixWorld();
         object.updateMatrixWorld();
 
-        if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
-        let bbox = object.geometry.boundingBox as any as THREE.Box3;
+        let bbox: THREE.Box3;
+        if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+            bbox = new THREE.Box3().setFromPoints(object.points3D);
+        } else {
+            if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
+            bbox = object.geometry.boundingBox as THREE.Box3;
+        }
 
         const projectBoundingBox = bbox
             .clone()
@@ -232,14 +244,20 @@ export default class SideRenderView extends Render {
 
         let temp = new THREE.Vector3();
         if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
-            if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
-            const center = (object.geometry.boundingBox as THREE.Box3)
-                .getCenter(temp)
-                .applyMatrix4(object.matrixWorld);
+            const worldPoints = object.points3D.map((point) =>
+                point.clone().applyMatrix4(object.matrixWorld),
+            );
+            const center = new THREE.Box3().setFromPoints(worldPoints).getCenter(temp);
             const axisValue = this.axis.replace('-', '') as 'x' | 'y' | 'z';
             const direction = new THREE.Vector3();
             direction[axisValue] = this.axis.startsWith('-') ? -1 : 1;
-            this.camera.position.copy(center).addScaledVector(direction, 5);
+            const maxDepth = worldPoints.reduce(
+                (depth, point) => Math.max(depth, point.clone().sub(center).dot(direction)),
+                0,
+            );
+            this.camera.position
+                .copy(center)
+                .addScaledVector(direction, Math.max(5, maxDepth + 5));
             this.camera.up.copy(axisUpInfo[this.axis].yAxis.dir);
             this.camera.lookAt(center);
             this.updateProjectRect();
@@ -347,7 +365,18 @@ export default class SideRenderView extends Render {
                     });
                     material.depthTest = oldDepthTest;
                 }
-                this.renderer.render(hasObject3D, this.camera);
+                if (hasObject3D instanceof GroundPolyline) {
+                    this.groundPolylineEditLine.geometry.setFromPoints(hasObject3D.points3D);
+                    (
+                        this.groundPolylineEditLine.material as THREE.LineBasicMaterial
+                    ).color.copy(hasObject3D.color);
+                    this.groundPolylineEditLine.matrixAutoUpdate = false;
+                    this.groundPolylineEditLine.matrix.copy(hasObject3D.matrixWorld);
+                    this.groundPolylineEditLine.updateMatrixWorld(true);
+                    this.renderer.render(this.groundPolylineEditLine, this.camera);
+                } else {
+                    this.renderer.render(hasObject3D, this.camera);
+                }
                 this.updateProjectRect();
                 this.updateGroundPolygonVertexHandles();
                 return;
@@ -411,6 +440,8 @@ export default class SideRenderView extends Render {
         this.renderer.dispose();
         this.renderer.forceContextLoss();
         this.renderer.domElement.remove();
+        this.groundPolylineEditLine.geometry.dispose();
+        (this.groundPolylineEditLine.material as THREE.Material).dispose();
         this.vertexHandleLayer.remove();
         this.object = null;
         // @ts-ignore

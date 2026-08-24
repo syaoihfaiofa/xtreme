@@ -1,5 +1,5 @@
 import { IFrame, IUserData, ITrackCount, Const, IInfo2D, ObjectType, IBSObject } from '../type';
-import { AnnotateObject, Box, ITransform, Rect, Box2D, Object2D } from 'pc-render';
+import { AnnotateObject, Box, GroundPolygon, GroundPolyline, ITransform, Rect, Box2D, Object2D } from 'pc-render';
 import Editor from '../Editor';
 import Event from '../config/event';
 import { IUpdateTrackBatchOption, ITransformOption } from './CmdManager/cmd/UpdateTrackDataBatch';
@@ -142,17 +142,30 @@ export default class TrackManager {
         const frameIndex = this.editor.state.frames.findIndex((item) => item.id === frame.id);
         if (frameIndex < 0) return;
         const objects = this.editor.dataManager.getFrameObject(frame.id) || [];
-        const hasTrackBox = objects.some(
-            (object) => object instanceof Box && object.userData.trackId === trackId,
+        const hasTrackObject = objects.some(
+            (object) =>
+                object.userData?.trackId === trackId &&
+                (object instanceof Box ||
+                    object instanceof GroundPolygon ||
+                    object instanceof GroundPolyline),
         );
         let frameIndices = this.trackFrameIndexMap.get(trackId);
         if (!frameIndices) {
             frameIndices = new Set<number>();
             this.trackFrameIndexMap.set(trackId, frameIndices);
         }
-        if (hasTrackBox) frameIndices.add(frameIndex);
+        if (hasTrackObject) frameIndices.add(frameIndex);
         else frameIndices.delete(frameIndex);
         if (frameIndices.size === 0) this.trackFrameIndexMap.delete(trackId);
+    }
+
+    setTrackFrameIndices(trackId: string, frameIndices: number[]): void {
+        if (!trackId) return;
+        if (frameIndices.length === 0) {
+            this.trackFrameIndexMap.delete(trackId);
+            return;
+        }
+        this.trackFrameIndexMap.set(trackId, new Set(frameIndices));
     }
 
     rebuildTrackCountCaches(): void {

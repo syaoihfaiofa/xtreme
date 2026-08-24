@@ -57,6 +57,7 @@ export default class Editor extends THREE.EventDispatcher {
     state: IState;
     currentTrack?: string;
     currentTrackName: string = '';
+    navigatingFrame: boolean = false;
     currentClass: string = '';
     frameMap: Map<string, IFrame> = new Map();
     frameIndexMap: Map<string, number> = new Map();
@@ -164,6 +165,8 @@ export default class Editor extends THREE.EventDispatcher {
         });
     }
     updateTrack() {
+        if (this.navigatingFrame) return;
+
         const selection = this.pc.selection;
         const userData =
             selection.length > 0 ? (selection[0].userData as Required<IUserData>) : undefined;

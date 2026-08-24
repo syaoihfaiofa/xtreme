@@ -21,7 +21,9 @@ import {
     ProjectedPolygon,
     ProjectedPolyline,
     EditGroundPolylineAction,
+    EditGroundPolylineVisibility2DAction,
 } from 'pc-render';
+import { hideRangeBetweenHits } from './utils/polylineSegmentVisibility';
 import * as _ from 'lodash';
 
 export default function hack(editor: Editor) {
@@ -90,6 +92,9 @@ function hackMainView(editor: Editor, view: MainRenderView) {
                 points,
             });
         };
+        editGroundPolylineAction.onExtendHint = (message: string): void => {
+            editor.showMsg('info', message, 4);
+        };
     }
 
     // let selectAction = view.getAction('select') as SelectAction;
@@ -121,6 +126,41 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         };
         trackAction.trackRadius = () => {
             return editor.state.config.circleRadius;
+        };
+    }
+
+    const visibilityAction = view.getAction(
+        'edit-ground-polyline-visibility-2d',
+    ) as EditGroundPolylineVisibility2DAction;
+    if (visibilityAction) {
+        visibilityAction.isEditEnabled = (): boolean => {
+            return editor.state.config.groundPolylineVisibilityEdit === true;
+        };
+        visibilityAction.onFirstPoint = (): void => {
+            editor.showMsg('info', '已选第一个点，请再右键选择折线上的第二个点', 3);
+        };
+        visibilityAction.onMiss = (): void => {
+            editor.showMsg('warning', '未命中折线，请右键点击图片中的折线上', 2);
+        };
+        visibilityAction.onRangePicked = (first, second): void => {
+            const viewKey = (view.renderId || view.id).match(/[0-9]{1,5}$/)?.[0] || view.id;
+            const result = hideRangeBetweenHits(
+                first.polyline.points3D,
+                first.polyline.segmentVisibleByView,
+                viewKey,
+                { segmentIndex: first.segmentIndex, t: first.t },
+                { segmentIndex: second.segmentIndex, t: second.t },
+            );
+            if (!result) {
+                editor.showMsg('warning', '两个点太近，请重新选择', 3);
+                return;
+            }
+            editor.cmdManager.execute('update-ground-polyline-visibility-range', {
+                object: first.polyline,
+                points: result.points,
+                byView: result.byView,
+            });
+            editor.showMsg('info', '两点之间已设为不可见，BEV 已同步', 3);
         };
     }
 
@@ -201,7 +241,12 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         let objects = get3DObject.call(view);
         if (config.filter2DByTrack && currentTrack) {
             return objects.filter((e) => {
-                return e.userData.trackId === currentTrack && e instanceof Box;
+                return (
+                    e.userData.trackId === currentTrack &&
+                    (e instanceof Box ||
+                        e instanceof GroundPolygon ||
+                        e instanceof GroundPolyline)
+                );
             }) as Box[];
         } else {
             return objects;

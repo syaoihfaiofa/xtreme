@@ -106,6 +106,13 @@ export interface IResultSource {
     modelName?: string;
 }
 
+export interface ISegmentVisibilityEntry {
+    index: number;
+    visible: boolean;
+}
+
+export type SegmentVisibilityByView = Record<string, ISegmentVisibilityEntry[]>;
+
 export interface IObjectV2 {
     id?: string;
     type?: ObjectType;
@@ -292,6 +299,7 @@ export interface IConfig {
     active2DBox: boolean;
     activeAnnotation: boolean;
     activeTranslate: boolean;
+    groundPolylineVisibilityEdit: boolean;
     activeTrack: boolean;
     circleRadius: number;
     activeHelper2d: IHelper2D[];

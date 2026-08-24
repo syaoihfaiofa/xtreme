@@ -3,7 +3,14 @@ import Image2DRenderView from '../renderView/Image2DRenderView';
 import { Event } from '../config';
 import Action from './Action';
 import { Object2D, Rect, Box2D, Box, GroundPolygon, GroundPolyline, ProjectedPolygon, ProjectedPolyline } from '../objects';
+import EditGroundPolylineVisibility2DAction from './EditGroundPolylineVisibility2DAction';
 import { renderBox2D, renderRect } from '../utils';
+
+function getViewKeyFromImageView(view: Image2DRenderView): string {
+    const viewId = view.renderId || view.id;
+    const match = viewId.match(/[0-9]{1,5}$/);
+    return match ? match[0] : viewId;
+}
 
 export default class Render2DAction extends Action {
     static actionName: string = 'render-2d-shape';
@@ -165,43 +172,120 @@ export default class Render2DAction extends Action {
         this.renderProjectedPolygon(projection, lineWidth);
     }
     renderGroundPolylineProjection(obj: GroundPolyline, lineWidth: number) {
-        const project = (point: THREE.Vector3): THREE.Vector2 => {
-            const value = this.renderView.worldToImg(point.clone());
-            return new THREE.Vector2(value.x, value.y);
-        };
-        const points = obj.points3D.map(project);
-        if (points.length < 2) return;
-        const { context } = this.renderView.proxy;
-        context.save();
-        context.lineWidth = lineWidth;
-        context.strokeStyle = `#${obj.color.getHexString()}`;
-        context.beginPath();
-        if (this.renderView.isFisheye()) {
-            obj.points3D.slice(0, -1).forEach((point, index) => {
-                const next = obj.points3D[index + 1];
-                const samples = Array.from({ length: 9 }, (_, sampleIndex) =>
-                    project(point.clone().lerp(next, sampleIndex / 8)),
-                );
-                context.moveTo(samples[0].x, samples[0].y);
-                samples.slice(1).forEach((sample) => context.lineTo(sample.x, sample.y));
-            });
-        } else {
-            context.moveTo(points[0].x, points[0].y);
-            points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
-        }
-        context.stroke();
-        context.restore();
+        const viewKey = getViewKeyFromImageView(this.renderView);
+        this.renderPolylineSegments(
+            obj.points3D,
+            (point) => {
+                const value = this.renderView.worldToImg(point.clone());
+                return new THREE.Vector2(value.x, value.y);
+            },
+            `#${obj.color.getHexString()}`,
+            lineWidth,
+            obj.getSegmentVisibleForView(viewKey),
+            this.renderView.isFisheye(),
+        );
     }
     renderProjectedPolyline(obj: ProjectedPolyline, lineWidth: number) {
         if (obj.points.length < 2) return;
+        const source = this.findSourceGroundPolyline(obj);
+        const pointCloud = this.renderView.pointCloud;
+        const selected = pointCloud.selectionMap[obj.uuid] || (source && pointCloud.selectionMap[source.uuid]);
+        const color = selected
+            ? `#${pointCloud.selectColor.getHexString()}`
+            : obj.color;
+        const viewKey = getViewKeyFromImageView(this.renderView);
+        const segmentVisible = source
+            ? source.getSegmentVisibleForView(viewKey)
+            : undefined;
+        if (source && this.renderView.isFisheye()) {
+            this.renderPolylineSegments(
+                source.points3D,
+                (point) => {
+                    const value = this.renderView.worldToImg(point.clone());
+                    return new THREE.Vector2(value.x, value.y);
+                },
+                color,
+                lineWidth * 2,
+                segmentVisible,
+                true,
+                obj.points,
+            );
+            return;
+        }
+        this.renderPolylineSegments(
+            obj.points,
+            (point) => point.clone(),
+            color,
+            lineWidth * 2,
+            segmentVisible,
+            false,
+        );
+    }
+
+    private findSourceGroundPolyline(obj: ProjectedPolyline): GroundPolyline | null {
+        const sourceId = obj.userData?.projectedFromId as string | undefined;
+        if (!sourceId) {
+            return null;
+        }
+        const source = this.renderView.pointCloud
+            .getAnnotate3D()
+            .find((object) => object instanceof GroundPolyline && object.uuid === sourceId);
+        return source instanceof GroundPolyline ? source : null;
+    }
+
+    private renderPolylineSegments(
+        points: THREE.Vector3[] | THREE.Vector2[],
+        project: (point: THREE.Vector3) => THREE.Vector2,
+        color: string,
+        lineWidth: number,
+        segmentVisible: boolean[] | undefined,
+        useFisheyeSampling: boolean,
+        endpointOverrides?: THREE.Vector2[],
+    ): void {
+        if (points.length < 2) {
+            return;
+        }
         const { context } = this.renderView.proxy;
+        const flags =
+            segmentVisible && segmentVisible.length === points.length - 1
+                ? segmentVisible
+                : Array.from({ length: points.length - 1 }, () => true);
         context.save();
         context.lineWidth = lineWidth;
-        context.strokeStyle = obj.color;
-        context.beginPath();
-        context.moveTo(obj.points[0].x, obj.points[0].y);
-        obj.points.slice(1).forEach((point) => context.lineTo(point.x, point.y));
-        context.stroke();
+        context.lineCap = 'round';
+        context.lineJoin = 'round';
+        for (let index = 0; index < points.length - 1; index++) {
+            const visible = flags[index] !== false;
+            context.strokeStyle = visible ? color : 'rgba(136, 136, 136, 0.75)';
+            context.setLineDash(visible ? [] : [6, 4]);
+            context.beginPath();
+            if (useFisheyeSampling && points[index] instanceof THREE.Vector3) {
+                const start = points[index] as THREE.Vector3;
+                const end = points[index + 1] as THREE.Vector3;
+                const samples = Array.from({ length: 9 }, (_, sampleIndex) =>
+                    project(start.clone().lerp(end, sampleIndex / 8)),
+                );
+                if (endpointOverrides?.[index] && endpointOverrides[index + 1]) {
+                    samples[0] = endpointOverrides[index];
+                    samples[samples.length - 1] = endpointOverrides[index + 1];
+                }
+                context.moveTo(samples[0].x, samples[0].y);
+                samples.slice(1).forEach((sample) => context.lineTo(sample.x, sample.y));
+            } else {
+                const start =
+                    points[index] instanceof THREE.Vector3
+                        ? project(points[index] as THREE.Vector3)
+                        : (points[index] as THREE.Vector2);
+                const end =
+                    points[index + 1] instanceof THREE.Vector3
+                        ? project(points[index + 1] as THREE.Vector3)
+                        : (points[index + 1] as THREE.Vector2);
+                context.moveTo(start.x, start.y);
+                context.lineTo(end.x, end.y);
+            }
+            context.stroke();
+        }
+        context.setLineDash([]);
         context.restore();
     }
 
@@ -216,6 +300,12 @@ export default class Render2DAction extends Action {
         let lineWidth = this.getLineWidth();
 
         this.renderView.setContextTransform();
+        const projectedPolylineSourceIds = new Set(
+            objects
+                .filter((obj): obj is ProjectedPolyline => obj instanceof ProjectedPolyline)
+                .map((obj) => obj.userData?.projectedFromId as string | undefined)
+                .filter((sourceId): sourceId is string => Boolean(sourceId)),
+        );
         objects.forEach((obj) => {
             if (this.renderView.isRenderable(obj)) {
                 if (obj instanceof Rect) {
@@ -229,5 +319,36 @@ export default class Render2DAction extends Action {
                 }
             }
         });
+        this.renderView.get3DObject().forEach((obj) => {
+            if (
+                obj instanceof GroundPolyline &&
+                !projectedPolylineSourceIds.has(obj.uuid) &&
+                obj.visible
+            ) {
+                this.renderGroundPolylineProjection(obj, lineWidth * 2);
+            }
+        });
+        this.renderPendingVisibilityPoint();
+    }
+
+    private renderPendingVisibilityPoint(): void {
+        const visibilityAction = this.renderView.getAction(
+            'edit-ground-polyline-visibility-2d',
+        ) as EditGroundPolylineVisibility2DAction | undefined;
+        const point = visibilityAction?.pendingImagePoint;
+        if (!point) {
+            return;
+        }
+        const { context } = this.renderView.proxy;
+        const radius = 6 / Math.max(this.renderView.getScale(), 0.0001);
+        context.save();
+        context.fillStyle = '#ffcc00';
+        context.strokeStyle = '#10252a';
+        context.lineWidth = this.getLineWidth();
+        context.beginPath();
+        context.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        context.fill();
+        context.stroke();
+        context.restore();
     }
 }

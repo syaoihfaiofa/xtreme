@@ -53,6 +53,9 @@ export default function useTool() {
                 stopOtherCreateAction('createGroundPolyline');
                 editor.actionManager.execute('createGroundPolyline');
                 break;
+            case 'groundPolylineVisibility':
+                startGroundPolylineVisibility();
+                break;
             case 'createRect':
                 stopOtherCreateAction('create2DRect');
                 editor.actionManager.execute('create2DRect');
@@ -80,6 +83,37 @@ export default function useTool() {
                 onFilter2D();
                 break;
         }
+    }
+
+    function startGroundPolylineVisibility(): void {
+        stopOtherCreateAction('groundPolylineVisibility');
+        const config = editor.state.config;
+        config.groundPolylineVisibilityEdit = !config.groundPolylineVisibilityEdit;
+        editor.pc.renderViews.forEach((view) => {
+            const visibilityAction = view.getAction('edit-ground-polyline-visibility-2d') as
+                | { clearPending?: () => void }
+                | undefined;
+            visibilityAction?.clearPending?.();
+            if (config.groundPolylineVisibilityEdit) {
+                view.disableAction(['edit-2d', 'select']);
+            } else {
+                view.enableAction(['edit-2d', 'select']);
+            }
+        });
+        if (config.groundPolylineVisibilityEdit) {
+            editor.actionManager.execute('projectObject2D', {
+                createFlag: true,
+                updateFlag: true,
+            });
+            editor.showMsg(
+                'info',
+                '请在相机图的折线上依次右键选择两个点，两点之间将设为不可见',
+                5,
+            );
+        } else {
+            editor.showMsg('info', '已退出遮挡标注', 2);
+        }
+        editor.pc.render();
     }
 
     function deleteProjections() {

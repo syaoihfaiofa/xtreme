@@ -19,6 +19,7 @@ export default function useTrackItem() {
 
         let objects = [...annotate3D, ...annotate2D].filter((e) => e.userData.trackId === item.id);
         editor.pc.selectObject(objects);
+        editor.updateTrack();
     }
 
     function onDelete(item: IItem) {

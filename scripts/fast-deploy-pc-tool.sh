@@ -2,7 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CONTAINER="${PC_TOOL_CONTAINER:-xtreme-frontend-1}"
+if [[ -n "${PC_TOOL_CONTAINER:-}" ]]; then
+    CONTAINER="${PC_TOOL_CONTAINER}"
+else
+    CONTAINER="$(docker ps --format '{{.Names}}' | grep -E '(^|-)frontend-1$' | head -1 || true)"
+    CONTAINER="${CONTAINER:-xtreme-frontend-1}"
+fi
 
 echo "Building pc-tool only via Docker (~1-2 min, uses cache)..."
 DOCKER_BUILDKIT=1 docker build --pull=false -f "${ROOT}/frontend/Dockerfile.pc-tool" -t xtreme-pc-tool-fast "${ROOT}/frontend"

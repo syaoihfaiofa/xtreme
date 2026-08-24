@@ -11,6 +11,7 @@
                         :title="item.title($$)"
                     >
                         <i :class="item.getIcon(editor)"></i>
+                        <span v-if="item.label" class="title">{{ item.label }}</span>
                         <span class="msg" v-show="item.hasMsg && item.hasMsg(editor)">+</span>
                     </span>
                     <div v-show="item.isDisplay(editor)">

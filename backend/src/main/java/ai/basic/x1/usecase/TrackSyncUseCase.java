@@ -791,27 +791,53 @@ public class TrackSyncUseCase {
         double directionX = getDouble(sourceEnd, "x") - getDouble(sourceStart, "x");
         double directionY = getDouble(sourceEnd, "y") - getDouble(sourceStart, "y");
         double lengthSquared = directionX * directionX + directionY * directionY;
+
         JSONArray prefix = new JSONArray();
-        JSONArray suffix = new JSONArray();
         for (int index = 0; index < alignedExisting.size(); index++) {
             JSONObject point = alignedExisting.getJSONObject(index);
             if (distanceToPolyline(point, sourceWorld) <= POLYLINE_OVERLAP_SNAP_M) {
-                continue;
+                break;
             }
-            double projection = lengthSquared <= GEOMETRY_EPSILON ? 0
-                    : ((getDouble(point, "x") - getDouble(sourceStart, "x")) * directionX
-                    + (getDouble(point, "y") - getDouble(sourceStart, "y")) * directionY) / lengthSquared;
-            if (projection < 0) {
-                prefix.add(copyPoint(point));
-            } else if (projection > 1) {
-                suffix.add(copyPoint(point));
+            if (!isNearSourceAxis(point, sourceStart, directionX, directionY, lengthSquared)) {
+                break;
             }
+            prefix.add(copyPoint(point));
         }
+
+        JSONArray suffix = new JSONArray();
+        for (int index = alignedExisting.size() - 1; index >= 0; index--) {
+            JSONObject point = alignedExisting.getJSONObject(index);
+            if (distanceToPolyline(point, sourceWorld) <= POLYLINE_OVERLAP_SNAP_M) {
+                break;
+            }
+            if (!isNearSourceAxis(point, sourceStart, directionX, directionY, lengthSquared)) {
+                break;
+            }
+            suffix.add(0, copyPoint(point));
+        }
+
         JSONArray merged = new JSONArray();
         merged.addAll(prefix);
         merged.addAll(copyPoints(sourceWorld));
         merged.addAll(suffix);
         return merged;
+    }
+
+    private static boolean isNearSourceAxis(
+            JSONObject point,
+            JSONObject sourceStart,
+            double directionX,
+            double directionY,
+            double lengthSquared) {
+        if (lengthSquared <= GEOMETRY_EPSILON) {
+            return squaredDistance(point, sourceStart)
+                    <= POLYLINE_OVERLAP_SNAP_M * POLYLINE_OVERLAP_SNAP_M;
+        }
+        double deltaX = getDouble(point, "x") - getDouble(sourceStart, "x");
+        double deltaY = getDouble(point, "y") - getDouble(sourceStart, "y");
+        double cross = Math.abs(deltaX * directionY - deltaY * directionX);
+        double perpendicularDistance = cross / Math.sqrt(lengthSquared);
+        return perpendicularDistance <= POLYLINE_OVERLAP_SNAP_M;
     }
 
     static JSONArray clipGroundPolylineToRadius(JSONArray points, double radius) {
@@ -1198,6 +1224,10 @@ public class TrackSyncUseCase {
         // Existing rows retain their own frame-local visibility state. Only a newly created
         // synced row starts without source-frame occlusion or other local attributes.
         attrs.remove("occluded");
+        JSONObject contour = attrs.getJSONObject("contour");
+        if (contour != null) {
+            contour.remove("segmentVisibilityByView");
+        }
         // A newly auto-created synced row should not inherit source-frame attributes such as
         // Occlusion/Truncation/State. Those are per-frame labels, while Sync only propagates
         // track geometry and sync metadata.

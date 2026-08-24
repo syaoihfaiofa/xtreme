@@ -18,6 +18,8 @@ import DeleteTrack, { IDeleteTrackOption } from './DeleteTrack';
 import AddTrack, { IAddTrackOption } from './AddTrack';
 import UpdateGroundPolygonPoints from './UpdateGroundPolygonPoints';
 import UpdateGroundPolylinePoints from './UpdateGroundPolylinePoints';
+import UpdateGroundPolylineSegmentVisibility from './UpdateGroundPolylineSegmentVisibility';
+import UpdateGroundPolylineVisibilityRange from './UpdateGroundPolylineVisibilityRange';
 export interface ICmdOption {
     'add-object': IAddObjectOption;
     'delete-object': IDeleteObjectOption;
@@ -33,6 +35,16 @@ export interface ICmdOption {
     'update-ground-polyline-points': {
         object: import('pc-render').GroundPolyline;
         points: THREE.Vector3[];
+    };
+    'update-ground-polyline-segment-visibility': {
+        object: import('pc-render').GroundPolyline;
+        viewKey: string;
+        segmentVisible: boolean[];
+    };
+    'update-ground-polyline-visibility-range': {
+        object: import('pc-render').GroundPolyline;
+        points: THREE.Vector3[];
+        byView: Record<string, boolean[]>;
     };
     'update-2d-rect': {
         object: Rect;
@@ -63,6 +75,8 @@ const CMD: Record<Name, any> = {
     'update-transform': UpdateTransform,
     'update-ground-polygon-points': UpdateGroundPolygonPoints,
     'update-ground-polyline-points': UpdateGroundPolylinePoints,
+    'update-ground-polyline-segment-visibility': UpdateGroundPolylineSegmentVisibility,
+    'update-ground-polyline-visibility-range': UpdateGroundPolylineVisibilityRange,
     'update-2d-rect': Update2DRect,
     'update-2d-box': Update2DBox,
     'update-object-user-data': UpdateObjectDataBatch,

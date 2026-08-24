@@ -11,6 +11,7 @@ import Edit2DAction from './action/Edit2DAction';
 import Transform2DAction from './action/Transform2DAction';
 import ViewHelperAction from './action/ViewHelperAction';
 import EditGroundPolylineAction from './action/EditGroundPolylineAction';
+import EditGroundPolylineVisibility2DAction from './action/EditGroundPolylineVisibility2DAction';
 
 import { registryAction } from './action/index';
 
@@ -27,6 +28,7 @@ import { registryAction } from './action/index';
     Transform2DAction,
     ViewHelperAction,
     EditGroundPolylineAction,
+    EditGroundPolylineVisibility2DAction,
 ].forEach((action) => {
     registryAction(action.actionName, action as any);
 });
@@ -57,6 +59,7 @@ export {
     Transform2DAction,
     ViewHelperAction,
     EditGroundPolylineAction,
+    EditGroundPolylineVisibility2DAction,
 };
 
 export * from './objects';
