@@ -69,7 +69,8 @@ export default class EditGroundPolylineAction extends Action {
             const screenY = (1 - (projected.y + 1) / 2) * this.renderView.height;
             screenPoints.push({ x: screenX, y: screenY, visible });
             const handle = this.handles[index];
-            handle.style.display = visible ? 'block' : 'none';
+            handle.style.display =
+                visible && !object.isVisibilityBoundaryPoint(index) ? 'block' : 'none';
             handle.style.left = `${screenX}px`;
             handle.style.top = `${screenY}px`;
             handle.style.background =

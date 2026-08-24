@@ -46,6 +46,20 @@ export interface IDataSetInfo {
     inferenceConfig: IInferenceConfig | null;
 }
 
+export interface INormalizedImagePoint {
+    x: number;
+    y: number;
+}
+
+export interface ICameraOcclusionViewMask {
+    points: INormalizedImagePoint[];
+}
+
+export interface ICameraOcclusionMaskConfig {
+    version: 1;
+    views: Record<string, ICameraOcclusionViewMask>;
+}
+
 export interface IBSState {
     query: Record<string, string>;
     // flow

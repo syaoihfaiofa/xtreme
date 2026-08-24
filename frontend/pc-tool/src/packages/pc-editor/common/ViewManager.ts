@@ -135,6 +135,7 @@ export default class ViewManager {
                         let index = +view.name.replace(`${prefix}-`, '');
                         let config = configs[index];
                         if (config) {
+                            view.visibilityViewKey = String(index);
                             view.setOptions(config);
                         }
                     }
@@ -187,6 +188,7 @@ export default class ViewManager {
             });
 
             maxView.renderId = imgView.id;
+            maxView.visibilityViewKey = String(index);
         });
     }
 

@@ -43,6 +43,7 @@ export interface ICmdOption {
     };
     'update-ground-polyline-visibility-range': {
         object: import('pc-render').GroundPolyline;
+        points: THREE.Vector3[];
         byView: Record<string, boolean[]>;
     };
     'update-2d-rect': {

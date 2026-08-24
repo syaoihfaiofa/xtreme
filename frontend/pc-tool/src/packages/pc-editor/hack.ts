@@ -23,7 +23,10 @@ import {
     EditGroundPolylineAction,
     EditGroundPolylineVisibility2DAction,
 } from 'pc-render';
-import { toggleSegmentRangeBetweenHits } from './utils/polylineSegmentVisibility';
+import {
+    getViewKeyFromImageView,
+    toggleRangeBetweenHits,
+} from './utils/polylineSegmentVisibility';
 import * as _ from 'lodash';
 
 export default function hack(editor: Editor) {
@@ -141,16 +144,21 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
             editor.showMsg('warning', '未命中折线，请点击图片中的折线上', 2);
         };
         visibilityAction.onRangePicked = (first, second): void => {
-            const viewKey = (view.renderId || view.id).match(/[0-9]{1,5}$/)?.[0] || view.id;
-            const result = toggleSegmentRangeBetweenHits(
+            const viewKey = getViewKeyFromImageView(view);
+            const result = toggleRangeBetweenHits(
+                first.polyline.points3D,
                 first.polyline.segmentVisibleByView,
                 viewKey,
-                first.polyline.points3D.length,
                 { segmentIndex: first.segmentIndex, t: first.t },
                 { segmentIndex: second.segmentIndex, t: second.t },
             );
+            if (!result) {
+                editor.showMsg('warning', '两个点太近，请重新选择', 3);
+                return;
+            }
             editor.cmdManager.execute('update-ground-polyline-visibility-range', {
                 object: first.polyline,
+                points: result.points,
                 byView: result.byView,
             });
             editor.showMsg(

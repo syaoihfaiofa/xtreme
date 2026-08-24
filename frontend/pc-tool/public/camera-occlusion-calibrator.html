@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>四视角自车区域标定工具</title>
+        <style>
+            * { box-sizing: border-box; }
+            body {
+                margin: 0;
+                background: #111827;
+                color: #e5e7eb;
+                font-family: Arial, "Microsoft YaHei", sans-serif;
+            }
+            header {
+                position: sticky;
+                top: 0;
+                z-index: 10;
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 12px;
+                padding: 14px 20px;
+                background: #1f2937;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+            }
+            h1 { margin: 0 auto 0 0; font-size: 20px; }
+            button, input::file-selector-button {
+                padding: 7px 12px;
+                border: 1px solid #4b5563;
+                border-radius: 5px;
+                background: #374151;
+                color: #f9fafb;
+                cursor: pointer;
+            }
+            button.primary { border-color: #2563eb; background: #2563eb; }
+            main { padding: 18px; }
+            .help { margin: 0 0 14px; color: #cbd5e1; }
+            .views {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }
+            .view-card {
+                padding: 12px;
+                border: 1px solid #374151;
+                border-radius: 8px;
+                background: #1f2937;
+            }
+            .view-header, .view-actions {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                margin-bottom: 10px;
+            }
+            .view-actions { justify-content: flex-end; margin: 10px 0 0; }
+            .counter { color: #93c5fd; font-size: 13px; }
+            .file-pick {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                margin-bottom: 10px;
+                padding: 10px 12px;
+                border: 1px dashed #60a5fa;
+                border-radius: 6px;
+                background: #1e3a5f;
+                color: #dbeafe;
+                cursor: pointer;
+                font-size: 14px;
+            }
+            .file-pick:hover { background: #2563eb; color: #fff; }
+            .canvas-wrap {
+                position: relative;
+                min-height: 180px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                overflow: hidden;
+                background: #030712;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: auto;
+                cursor: crosshair;
+                image-rendering: auto;
+            }
+            .placeholder {
+                position: absolute;
+                color: #6b7280;
+                pointer-events: none;
+            }
+            .message { min-height: 20px; margin: 14px 0 8px; }
+            .message.success { color: #86efac; }
+            .message.error { color: #fca5a5; }
+            textarea {
+                width: 100%;
+                min-height: 180px;
+                padding: 10px;
+                border: 1px solid #374151;
+                border-radius: 6px;
+                background: #030712;
+                color: #d1d5db;
+                font-family: monospace;
+                resize: vertical;
+            }
+            @media (max-width: 900px) {
+                .views { grid-template-columns: 1fr; }
+            }
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>四视角自车区域标定工具</h1>
+            <button id="copy" type="button">复制 JSON</button>
+            <button id="download" type="button" class="primary">下载 JSON</button>
+        </header>
+        <main>
+            <p class="help">
+                每个视角卡片顶部有蓝色虚线框「选择图片」。选图后在图上点击画多边形，再点右上角下载 JSON。
+            </p>
+            <div id="views" class="views"></div>
+            <div id="message" class="message"></div>
+            <textarea id="output" readonly placeholder="导出的 JSON 会显示在这里"></textarea>
+        </main>
+        <script src="./camera-occlusion-calibrator.js"></script>
+        <script>
+            CameraOcclusionCalibrator.init();
+        </script>
+    </body>
+</html>

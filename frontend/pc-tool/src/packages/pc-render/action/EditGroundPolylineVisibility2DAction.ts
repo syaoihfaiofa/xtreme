@@ -4,9 +4,15 @@ import Image2DRenderView from '../renderView/Image2DRenderView';
 import Action from './Action';
 import GroundPolyline from '../objects/GroundPolyline';
 import ProjectedPolyline from '../objects/projectedPolyline';
+import {
+    getCameraViewKey,
+    getRelevantViewKeysForPolyline,
+    uniqueCameraViews,
+} from '../utils/polylineProjection';
 
 const SEGMENT_HIT_THRESHOLD_PX = 18;
-const FISHEYE_SEGMENT_SAMPLES = 8;
+const PICK_SEGMENT_SAMPLES = 64;
+const BOUNDARY_SNAP_THRESHOLD_PX = 8;
 
 export interface IPickedPolylinePoint {
     polyline: GroundPolyline;
@@ -82,7 +88,7 @@ function projectPolylineToImageSegments(
 ): IProjectedPolylineSegment[] {
     return points3D.slice(0, -1).map((start, segmentIndex) => {
         const end = points3D[segmentIndex + 1];
-        const sampleCount = view.isFisheye() ? FISHEYE_SEGMENT_SAMPLES : 1;
+        const sampleCount = PICK_SEGMENT_SAMPLES;
         const points = Array.from({ length: sampleCount + 1 }, (_, sampleIndex) => {
             const projected = view.worldToImg(
                 start.clone().lerp(end, sampleIndex / sampleCount),
@@ -216,21 +222,30 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
         const imagePoint = this.getImagePoint(event);
         const threshold = SEGMENT_HIT_THRESHOLD_PX / Math.max(this.renderView.getScale(), 0.0001);
         const projectedBySource = this.getProjectedPolylineBySource(candidates);
+        const cameraViews = uniqueCameraViews(
+            this.renderView.pointCloud.renderViews.filter(
+                (view): view is Image2DRenderView => view instanceof Image2DRenderView,
+            ),
+        );
+        const currentViewKey = getCameraViewKey(this.renderView);
         let best: (IPickedPolylinePoint & { distance: number }) | null = null;
         candidates.forEach((polyline) => {
+            if (
+                !getRelevantViewKeysForPolyline(polyline.points3D, cameraViews).includes(
+                    currentViewKey,
+                )
+            ) {
+                return;
+            }
             const projected = projectedBySource.get(polyline);
-            const segments =
-                this.renderView.isFisheye() || !projected
-                    ? projectPolylineToImageSegments(
-                          polyline.points3D,
-                          this.renderView,
-                          projected,
-                      )
-                    : projected.slice(0, -1).map((point, segmentIndex) => ({
-                          segmentIndex,
-                          points: [point, projected[segmentIndex + 1]],
-                      }));
-            const hit = closestHitOnPolylineSegments(segments, imagePoint, threshold);
+            const segments = projectPolylineToImageSegments(
+                polyline.points3D,
+                this.renderView,
+                projected,
+            );
+            const hit =
+                this.pickVisibilityBoundary(polyline, imagePoint, projected) ??
+                closestHitOnPolylineSegments(segments, imagePoint, threshold);
             if (!hit) {
                 return;
             }
@@ -244,6 +259,48 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
                 };
             }
         });
+        return best;
+    }
+
+    private pickVisibilityBoundary(
+        polyline: GroundPolyline,
+        imagePoint: THREE.Vector2,
+        endpointOverrides: THREE.Vector2[] | undefined,
+    ): { segmentIndex: number; t: number; distance: number; projection: THREE.Vector2 } | null {
+        const threshold =
+            BOUNDARY_SNAP_THRESHOLD_PX / Math.max(this.renderView.getScale(), 0.0001);
+        let best: {
+            segmentIndex: number;
+            t: number;
+            distance: number;
+            projection: THREE.Vector2;
+        } | null = null;
+        for (let pointIndex = 1; pointIndex < polyline.points3D.length - 1; pointIndex++) {
+            if (!polyline.isVisibilityBoundaryPoint(pointIndex)) {
+                continue;
+            }
+            const override = endpointOverrides?.[pointIndex];
+            const projected = isValidImagePoint(override)
+                ? override.clone()
+                : (() => {
+                      const value = this.renderView.worldToImg(
+                          polyline.points3D[pointIndex].clone(),
+                      );
+                      return new THREE.Vector2(value.x, value.y);
+                  })();
+            if (!isValidImagePoint(projected)) {
+                continue;
+            }
+            const distance = imagePoint.distanceTo(projected);
+            if (distance <= threshold && (!best || distance < best.distance)) {
+                best = {
+                    segmentIndex: pointIndex - 1,
+                    t: 1,
+                    distance,
+                    projection: projected,
+                };
+            }
+        }
         return best;
     }
 

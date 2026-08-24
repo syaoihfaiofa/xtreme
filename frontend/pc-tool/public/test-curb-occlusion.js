@@ -25,17 +25,21 @@
             for (let segmentIndex = 0; segmentIndex < polyline.points3D.length - 1; segmentIndex++) {
                 const start = polyline.points3D[segmentIndex];
                 const end = polyline.points3D[segmentIndex + 1];
-                const worldPoint = start.clone().lerp(end, 0.5);
-                const imagePoint = view.worldToImg(worldPoint.clone());
+                const imagePoints = [0.25, 0.75].map((t) =>
+                    view.worldToImg(start.clone().lerp(end, t)),
+                );
                 if (
-                    Number.isFinite(imagePoint.x) &&
-                    Number.isFinite(imagePoint.y) &&
-                    imagePoint.x >= 0 &&
-                    imagePoint.x <= view.imgSize.x &&
-                    imagePoint.y >= 0 &&
-                    imagePoint.y <= view.imgSize.y
+                    imagePoints.every(
+                        (imagePoint) =>
+                            Number.isFinite(imagePoint.x) &&
+                            Number.isFinite(imagePoint.y) &&
+                            imagePoint.x >= 0 &&
+                            imagePoint.x <= view.imgSize.x &&
+                            imagePoint.y >= 0 &&
+                            imagePoint.y <= view.imgSize.y,
+                    )
                 ) {
-                    return { polyline, segmentIndex, imagePoint };
+                    return { polyline, segmentIndex, imagePoints };
                 }
             }
         }
@@ -91,15 +95,18 @@
             }
 
             action.clearPending();
-            const domPoint = target.imagePoint.clone();
-            view.imgToDom(domPoint);
+            const domPoints = target.imagePoints.map((imagePoint) => {
+                const domPoint = imagePoint.clone();
+                view.imgToDom(domPoint);
+                return domPoint;
+            });
             const rect = view.container.getBoundingClientRect();
             const eventTarget = view.container.parentElement || view.container;
             let windowReceivedPointer = false;
             const observePointer = () => {
                 windowReceivedPointer = true;
             };
-            const dispatchPick = () => {
+            const dispatchPick = (domPoint) => {
                 eventTarget.dispatchEvent(
                     new PointerEvent('pointerdown', {
                         bubbles: true,
@@ -116,12 +123,12 @@
             const flagsBefore = target.polyline.getSegmentVisibleForView(viewKey);
 
             window.addEventListener('pointerdown', observePointer, true);
-            dispatchPick();
+            dispatchPick(domPoints[0]);
             window.removeEventListener('pointerdown', observePointer, true);
 
             const pendingPointCreated = action.pendingImagePoint !== null;
             if (pendingPointCreated) {
-                dispatchPick();
+                dispatchPick(domPoints[1]);
             }
             const flagsAfterToggle = target.polyline.getSegmentVisibleForView(viewKey);
             const pointCountAfter = target.polyline.points3D.length;
@@ -129,25 +136,32 @@
                 JSON.stringify(flagsAfterToggle) !== JSON.stringify(flagsBefore);
 
             if (visibilityChanged) {
-                dispatchPick();
-                dispatchPick();
+                dispatchPick(domPoints[0]);
+                dispatchPick(domPoints[1]);
             }
             const flagsAfterRestore = target.polyline.getSegmentVisibleForView(viewKey);
+            const expectedRestoredFlags = [
+                ...flagsBefore.slice(0, target.segmentIndex),
+                flagsBefore[target.segmentIndex],
+                flagsBefore[target.segmentIndex],
+                flagsBefore[target.segmentIndex],
+                ...flagsBefore.slice(target.segmentIndex + 1),
+            ];
             const stateRestored =
-                JSON.stringify(flagsAfterRestore) === JSON.stringify(flagsBefore);
+                JSON.stringify(flagsAfterRestore) === JSON.stringify(expectedRestoredFlags);
 
             const details = {
                 viewId,
                 actionEnabled: action.isEnable(),
                 windowReceivedPointer,
                 segmentIndex: target.segmentIndex,
-                imagePoint: {
-                    x: Math.round(target.imagePoint.x),
-                    y: Math.round(target.imagePoint.y),
-                },
+                imagePoints: target.imagePoints.map((point) => ({
+                    x: Math.round(point.x),
+                    y: Math.round(point.y),
+                })),
                 pendingPointCreated,
                 visibilityChanged,
-                pointCountUnchanged: pointCountAfter === pointCountBefore,
+                exactBoundaryPointsCreated: pointCountAfter > pointCountBefore,
                 stateRestored,
             };
             console.table(details);
@@ -161,8 +175,8 @@
             if (!visibilityChanged) {
                 return fail('selecting the same segment twice did not toggle its visibility', details);
             }
-            if (pointCountAfter !== pointCountBefore) {
-                return fail('toggling visibility added points to the BEV polyline', details);
+            if (pointCountAfter <= pointCountBefore) {
+                return fail('exact visibility boundaries were not created', details);
             }
             if (!stateRestored) {
                 return fail('the second toggle did not restore the original visibility state', details);

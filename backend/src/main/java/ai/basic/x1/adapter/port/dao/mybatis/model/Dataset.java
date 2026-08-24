@@ -1,7 +1,7 @@
 package ai.basic.x1.adapter.port.dao.mybatis.model;
 
-import ai.basic.x1.entity.enums.DatasetTypeEnum;
 import ai.basic.x1.entity.DatasetInferenceConfig;
+import ai.basic.x1.entity.enums.DatasetTypeEnum;
 import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import lombok.AllArgsConstructor;

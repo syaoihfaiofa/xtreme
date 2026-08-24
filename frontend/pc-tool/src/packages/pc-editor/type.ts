@@ -269,6 +269,7 @@ export interface IImgViewConfig {
     imgObject: HTMLImageElement;
     // rowMajor?: boolean;
     name: string;
+    occlusionMask?: Array<{ x: number; y: number }>;
 }
 
 export interface IConfig {

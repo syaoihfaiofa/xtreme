@@ -9,6 +9,7 @@ import {
 } from 'pc-editor';
 import Editor from './Editor';
 import * as api from '../api';
+import { CAMERA_OCCLUSION_MASK_CONFIG } from '../config/cameraOcclusionMasks';
 
 export default class BusinessManager extends BaseBusinessManager {
     editor: Editor;
@@ -55,6 +56,10 @@ export default class BusinessManager extends BaseBusinessManager {
         }
 
         let info = utils.createViewConfig(fileConfig, cameraInfo as any[]);
+        info.config.forEach((view, index) => {
+            view.occlusionMask =
+                CAMERA_OCCLUSION_MASK_CONFIG.views[String(index)]?.points || [];
+        });
         let config: IDataResource = {
             pointsUrl: info.pointsUrl,
             pointsData: {},

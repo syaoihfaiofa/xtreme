@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
 import type Image2DRenderView from '../../pc-render/renderView/Image2DRenderView';
+import {
+    getRelevantViewKeysForSegment,
+    isSegmentProjectedInView as isSegmentRelevantInCameraViews,
+} from '../../pc-render/utils/polylineProjection';
 
 export interface ISegmentVisibilityEntry {
     index: number;
@@ -11,13 +15,16 @@ export type SegmentVisibilityByView = Record<string, ISegmentVisibilityEntry[]>;
 
 export const CAMERA_VIEW_KEYS: readonly string[] = ['0', '1', '2', '3'];
 
-const FISHEYE_SEGMENT_SAMPLES = 9;
+const SEGMENT_VISIBILITY_SAMPLES = 33;
 
 export function isCameraViewKey(viewKey: string): boolean {
     return CAMERA_VIEW_KEYS.includes(viewKey);
 }
 
 export function getViewKeyFromImageView(view: Image2DRenderView): string {
+    if (view.visibilityViewKey) {
+        return view.visibilityViewKey;
+    }
     const viewId = view.renderId || view.id;
     const match = viewId.match(/[0-9]{1,5}$/);
     return match ? match[0] : viewId;
@@ -167,88 +174,40 @@ export function isPointInsideImage(point: THREE.Vector2, imgSize: THREE.Vector2)
     );
 }
 
-function segmentsIntersect(
-    firstStart: THREE.Vector2,
-    firstEnd: THREE.Vector2,
-    secondStart: THREE.Vector2,
-    secondEnd: THREE.Vector2,
-): boolean {
-    const boundsOverlap =
-        Math.max(firstStart.x, firstEnd.x) >= Math.min(secondStart.x, secondEnd.x) &&
-        Math.max(secondStart.x, secondEnd.x) >= Math.min(firstStart.x, firstEnd.x) &&
-        Math.max(firstStart.y, firstEnd.y) >= Math.min(secondStart.y, secondEnd.y) &&
-        Math.max(secondStart.y, secondEnd.y) >= Math.min(firstStart.y, firstEnd.y);
-    if (!boundsOverlap) {
-        return false;
-    }
-    const cross = (origin: THREE.Vector2, end: THREE.Vector2, point: THREE.Vector2): number =>
-        (end.x - origin.x) * (point.y - origin.y) -
-        (end.y - origin.y) * (point.x - origin.x);
-    const firstSideStart = cross(firstStart, firstEnd, secondStart);
-    const firstSideEnd = cross(firstStart, firstEnd, secondEnd);
-    const secondSideStart = cross(secondStart, secondEnd, firstStart);
-    const secondSideEnd = cross(secondStart, secondEnd, firstEnd);
-    return (
-        firstSideStart * firstSideEnd <= 0 &&
-        secondSideStart * secondSideEnd <= 0
-    );
-}
-
-function isLineSegmentInsideImage(
-    start: THREE.Vector2,
-    end: THREE.Vector2,
-    imgSize: THREE.Vector2,
-): boolean {
-    if (isPointInsideImage(start, imgSize) || isPointInsideImage(end, imgSize)) {
-        return true;
-    }
-    if (
-        !Number.isFinite(start.x) ||
-        !Number.isFinite(start.y) ||
-        !Number.isFinite(end.x) ||
-        !Number.isFinite(end.y)
-    ) {
-        return false;
-    }
-    const topLeft = new THREE.Vector2(0, 0);
-    const topRight = new THREE.Vector2(imgSize.x, 0);
-    const bottomRight = new THREE.Vector2(imgSize.x, imgSize.y);
-    const bottomLeft = new THREE.Vector2(0, imgSize.y);
-    return [
-        [topLeft, topRight],
-        [topRight, bottomRight],
-        [bottomRight, bottomLeft],
-        [bottomLeft, topLeft],
-    ].some(([edgeStart, edgeEnd]) => segmentsIntersect(start, end, edgeStart, edgeEnd));
-}
-
 export function isSegmentProjectedInView(
     points3D: THREE.Vector3[],
     segmentIndex: number,
     view: Image2DRenderView,
+    allViews: Image2DRenderView[] = [view],
 ): boolean {
-    if (segmentIndex < 0 || segmentIndex >= points3D.length - 1) {
+    return isSegmentRelevantInCameraViews(points3D, segmentIndex, view, allViews);
+}
+
+function isSegmentAutoVisibleInView(
+    points3D: THREE.Vector3[],
+    segmentIndex: number,
+    view: Image2DRenderView,
+): boolean {
+    if (!isSegmentProjectedInView(points3D, segmentIndex, view, [view])) {
         return false;
+    }
+    if (!view.hasOcclusionMask()) {
+        return true;
     }
     const start = points3D[segmentIndex];
     const end = points3D[segmentIndex + 1];
-    const project = (point: THREE.Vector3): THREE.Vector2 => {
-        const projected = view.worldToImg(point.clone());
-        return new THREE.Vector2(projected.x, projected.y);
-    };
-    if (view.isFisheye()) {
-        for (let sampleIndex = 0; sampleIndex < FISHEYE_SEGMENT_SAMPLES; sampleIndex++) {
-            const t = sampleIndex / (FISHEYE_SEGMENT_SAMPLES - 1);
-            const sample = start.clone().lerp(end, t);
-            if (isPointInsideImage(project(sample), view.imgSize)) {
-                return true;
-            }
+    for (let sampleIndex = 0; sampleIndex < SEGMENT_VISIBILITY_SAMPLES; sampleIndex++) {
+        const t = sampleIndex / (SEGMENT_VISIBILITY_SAMPLES - 1);
+        const projected = view.worldToImg(start.clone().lerp(end, t));
+        if (
+            view.isImagePointAutoVisible(
+                new THREE.Vector2(projected.x, projected.y),
+            )
+        ) {
+            return true;
         }
-        return false;
     }
-    const projectedStart = project(start);
-    const projectedEnd = project(end);
-    return isLineSegmentInsideImage(projectedStart, projectedEnd, view.imgSize);
+    return false;
 }
 
 export function resolveEffectiveVisibleForView(
@@ -258,10 +217,7 @@ export function resolveEffectiveVisibleForView(
 ): boolean[] {
     const normalized = normalizeSegmentVisible(manualFlags, points3D.length);
     return normalized.map((manualVisible, index) => {
-        if (!isSegmentProjectedInView(points3D, index, view)) {
-            return false;
-        }
-        return manualVisible;
+        return manualVisible && isSegmentAutoVisibleInView(points3D, index, view);
     });
 }
 
@@ -280,15 +236,23 @@ export function deriveBevVisibility(
             points3D.length,
         ),
         projected: Array.from({ length: segmentCount }, (_, index) =>
-            isSegmentProjectedInView(points3D, index, view),
+            getRelevantViewKeysForSegment(points3D, index, views).includes(
+                getViewKeyFromImageView(view),
+            ),
+        ),
+        autoVisible: Array.from({ length: segmentCount }, (_, index) =>
+            isSegmentAutoVisibleInView(points3D, index, view),
         ),
     }));
     return Array.from({ length: segmentCount }, (_, index) => {
         const relevantViews = projectedViews.filter((entry) => entry.projected[index]);
         if (relevantViews.length === 0) {
-            return true;
+            return false;
         }
-        return relevantViews.some((entry) => entry.flags[index] === true);
+        const allInvisible = relevantViews.every(
+            (entry) => entry.flags[index] === false || !entry.autoVisible[index],
+        );
+        return !allInvisible;
     });
 }
 
@@ -350,36 +314,7 @@ export interface IPolylineHit {
     t: number;
 }
 
-export interface IToggledSegmentRange {
-    byView: Record<string, boolean[]>;
-    visible: boolean;
-}
-
-export function toggleSegmentRangeBetweenHits(
-    byView: Record<string, boolean[]>,
-    viewKey: string,
-    pointCount: number,
-    hitA: IPolylineHit,
-    hitB: IPolylineHit,
-): IToggledSegmentRange {
-    const start = Math.min(hitA.segmentIndex, hitB.segmentIndex);
-    const end = Math.max(hitA.segmentIndex, hitB.segmentIndex);
-    const flags = normalizeSegmentVisible(byView[viewKey], pointCount);
-    const selectedFlags = flags.slice(start, end + 1);
-    const visible = selectedFlags.length > 0 && selectedFlags.every((value) => value === false);
-    for (let index = start; index <= end && index < flags.length; index++) {
-        flags[index] = visible;
-    }
-    return {
-        byView: {
-            ...cloneByView(byView),
-            [viewKey]: flags,
-        },
-        visible,
-    };
-}
-
-const VERTEX_SNAP_T = 0.03;
+const VERTEX_SNAP_T = 0.000001;
 
 function cloneByView(byView: Record<string, boolean[]>): Record<string, boolean[]> {
     const next: Record<string, boolean[]> = {};
@@ -481,13 +416,17 @@ function insertWorldPoint(
     return { points: nextPoints, byView: nextByView, vertexIndex: insertIndex };
 }
 
-export function hideRangeBetweenHits(
+export function toggleRangeBetweenHits(
     points3D: THREE.Vector3[],
     byView: Record<string, boolean[]>,
     viewKey: string,
     hitA: IPolylineHit,
     hitB: IPolylineHit,
-): { points: THREE.Vector3[]; byView: Record<string, boolean[]> } | null {
+): {
+    points: THREE.Vector3[];
+    byView: Record<string, boolean[]>;
+    visible: boolean;
+} | null {
     const worldA = hitToWorldPoint(points3D, hitA);
     const worldB = hitToWorldPoint(points3D, hitB);
     let points = points3D.map((point) => point.clone());
@@ -506,9 +445,10 @@ export function hideRangeBetweenHits(
         return null;
     }
     const flags = normalizeSegmentVisible(nextByView[viewKey], points.length);
+    const visible = flags.slice(start, end).every((value) => value === false);
     for (let index = start; index < end; index++) {
-        flags[index] = false;
+        flags[index] = visible;
     }
     nextByView[viewKey] = flags;
-    return { points, byView: nextByView };
+    return { points, byView: nextByView, visible };
 }

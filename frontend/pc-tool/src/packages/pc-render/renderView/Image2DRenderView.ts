@@ -44,6 +44,7 @@ interface IOption {
     imgSize?: [number, number];
     imgUrl?: string;
     imgObject: HTMLImageElement;
+    occlusionMask?: Array<{ x: number; y: number }>;
 }
 
 let positionsFrontV3 = [...Array(4)].map((e) => new THREE.Vector3());
@@ -71,6 +72,7 @@ const fisheyeEdgeSegments = 24;
 
 export default class Image2DRenderView extends Render {
     container: HTMLDivElement;
+    visibilityViewKey: string = '';
     // matrix
     // proxy offset matrix
     proxyOffset: THREE.Vector2 = new THREE.Vector2();
@@ -268,6 +270,47 @@ export default class Image2DRenderView extends Render {
 
     isFisheye() {
         return isFisheyeCamera(this.option.cameraModel);
+    }
+
+    hasOcclusionMask(): boolean {
+        return Boolean(this.option.occlusionMask && this.option.occlusionMask.length >= 3);
+    }
+
+    isImagePointAutoVisible(point: THREE.Vector2): boolean {
+        if (
+            !Number.isFinite(point.x) ||
+            !Number.isFinite(point.y) ||
+            point.x < 0 ||
+            point.x > this.imgSize.x ||
+            point.y < 0 ||
+            point.y > this.imgSize.y
+        ) {
+            return false;
+        }
+        const polygon = this.option.occlusionMask;
+        if (!polygon || polygon.length < 3) {
+            return true;
+        }
+        const normalized = new THREE.Vector2(
+            point.x / this.imgSize.x,
+            point.y / this.imgSize.y,
+        );
+        let inside = false;
+        for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+            const currentPoint = polygon[index];
+            const previousPoint = polygon[previous];
+            const crosses =
+                currentPoint.y > normalized.y !== previousPoint.y > normalized.y &&
+                normalized.x <
+                    ((previousPoint.x - currentPoint.x) *
+                        (normalized.y - currentPoint.y)) /
+                        (previousPoint.y - currentPoint.y) +
+                        currentPoint.x;
+            if (crosses) {
+                inside = !inside;
+            }
+        }
+        return !inside;
     }
 
     testFrustum() {

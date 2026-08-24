@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { AnnotateType, Intersect } from '../type';
 import { ObjectType } from 'pc-editor';
 
-const HIDDEN_LINE_COLOR = 0xff7a45;
+const HIDDEN_LINE_COLOR = 0xffe600;
 const CAMERA_VIEW_KEYS = ['0', '1', '2', '3'];
 
 export default class GroundPolyline extends THREE.LineSegments {
@@ -19,13 +19,9 @@ export default class GroundPolyline extends THREE.LineSegments {
         this.type = 'GroundPolyline';
         this.hiddenLine = new THREE.LineSegments(
             new THREE.BufferGeometry(),
-            new THREE.LineDashedMaterial({
+            new THREE.LineBasicMaterial({
                 color: HIDDEN_LINE_COLOR,
-                dashSize: 0.4,
-                gapSize: 0.25,
                 toneMapped: false,
-                transparent: true,
-                opacity: 0.75,
             }),
         );
         this.hiddenLine.visible = false;
@@ -79,6 +75,16 @@ export default class GroundPolyline extends THREE.LineSegments {
 
     getBevSegmentVisible(): boolean[] {
         return this.bevSegmentVisible.slice();
+    }
+
+    isVisibilityBoundaryPoint(pointIndex: number): boolean {
+        if (pointIndex <= 0 || pointIndex >= this.points3D.length - 1) {
+            return false;
+        }
+        return Object.values(this.segmentVisibleByView).some((flags) => {
+            const normalized = this.normalizeSegmentVisible(flags);
+            return normalized[pointIndex - 1] !== normalized[pointIndex];
+        });
     }
 
     padNewSegmentsForAllViews(
@@ -221,7 +227,6 @@ export default class GroundPolyline extends THREE.LineSegments {
         this.geometry.setFromPoints(visiblePoints);
         if (hiddenPoints.length >= 2) {
             this.hiddenLine.geometry.setFromPoints(hiddenPoints);
-            this.hiddenLine.computeLineDistances();
             this.hiddenLine.visible = true;
         } else {
             this.hiddenLine.visible = false;

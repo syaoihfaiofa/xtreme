@@ -102,10 +102,6 @@ export default function useTool() {
             }
         });
         if (config.groundPolylineVisibilityEdit) {
-            editor.actionManager.execute('projectObject2D', {
-                createFlag: true,
-                updateFlag: true,
-            });
             editor.showMsg(
                 'info',
                 '请在相机图的折线上依次点击两个点，两点之间将设为不可见',
