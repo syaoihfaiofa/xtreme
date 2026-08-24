@@ -133,9 +133,7 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         'edit-ground-polyline-visibility-2d',
     ) as EditGroundPolylineVisibility2DAction;
     if (visibilityAction) {
-        visibilityAction.isEditEnabled = (): boolean => {
-            return editor.state.config.groundPolylineVisibilityEdit === true;
-        };
+        visibilityAction.toggle(editor.state.config.groundPolylineVisibilityEdit === true);
         visibilityAction.onFirstPoint = (): void => {
             editor.showMsg('info', '已选第一个点，请再点击折线上的第二个点', 3);
         };

@@ -94,19 +94,17 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
     static actionName: string = 'edit-ground-polyline-visibility-2d';
     renderView: Image2DRenderView;
     pendingImagePoint: THREE.Vector2 | null = null;
-    isEditEnabled?: () => boolean;
     onFirstPoint?: (picked: IPickedPolylinePoint) => void;
     onRangePicked?: (first: IPickedPolylinePoint, second: IPickedPolylinePoint) => void;
     onMiss?: () => void;
     private pending: IPickedPolylinePoint | null = null;
     private marker: HTMLDivElement | null = null;
-    private eventTarget: HTMLElement | null = null;
 
     readonly handlePointerDown = (event: PointerEvent): void => {
         const isPickButton = event.button === 0 || event.button === 2;
         if (
             !this.isEventInsideView(event) ||
-            !this.isEditEnabled?.() ||
+            !this.enabled ||
             !isPickButton ||
             event.altKey ||
             event.ctrlKey ||
@@ -140,7 +138,7 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
     };
 
     private readonly handleContextMenu = (event: MouseEvent): void => {
-        if (!this.isEditEnabled?.() || !this.isEventInsideView(event)) {
+        if (!this.enabled || !this.isEventInsideView(event)) {
             return;
         }
         event.preventDefault();
@@ -150,7 +148,7 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
     constructor(renderView: Image2DRenderView) {
         super();
         this.renderView = renderView;
-        this.enabled = true;
+        this.enabled = false;
     }
 
     init(): void {
@@ -160,14 +158,12 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
             'background:#ffcc00;border:2px solid #10252a;box-sizing:border-box;' +
             'transform:translate(-50%,-50%);pointer-events:none;z-index:20;display:none;';
         this.renderView.container.appendChild(this.marker);
-        this.eventTarget = this.renderView.container.parentElement || this.renderView.container;
-        this.eventTarget.addEventListener('pointerdown', this.handlePointerDown, true);
+        window.addEventListener('pointerdown', this.handlePointerDown, true);
         window.addEventListener('contextmenu', this.handleContextMenu, true);
     }
 
     destroy(): void {
-        this.eventTarget?.removeEventListener('pointerdown', this.handlePointerDown, true);
-        this.eventTarget = null;
+        window.removeEventListener('pointerdown', this.handlePointerDown, true);
         window.removeEventListener('contextmenu', this.handleContextMenu, true);
         this.marker?.remove();
         this.marker = null;

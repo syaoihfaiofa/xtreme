@@ -91,9 +91,10 @@ export default function useTool() {
         config.groundPolylineVisibilityEdit = !config.groundPolylineVisibilityEdit;
         editor.pc.renderViews.forEach((view) => {
             const visibilityAction = view.getAction('edit-ground-polyline-visibility-2d') as
-                | { clearPending?: () => void }
+                | { clearPending?: () => void; toggle?: (enabled: boolean) => void }
                 | undefined;
             visibilityAction?.clearPending?.();
+            visibilityAction?.toggle?.(config.groundPolylineVisibilityEdit);
             if (config.groundPolylineVisibilityEdit) {
                 view.disableAction(['edit-2d', 'select']);
             } else {
