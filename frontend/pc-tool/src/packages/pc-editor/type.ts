@@ -425,6 +425,7 @@ export interface IClassificationAttr {
 
 export interface IFrame {
     datasetId?: string;
+    sceneId?: string;
     // id
     id: string;
     // uuid

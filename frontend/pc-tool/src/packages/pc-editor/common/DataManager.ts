@@ -21,7 +21,6 @@ import { Const, ICmdName, IFilter, IUserData } from '../type';
 import Event from '../config/event';
 import * as THREE from 'three';
 import {
-    applyGroundPolylineImageBoundaryOcclusion,
     refreshGroundPolylineBevDisplay,
 } from '../utils/groundPolylineVisibility';
 
@@ -321,7 +320,6 @@ export default class DataManager {
     ): void {
         object.setPoints(points);
         if (object instanceof GroundPolyline) {
-            applyGroundPolylineImageBoundaryOcclusion(this.editor, object);
             refreshGroundPolylineBevDisplay(this.editor, object);
         }
         this.updateGroundShapeProjections(object);
@@ -418,9 +416,6 @@ export default class DataManager {
             (object): object is GroundPolyline => object instanceof GroundPolyline,
         );
         if (polylines.length > 0) {
-            polylines.forEach((polyline) => {
-                applyGroundPolylineImageBoundaryOcclusion(this.editor, polyline);
-            });
             refreshGroundPolylineBevDisplay(this.editor, polylines);
         }
         this.editor.pc.render();
@@ -472,18 +467,6 @@ export default class DataManager {
             objects.forEach((object) => rebuiltHasMap.set(object.uuid, object));
             this.hasMap.set(frameKey, rebuiltHasMap);
         }
-        let imageBoundaryChanged = false;
-        objects
-            .filter((object): object is GroundPolyline => object instanceof GroundPolyline)
-            .forEach((polyline) => {
-                imageBoundaryChanged =
-                    applyGroundPolylineImageBoundaryOcclusion(this.editor, polyline) ||
-                    imageBoundaryChanged;
-            });
-        if (imageBoundaryChanged) {
-            frame.needSave = true;
-        }
-
         const {
             config: { withoutTaskId },
         } = this.editor.state;
@@ -496,6 +479,12 @@ export default class DataManager {
             filterMap,
             withoutTaskId,
         );
+        const groundPolylines = annotate3D.filter(
+            (object): object is GroundPolyline => object instanceof GroundPolyline,
+        );
+        if (groundPolylines.length > 0) {
+            refreshGroundPolylineBevDisplay(this.editor, groundPolylines);
+        }
 
         this.editor.pc.annotate2D = annotate2D;
         this.editor.pc.annotate3D.children = annotate3D;

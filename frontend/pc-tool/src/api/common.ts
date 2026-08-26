@@ -220,7 +220,7 @@ export async function getInfoByRecordId(recordId: string) {
 
     let isSeriesFrame = ['FRAME_SERIES', 'SCENE'].includes(data.itemType);
     let modelRecordId = data.serialNo || '';
-    const seriesFrameId = data.datas[0]?.sceneId;
+    const seriesFrameId = data.datas[0]?.sceneId ? String(data.datas[0].sceneId) : '';
     let model = undefined as IModelResult | undefined;
     if (modelRecordId) {
         model = {
@@ -236,6 +236,7 @@ export async function getInfoByRecordId(recordId: string) {
         dataInfos.push({
             // id: config.id,
             id: config.dataId + '',
+            sceneId: config.sceneId != null ? String(config.sceneId) : undefined,
             datasetId: config.datasetId + '',
             teamId: config.teamId + '',
             // config: [],

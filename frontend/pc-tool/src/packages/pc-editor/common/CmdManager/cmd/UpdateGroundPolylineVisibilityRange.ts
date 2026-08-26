@@ -6,6 +6,7 @@ import { refreshGroundPolylineBevDisplay } from '../../../utils/groundPolylineVi
 interface IUndoData {
     points: THREE.Vector3[];
     byView: Record<string, boolean[]>;
+    forceVisibleByView: Record<string, boolean[]>;
 }
 
 export default class UpdateGroundPolylineVisibilityRange extends CmdBase<
@@ -13,15 +14,19 @@ export default class UpdateGroundPolylineVisibilityRange extends CmdBase<
     IUndoData
 > {
     redo(): void {
-        const { object, points, byView } = this.data;
+        const { object, points, byView, forceVisibleByView } = this.data;
         if (!this.undoData) {
             this.undoData = {
                 points: object.points3D.map((point) => point.clone()),
                 byView: JSON.parse(JSON.stringify(object.segmentVisibleByView)),
+                forceVisibleByView: JSON.parse(
+                    JSON.stringify(object.segmentForceVisibleByView),
+                ),
             };
         }
         this.editor.dataManager.setGroundPolygonPoints(object, points);
         object.setSegmentVisibleByView(byView);
+        object.setSegmentForceVisibleByView(forceVisibleByView);
         refreshGroundPolylineBevDisplay(this.editor, object);
         const frame = (object as { frame?: import('../../type').IFrame }).frame;
         this.editor.dataManager.onAnnotatesChange([object], frame, { type: 'userData' });
@@ -31,6 +36,7 @@ export default class UpdateGroundPolylineVisibilityRange extends CmdBase<
         if (!this.undoData) return;
         this.editor.dataManager.setGroundPolygonPoints(this.data.object, this.undoData.points);
         this.data.object.setSegmentVisibleByView(this.undoData.byView);
+        this.data.object.setSegmentForceVisibleByView(this.undoData.forceVisibleByView);
         refreshGroundPolylineBevDisplay(this.editor, this.data.object);
         const frame = (this.data.object as { frame?: import('../../type').IFrame }).frame;
         this.editor.dataManager.onAnnotatesChange([this.data.object], frame, { type: 'userData' });

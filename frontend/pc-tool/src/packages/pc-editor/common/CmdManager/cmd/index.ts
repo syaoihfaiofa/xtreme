@@ -45,6 +45,7 @@ export interface ICmdOption {
         object: import('pc-render').GroundPolyline;
         points: THREE.Vector3[];
         byView: Record<string, boolean[]>;
+        forceVisibleByView: Record<string, boolean[]>;
     };
     'update-2d-rect': {
         object: Rect;

@@ -94,6 +94,7 @@ export default function UseFlow() {
     }
 
     function iniQuery() {
+        query = useQuery();
         Object.keys(bsState.query).forEach((key) => delete bsState.query[key]);
         Object.assign(bsState.query, query || {});
         bsState.recordId = (query.recordId as string) || '';

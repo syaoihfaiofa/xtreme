@@ -442,6 +442,7 @@
   const scrollRef = ref<Nullable<ScrollActionType>>(null);
   const total = ref<number>(0);
   const pageNo = ref<number>(1);
+  let fetchListRequestId = 0;
   const modelrunOption = ref<any>();
   const annotationStatus = ref<any>();
   let modelRunResultList = ref<any>([]);
@@ -610,6 +611,7 @@
   };
 
   const fetchList = async (filter?, fetchType?) => {
+    const requestId = ++fetchListRequestId;
     open();
     let params = {
       pageNo: pageNo.value,
@@ -647,6 +649,7 @@
       let tempList: DatasetItem[];
       if (fetchType) {
         const res: DatasetGetResultModel = await datasetApi(params);
+        if (requestId !== fetchListRequestId) return;
         tempList = res.list;
         list.value = list.value.concat(res.list);
         if (res.list.length === 0) {
@@ -655,6 +658,7 @@
         total.value = res.total;
       } else {
         const res: DatasetGetResultModel = await datasetApi(params);
+        if (requestId !== fetchListRequestId) return;
         tempList = res.list;
 
         list.value = res.list;
@@ -683,7 +687,9 @@
     } catch (error) {
       console.log(error);
     }
-    close();
+    if (requestId === fetchListRequestId) {
+      close();
+    }
   };
 
   const fixedFetchList = () => {
@@ -880,6 +886,18 @@
     selectedList.value = [];
   };
 
+  const buildToolQuery = (
+    recordId: string | number,
+    dataIds: Array<string | number>,
+    operateItemType: dataTypeEnum,
+  ) => {
+    const query: Record<string, string | number> = { recordId };
+    if (operateItemType === dataTypeEnum.FRAME_SERIES && dataIds.length === 1) {
+      query.dataId = dataIds[0];
+    }
+    return query;
+  };
+
   const handleAnnotate = async () => {
     const data = unref(list).filter((item) => unref(selectedList).includes(item.id));
 
@@ -891,12 +909,13 @@
       return;
     }
 
+    const dataIds = templist.map((item) => item.id || item) as string[];
     const res = await takeRecordByData({
       datasetId: id as unknown as number,
-      dataIds: templist.map((item) => item.id || item) as string[],
+      dataIds,
       operateItemType: type,
     });
-    goToTool({ recordId: res }, info.value?.type);
+    goToTool(buildToolQuery(res, dataIds, type), info.value?.type);
     fixedFetchList();
   };
 
@@ -915,7 +934,7 @@
       operateItemType: dataType,
     });
     getLockedData();
-    goToTool({ recordId: res }, info.value?.type);
+    goToTool(buildToolQuery(res, [dataId], dataType), info.value?.type);
     fixedFetchList();
   };
 
@@ -929,7 +948,7 @@
             dataIds: list,
             operateItemType: type,
           });
-          goToTool({ recordId: res }, info.value?.type);
+          goToTool(buildToolQuery(res, list, type), info.value?.type);
         },
       });
     }
@@ -943,7 +962,7 @@
       dataIds: [dataId],
       operateItemType: dataTypeEnum.FRAME_SERIES,
     });
-    goToTool({ recordId: res }, info.value?.type);
+    goToTool(buildToolQuery(res, [dataId], dataTypeEnum.FRAME_SERIES), info.value?.type);
     // window.location.reload();
   };
   // Open Frame
@@ -1020,7 +1039,7 @@
   };
 
   const handleReset = async () => {
-    // list.value = [];
+    list.value = [];
     unref(scrollRef)?.scrollTo(0);
     pageNo.value = 1;
     selectedList.value = [];

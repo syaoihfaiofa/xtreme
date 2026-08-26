@@ -20,7 +20,9 @@ assert.match(imageView, /visibilityViewKey: string = '';/);
 assert.match(viewManager, /view\.visibilityViewKey = String\(index\);/);
 assert.match(viewManager, /maxView\.visibilityViewKey = String\(index\);/);
 assert.match(visibility, /if \(view\.visibilityViewKey\) \{/);
-assert.match(visibility, /getRelevantViewKeysForSegment\(points3D, index, views\)/);
-assert.match(visibility, /return !allInvisible;/);
+assert.match(visibility, /CAMERA_VIEW_KEYS\.some\(\(viewKey\) => !viewsByKey\.has\(viewKey\)\)/);
+assert.match(visibility, /forceVisible\[index\] \|\|/);
+assert.match(visibility, /return effectiveByView\.some\(\(flags\) => flags\[index\]\);/);
+assert.doesNotMatch(visibility, /const relevantViews =/);
 
 console.log('curb visibility aggregation tests passed');

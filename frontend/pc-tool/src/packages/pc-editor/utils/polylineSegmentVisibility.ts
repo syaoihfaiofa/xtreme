@@ -49,6 +49,21 @@ export function normalizeSegmentVisible(flags: boolean[] | undefined, pointCount
     return normalized;
 }
 
+export function normalizeSegmentForceVisible(
+    flags: boolean[] | undefined,
+    pointCount: number,
+): boolean[] {
+    const segmentCount = Math.max(0, pointCount - 1);
+    const normalized = Array.from({ length: segmentCount }, () => false);
+    if (!flags) {
+        return normalized;
+    }
+    for (let index = 0; index < segmentCount; index++) {
+        normalized[index] = flags[index] === true;
+    }
+    return normalized;
+}
+
 export function segmentVisibleToExport(flags: boolean[]): ISegmentVisibilityEntry[] {
     return flags.map((visible, index) => ({ index, visible }));
 }
@@ -56,8 +71,12 @@ export function segmentVisibleToExport(flags: boolean[]): ISegmentVisibilityEntr
 export function segmentVisibleFromImport(
     items: ISegmentVisibilityEntry[] | undefined,
     pointCount: number,
+    defaultVisible: boolean = true,
 ): boolean[] {
-    const flags = createDefaultSegmentVisible(pointCount);
+    const flags = Array.from(
+        { length: Math.max(0, pointCount - 1) },
+        () => defaultVisible,
+    );
     if (!Array.isArray(items)) {
         return flags;
     }
@@ -73,6 +92,7 @@ export function segmentVisibleFromImport(
 export function segmentVisibilityByViewFromImport(
     raw: SegmentVisibilityByView | undefined,
     pointCount: number,
+    defaultVisible: boolean = true,
 ): Record<string, boolean[]> {
     const byView: Record<string, boolean[]> = {};
     if (!raw || typeof raw !== 'object') {
@@ -82,7 +102,7 @@ export function segmentVisibilityByViewFromImport(
         if (viewKey === 'bev' || !isCameraViewKey(viewKey)) {
             return;
         }
-        byView[viewKey] = segmentVisibleFromImport(entries, pointCount);
+        byView[viewKey] = segmentVisibleFromImport(entries, pointCount, defaultVisible);
     });
     return byView;
 }
@@ -214,10 +234,15 @@ export function resolveEffectiveVisibleForView(
     manualFlags: boolean[] | undefined,
     points3D: THREE.Vector3[],
     view: Image2DRenderView,
+    forceVisibleFlags?: boolean[],
 ): boolean[] {
     const normalized = normalizeSegmentVisible(manualFlags, points3D.length);
+    const forceVisible = normalizeSegmentForceVisible(forceVisibleFlags, points3D.length);
     return normalized.map((manualVisible, index) => {
-        return manualVisible && isSegmentAutoVisibleInView(points3D, index, view);
+        return (
+            forceVisible[index] ||
+            (manualVisible && isSegmentAutoVisibleInView(points3D, index, view))
+        );
     });
 }
 
@@ -225,34 +250,28 @@ export function deriveBevVisibility(
     byView: Record<string, boolean[]>,
     points3D: THREE.Vector3[],
     views: Image2DRenderView[],
+    forceVisibleByView: Record<string, boolean[]> = {},
 ): boolean[] {
     const segmentCount = Math.max(0, points3D.length - 1);
     if (segmentCount === 0) {
         return [];
     }
-    const projectedViews = views.map((view) => ({
-        flags: normalizeSegmentVisible(
-            byView[getViewKeyFromImageView(view)],
-            points3D.length,
+    const viewsByKey = new Map(
+        views.map((view) => [getViewKeyFromImageView(view), view] as const),
+    );
+    if (CAMERA_VIEW_KEYS.some((viewKey) => !viewsByKey.has(viewKey))) {
+        return Array.from({ length: segmentCount }, () => true);
+    }
+    const effectiveByView = CAMERA_VIEW_KEYS.map((viewKey) =>
+        resolveEffectiveVisibleForView(
+            byView[viewKey],
+            points3D,
+            viewsByKey.get(viewKey) as Image2DRenderView,
+            forceVisibleByView[viewKey],
         ),
-        projected: Array.from({ length: segmentCount }, (_, index) =>
-            getRelevantViewKeysForSegment(points3D, index, views).includes(
-                getViewKeyFromImageView(view),
-            ),
-        ),
-        autoVisible: Array.from({ length: segmentCount }, (_, index) =>
-            isSegmentAutoVisibleInView(points3D, index, view),
-        ),
-    }));
+    );
     return Array.from({ length: segmentCount }, (_, index) => {
-        const relevantViews = projectedViews.filter((entry) => entry.projected[index]);
-        if (relevantViews.length === 0) {
-            return false;
-        }
-        const allInvisible = relevantViews.every(
-            (entry) => entry.flags[index] === false || !entry.autoVisible[index],
-        );
-        return !allInvisible;
+        return effectiveByView.some((flags) => flags[index]);
     });
 }
 
@@ -419,22 +438,80 @@ function insertWorldPoint(
 export function toggleRangeBetweenHits(
     points3D: THREE.Vector3[],
     byView: Record<string, boolean[]>,
+    forceVisibleByView: Record<string, boolean[]>,
+    effectiveByView: Record<string, boolean[]>,
     viewKey: string,
     hitA: IPolylineHit,
     hitB: IPolylineHit,
 ): {
     points: THREE.Vector3[];
     byView: Record<string, boolean[]>;
+    forceVisibleByView: Record<string, boolean[]>;
     visible: boolean;
 } | null {
     const worldA = hitToWorldPoint(points3D, hitA);
     const worldB = hitToWorldPoint(points3D, hitB);
     let points = points3D.map((point) => point.clone());
     let nextByView = cloneByView(byView);
-    const first = insertWorldPoint(points, nextByView, worldA);
-    const second = insertWorldPoint(first.points, first.byView, worldB);
+    let nextForceVisibleByView = cloneByView(forceVisibleByView);
+    let nextEffectiveByView = cloneByView(effectiveByView);
+    const insertPoint = (
+        currentPoints: THREE.Vector3[],
+        currentByView: Record<string, boolean[]>,
+        currentForceVisible: Record<string, boolean[]>,
+        currentEffective: Record<string, boolean[]>,
+        worldPoint: THREE.Vector3,
+    ): {
+        points: THREE.Vector3[];
+        byView: Record<string, boolean[]>;
+        vertexIndex: number;
+        forceVisibleByView: Record<string, boolean[]>;
+        effectiveByView: Record<string, boolean[]>;
+    } => {
+        const result = insertWorldPoint(currentPoints, currentByView, worldPoint);
+        if (result.points.length === currentPoints.length) {
+            return {
+                ...result,
+                forceVisibleByView: currentForceVisible,
+                effectiveByView: currentEffective,
+            };
+        }
+        const forceVisible = cloneByView(currentForceVisible);
+        const effective = cloneByView(currentEffective);
+        CAMERA_VIEW_KEYS.forEach((key) => {
+            forceVisible[key] = remapAfterInsert(
+                normalizeSegmentForceVisible(forceVisible[key], currentPoints.length),
+                result.vertexIndex,
+            );
+            effective[key] = remapAfterInsert(
+                normalizeSegmentVisible(effective[key], currentPoints.length),
+                result.vertexIndex,
+            );
+        });
+        return {
+            ...result,
+            forceVisibleByView: forceVisible,
+            effectiveByView: effective,
+        };
+    };
+    const first = insertPoint(
+        points,
+        nextByView,
+        nextForceVisibleByView,
+        nextEffectiveByView,
+        worldA,
+    );
+    const second = insertPoint(
+        first.points,
+        first.byView,
+        first.forceVisibleByView,
+        first.effectiveByView,
+        worldB,
+    );
     points = second.points;
     nextByView = second.byView;
+    nextForceVisibleByView = second.forceVisibleByView;
+    nextEffectiveByView = second.effectiveByView;
     let firstIndex = first.vertexIndex;
     if (second.points.length > first.points.length && second.vertexIndex <= firstIndex) {
         firstIndex += 1;
@@ -445,10 +522,22 @@ export function toggleRangeBetweenHits(
         return null;
     }
     const flags = normalizeSegmentVisible(nextByView[viewKey], points.length);
-    const visible = flags.slice(start, end).every((value) => value === false);
+    const forceVisible = normalizeSegmentForceVisible(
+        nextForceVisibleByView[viewKey],
+        points.length,
+    );
+    const effective = normalizeSegmentVisible(nextEffectiveByView[viewKey], points.length);
+    const visible = effective.slice(start, end).every((value) => value === false);
     for (let index = start; index < end; index++) {
         flags[index] = visible;
+        forceVisible[index] = visible;
     }
     nextByView[viewKey] = flags;
-    return { points, byView: nextByView, visible };
+    nextForceVisibleByView[viewKey] = forceVisible;
+    return {
+        points,
+        byView: nextByView,
+        forceVisibleByView: nextForceVisibleByView,
+        visible,
+    };
 }

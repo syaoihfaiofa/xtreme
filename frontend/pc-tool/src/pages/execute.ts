@@ -29,6 +29,11 @@ export function execute(): IPageHandler {
         // set mode
         editor.setMode(modes.execute);
 
+        editor.clear();
+        editor.reset();
+        editor.trackManager.clear();
+        editor.cmdManager.reset();
+
         editor.showLoading(true);
         try {
             // get data list by record id

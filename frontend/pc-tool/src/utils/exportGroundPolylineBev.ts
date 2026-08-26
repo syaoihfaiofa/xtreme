@@ -16,6 +16,7 @@ export interface ITrainingBevPolylineContour {
 export interface ITrainingBevPolylineExportInput {
     points: THREE.Vector3[];
     segmentVisibilityByView?: SegmentVisibilityByView;
+    segmentForceVisibleByView?: SegmentVisibilityByView;
 }
 
 export function toTrainingBevPolylineContour(
@@ -46,10 +47,25 @@ export function toTrainingBevPolylineContour(
         });
         byView[viewKey] = flags;
     });
+    const forceVisibleByView: Record<string, boolean[]> = {};
+    Object.entries(input.segmentForceVisibleByView || {}).forEach(([viewKey, entries]) => {
+        const flags = Array.from({ length: Math.max(0, points.length - 1) }, () => false);
+        entries.forEach((entry) => {
+            if (Number.isInteger(entry.index) && entry.index >= 0 && entry.index < flags.length) {
+                flags[entry.index] = entry.visible === true;
+            }
+        });
+        forceVisibleByView[viewKey] = flags;
+    });
     const vectorPoints = input.points.map(
         (point) => point.clone() as THREE.Vector3,
     );
-    const bevVisible = deriveBevVisibility(byView, vectorPoints, views);
+    const bevVisible = deriveBevVisibility(
+        byView,
+        vectorPoints,
+        views,
+        forceVisibleByView,
+    );
     return {
         points,
         segmentVisibility: toBevExportSegmentVisibility(bevVisible),
@@ -64,6 +80,12 @@ export function toTrainingBevPolylineFromObject(
         points: polyline.points3D,
         segmentVisibilityByView: Object.fromEntries(
             Object.entries(polyline.segmentVisibleByView).map(([viewKey, flags]) => [
+                viewKey,
+                flags.map((visible, index) => ({ index, visible })),
+            ]),
+        ),
+        segmentForceVisibleByView: Object.fromEntries(
+            Object.entries(polyline.segmentForceVisibleByView).map(([viewKey, flags]) => [
                 viewKey,
                 flags.map((visible, index) => ({ index, visible })),
             ]),

@@ -10,7 +10,8 @@ else
 fi
 
 echo "Building pc-tool only via Docker (~1-2 min, uses cache)..."
-DOCKER_BUILDKIT=1 docker build --pull=false -f "${ROOT}/frontend/Dockerfile.pc-tool" -t xtreme-pc-tool-fast "${ROOT}/frontend"
+# Legacy builder avoids pulling docker/dockerfile:1 when registry is slow/unreachable.
+DOCKER_BUILDKIT="${DOCKER_BUILDKIT:-0}" docker build --pull=false -f "${ROOT}/frontend/Dockerfile.pc-tool" -t xtreme-pc-tool-fast "${ROOT}/frontend"
 
 echo "Extracting dist from build image..."
 TMPDIR="$(mktemp -d)"

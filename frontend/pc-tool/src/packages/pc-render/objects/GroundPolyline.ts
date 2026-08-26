@@ -5,12 +5,20 @@ import { ObjectType } from 'pc-editor';
 const HIDDEN_LINE_COLOR = 0xffe600;
 const CAMERA_VIEW_KEYS = ['0', '1', '2', '3'];
 
+export interface IBevRenderSegment {
+    start: THREE.Vector3;
+    end: THREE.Vector3;
+    visible: boolean;
+}
+
 export default class GroundPolyline extends THREE.LineSegments {
     annotateType = AnnotateType.ANNOTATE_3D;
     objectType = ObjectType.TYPE_GROUND_POLYLINE;
     color = new THREE.Color();
     readonly points3D: THREE.Vector3[] = [];
     segmentVisibleByView: Record<string, boolean[]> = {};
+    segmentForceVisibleByView: Record<string, boolean[]> = {};
+    private autoVisibilityBoundaryPointIndices = new Set<number>();
     private bevSegmentVisible: boolean[] = [];
     private readonly hiddenLine: THREE.LineSegments;
 
@@ -50,8 +58,19 @@ export default class GroundPolyline extends THREE.LineSegments {
         });
     }
 
+    setSegmentForceVisibleByView(byView: Record<string, boolean[]>): void {
+        this.segmentForceVisibleByView = {};
+        Object.entries(byView).forEach(([viewKey, flags]) => {
+            this.segmentForceVisibleByView[viewKey] = this.normalizeSegmentForceVisible(flags);
+        });
+    }
+
     getSegmentVisibleForView(viewKey: string): boolean[] {
         return this.normalizeSegmentVisible(this.segmentVisibleByView[viewKey]);
+    }
+
+    getSegmentForceVisibleForView(viewKey: string): boolean[] {
+        return this.normalizeSegmentForceVisible(this.segmentForceVisibleByView[viewKey]);
     }
 
     setSegmentVisibleForView(viewKey: string, flags: boolean[]): void {
@@ -77,14 +96,45 @@ export default class GroundPolyline extends THREE.LineSegments {
         return this.bevSegmentVisible.slice();
     }
 
+    setBevRenderSegments(segments: readonly IBevRenderSegment[]): void {
+        const visiblePoints: THREE.Vector3[] = [];
+        const hiddenPoints: THREE.Vector3[] = [];
+        segments.forEach((segment) => {
+            const target = segment.visible ? visiblePoints : hiddenPoints;
+            target.push(segment.start.clone(), segment.end.clone());
+        });
+        this.geometry.setFromPoints(visiblePoints);
+        this.geometry.computeBoundingBox();
+        this.geometry.computeBoundingSphere();
+        this.hiddenLine.geometry.setFromPoints(hiddenPoints);
+        this.hiddenLine.geometry.computeBoundingBox();
+        this.hiddenLine.geometry.computeBoundingSphere();
+        this.hiddenLine.visible = hiddenPoints.length >= 2;
+    }
+
     isVisibilityBoundaryPoint(pointIndex: number): boolean {
         if (pointIndex <= 0 || pointIndex >= this.points3D.length - 1) {
             return false;
         }
-        return Object.values(this.segmentVisibleByView).some((flags) => {
+        if (this.autoVisibilityBoundaryPointIndices.has(pointIndex)) {
+            return true;
+        }
+        const allFlags = [
+            ...Object.values(this.segmentVisibleByView),
+            ...Object.values(this.segmentForceVisibleByView),
+        ];
+        return allFlags.some((flags) => {
             const normalized = this.normalizeSegmentVisible(flags);
             return normalized[pointIndex - 1] !== normalized[pointIndex];
         });
+    }
+
+    setAutoVisibilityBoundaryPointIndices(indices: Iterable<number>): void {
+        this.autoVisibilityBoundaryPointIndices = new Set(
+            Array.from(indices).filter(
+                (index) => index > 0 && index < this.points3D.length - 1,
+            ),
+        );
     }
 
     padNewSegmentsForAllViews(
@@ -102,6 +152,16 @@ export default class GroundPolyline extends THREE.LineSegments {
             }
         });
         this.segmentVisibleByView = next;
+        const nextForceVisible: Record<string, boolean[]> = {};
+        CAMERA_VIEW_KEYS.forEach((viewKey) => {
+            nextForceVisible[viewKey] = this.padFlags(
+                this.segmentForceVisibleByView[viewKey],
+                oldPointCount,
+                newPointCount,
+                false,
+            );
+        });
+        this.segmentForceVisibleByView = nextForceVisible;
     }
 
     raycast(raycaster: THREE.Raycaster, intersects: Intersect[]): void {
@@ -122,6 +182,16 @@ export default class GroundPolyline extends THREE.LineSegments {
             next[viewKey] = this.remapFlagsForPointCount(flags, oldPointCount, newPointCount);
         });
         this.segmentVisibleByView = next;
+        const nextForceVisible: Record<string, boolean[]> = {};
+        Object.entries(this.segmentForceVisibleByView).forEach(([viewKey, flags]) => {
+            nextForceVisible[viewKey] = this.remapFlagsForPointCount(
+                flags,
+                oldPointCount,
+                newPointCount,
+                false,
+            );
+        });
+        this.segmentForceVisibleByView = nextForceVisible;
         if (this.bevSegmentVisible.length > 0) {
             this.bevSegmentVisible = this.remapFlagsForPointCount(
                 this.bevSegmentVisible,
@@ -145,17 +215,31 @@ export default class GroundPolyline extends THREE.LineSegments {
         return normalized;
     }
 
+    private normalizeSegmentForceVisible(flags: boolean[] | undefined): boolean[] {
+        return this.normalizeSegmentVisibleForCount(flags, this.points3D.length, false);
+    }
+
     private remapFlagsForPointCount(
         flags: boolean[] | undefined,
         oldPointCount: number,
         newPointCount: number,
+        defaultValue: boolean = true,
     ): boolean[] {
-        const normalized = this.normalizeSegmentVisibleForCount(flags, oldPointCount);
+        const normalized = this.normalizeSegmentVisibleForCount(
+            flags,
+            oldPointCount,
+            defaultValue,
+        );
         if (newPointCount < 2) {
             return [];
         }
         if (newPointCount > oldPointCount) {
-            return this.padFlags(normalized, oldPointCount, newPointCount, normalized.at(-1) ?? true);
+            return this.padFlags(
+                normalized,
+                oldPointCount,
+                newPointCount,
+                normalized.at(-1) ?? defaultValue,
+            );
         }
         let next = [...normalized];
         let currentPointCount = oldPointCount;
@@ -165,15 +249,16 @@ export default class GroundPolyline extends THREE.LineSegments {
             next.splice(removeIndex - 1, 2, mergedVisible);
             currentPointCount -= 1;
         }
-        return this.normalizeSegmentVisibleForCount(next, newPointCount);
+        return this.normalizeSegmentVisibleForCount(next, newPointCount, defaultValue);
     }
 
     private normalizeSegmentVisibleForCount(
         flags: boolean[] | undefined,
         pointCount: number,
+        defaultValue: boolean = true,
     ): boolean[] {
         const segmentCount = Math.max(0, pointCount - 1);
-        const normalized = Array.from({ length: segmentCount }, () => true);
+        const normalized = Array.from({ length: segmentCount }, () => defaultValue);
         if (!flags) {
             return normalized;
         }

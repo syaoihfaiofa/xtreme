@@ -24,7 +24,9 @@ import Editor from '../Editor';
 import * as createUtils from './create';
 import { empty } from './common';
 import {
+    applyGroundPolylineForceVisibleImport,
     applyGroundPolylineSegmentVisibilityImport,
+    getGroundPolylineForceVisibleExport,
     getGroundPolylineSegmentVisibilityExport,
 } from './groundPolylineVisibility';
 import { copyClassAttrs, isClassAttrHasValue, isClassAttrVisible } from './classType';
@@ -215,6 +217,9 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
     if (object.objType === ObjectType.TYPE_GROUND_POLYLINE && object.segmentVisibilityByView) {
         objectV2.contour.segmentVisibilityByView = object.segmentVisibilityByView;
     }
+    if (object.objType === ObjectType.TYPE_GROUND_POLYLINE && object.segmentForceVisibleByView) {
+        objectV2.contour.segmentForceVisibleByView = object.segmentForceVisibleByView;
+    }
     return objectV2;
 }
 export function translateToObject(objectV2: IObjectV2): IObject {
@@ -333,6 +338,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             }
             const polyline = createUtils.createGroundPolyline(editor, points, userData);
             applyGroundPolylineSegmentVisibilityImport(polyline, obj.segmentVisibilityByView);
+            applyGroundPolylineForceVisibleImport(polyline, obj.segmentForceVisibleByView);
             if (classConfig) polyline.setColor(getObjectDisplayColor(classConfig.color, userData));
             bindInfo(polyline, obj);
             annotates.push(polyline);
@@ -526,6 +532,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
         } else if (obj instanceof GroundPolyline) {
             info.objType = ObjectType.TYPE_GROUND_POLYLINE;
             info.segmentVisibilityByView = getGroundPolylineSegmentVisibilityExport(obj);
+            info.segmentForceVisibleByView = getGroundPolylineForceVisibleExport(obj);
         } else {
             info.viewIndex = parseInt((obj.viewId.match(/[0-9]{1,5}$/) as any)[0]);
         }

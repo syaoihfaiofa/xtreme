@@ -194,6 +194,7 @@ export default class Render2DAction extends Action {
             `#${obj.color.getHexString()}`,
             lineWidth,
             obj.getSegmentVisibleForView(viewKey),
+            obj.getSegmentForceVisibleForView(viewKey),
             this.renderView.isFisheye(),
         );
     }
@@ -209,6 +210,9 @@ export default class Render2DAction extends Action {
         const segmentVisible = source
             ? source.getSegmentVisibleForView(viewKey)
             : undefined;
+        const segmentForceVisible = source
+            ? source.getSegmentForceVisibleForView(viewKey)
+            : undefined;
         if (source && this.renderView.isFisheye()) {
             this.renderPolylineSegments(
                 source.points3D,
@@ -219,6 +223,7 @@ export default class Render2DAction extends Action {
                 color,
                 lineWidth * 2,
                 segmentVisible,
+                segmentForceVisible,
                 true,
                 obj.points,
             );
@@ -230,6 +235,7 @@ export default class Render2DAction extends Action {
             color,
             lineWidth * 2,
             segmentVisible,
+            segmentForceVisible,
             false,
             undefined,
             source?.points3D,
@@ -253,6 +259,7 @@ export default class Render2DAction extends Action {
         color: string,
         lineWidth: number,
         segmentVisible: boolean[] | undefined,
+        segmentForceVisible: boolean[] | undefined,
         useFisheyeSampling: boolean,
         endpointOverrides?: THREE.Vector2[],
         sourcePoints3D?: THREE.Vector3[],
@@ -265,6 +272,10 @@ export default class Render2DAction extends Action {
             segmentVisible && segmentVisible.length === points.length - 1
                 ? segmentVisible
                 : Array.from({ length: points.length - 1 }, () => true);
+        const forceVisibleFlags =
+            segmentForceVisible && segmentForceVisible.length === points.length - 1
+                ? segmentForceVisible
+                : Array.from({ length: points.length - 1 }, () => false);
         const visibleEdges: Array<[THREE.Vector2, THREE.Vector2]> = [];
         const hiddenEdges: Array<[THREE.Vector2, THREE.Vector2]> = [];
         context.save();
@@ -291,6 +302,7 @@ export default class Render2DAction extends Action {
         context.lineJoin = 'round';
         for (let index = 0; index < points.length - 1; index++) {
             const manualVisible = flags[index] !== false;
+            const forceVisible = forceVisibleFlags[index] === true;
             let samples: THREE.Vector2[];
             if (points[index] instanceof THREE.Vector3) {
                 const start = points[index] as THREE.Vector3;
@@ -329,9 +341,8 @@ export default class Render2DAction extends Action {
                 }
                 const midpoint = start.clone().lerp(end, 0.5);
                 const visible =
-                    manualVisible &&
-                    (!this.renderView.hasOcclusionMask() ||
-                        this.renderView.isImagePointAutoVisible(midpoint));
+                    forceVisible ||
+                    (manualVisible && this.renderView.isImagePointAutoVisible(midpoint));
                 (visible ? visibleEdges : hiddenEdges).push([start, end]);
             }
         }
@@ -384,14 +395,16 @@ export default class Render2DAction extends Action {
                 }
             }
         });
-        this.renderView.get3DObject().forEach((obj) => {
-            if (
-                obj instanceof GroundPolyline &&
-                obj.visible
-            ) {
-                this.renderGroundPolylineProjection(obj, lineWidth * 2);
-            }
-        });
+        const visibilityAction = this.renderView.getAction(
+            'edit-ground-polyline-visibility-2d',
+        ) as EditGroundPolylineVisibility2DAction | undefined;
+        if (visibilityAction?.isEnable() === true) {
+            this.renderView.get3DObject().forEach((obj) => {
+                if (obj instanceof GroundPolyline && obj.visible) {
+                    this.renderGroundPolylineProjection(obj, lineWidth * 2);
+                }
+            });
+        }
         this.renderPendingVisibilityPoint();
     }
 

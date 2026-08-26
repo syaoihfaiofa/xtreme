@@ -25,6 +25,7 @@ import {
 } from 'pc-render';
 import {
     getViewKeyFromImageView,
+    resolveEffectiveVisibleForView,
     toggleRangeBetweenHits,
 } from './utils/polylineSegmentVisibility';
 import * as _ from 'lodash';
@@ -148,6 +149,15 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
             const result = toggleRangeBetweenHits(
                 first.polyline.points3D,
                 first.polyline.segmentVisibleByView,
+                first.polyline.segmentForceVisibleByView,
+                {
+                    [viewKey]: resolveEffectiveVisibleForView(
+                        first.polyline.segmentVisibleByView[viewKey],
+                        first.polyline.points3D,
+                        view,
+                        first.polyline.segmentForceVisibleByView[viewKey],
+                    ),
+                },
                 viewKey,
                 { segmentIndex: first.segmentIndex, t: first.t },
                 { segmentIndex: second.segmentIndex, t: second.t },
@@ -160,6 +170,7 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
                 object: first.polyline,
                 points: result.points,
                 byView: result.byView,
+                forceVisibleByView: result.forceVisibleByView,
             });
             editor.showMsg(
                 'info',

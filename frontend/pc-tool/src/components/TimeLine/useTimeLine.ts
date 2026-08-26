@@ -13,6 +13,7 @@ import * as _ from 'lodash';
 import * as api from '../../api/common';
 // import ToolEvent from '../../config/event';
 import { useInjectEditor } from '../../state';
+import { getPrimaryTrackFrameObject } from './trackFrameData';
 
 const COLOR = new THREE.Color();
 
@@ -917,12 +918,14 @@ export default function useBottom() {
 
     function toTrackFrameData(item: any[]): IUserData | undefined {
         if (!item || item.length === 0) return undefined;
+        const primaryObject = getPrimaryTrackFrameObject(item);
+        if (!primaryObject) return undefined;
         const invalid = item.some((object: any) => object.invalidConfig);
         const trueValue = item.every(
             (object: any) => object.userData.resultStatus === Const.True_Value,
         );
         return {
-            ...item[0].userData,
+            ...primaryObject.userData,
             invalid,
             trueValue,
         };

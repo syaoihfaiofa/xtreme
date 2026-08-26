@@ -130,18 +130,12 @@
     };
     const _style_track = (userData: IUserData, index: number) => {
         const style: CSSProperties = {};
-        if (props.reviewProgress) {
-            style.backgroundColor = props.reviewProgress[index]
-                ? utils.REVIEWED_CORRECT_OBJECT_COLOR
-                : colorConfig.defaultColor;
+        if (userData?.occluded === true) {
+            style.backgroundColor = utils.OCCLUDED_OBJECT_COLOR;
         } else if (isError(index)) {
             style.backgroundColor = colorConfig.errorColor;
         } else if (userData?.syncDirty === true) {
             style.backgroundColor = utils.SYNC_DIRTY_OBJECT_COLOR;
-        } else if (userData?.occluded === true) {
-            style.backgroundColor = utils.OCCLUDED_OBJECT_COLOR;
-        } else if (userData?.reviewedCorrectVisible === true) {
-            style.backgroundColor = utils.REVIEWED_CORRECT_OBJECT_COLOR;
         } else if (userData) {
             style.backgroundColor = colorConfig.syncedColor;
         }

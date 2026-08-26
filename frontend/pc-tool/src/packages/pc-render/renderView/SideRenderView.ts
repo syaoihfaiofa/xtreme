@@ -366,6 +366,7 @@ export default class SideRenderView extends Render {
                 }
                 if (hasObject3D instanceof GroundPolyline) {
                     this.groundPolylineEditLine.geometry.setFromPoints(hasObject3D.points3D);
+                    this.groundPolylineEditLine.geometry.computeBoundingSphere();
                     (
                         this.groundPolylineEditLine.material as THREE.LineBasicMaterial
                     ).color.copy(hasObject3D.color);
@@ -413,9 +414,6 @@ export default class SideRenderView extends Render {
 
             // render box
             selection.forEach((object) => {
-                // The selected Box is represented by the editable RectTool overlay.
-                // Rendering it here as well creates two overlapping frames in side views.
-                if (object === box) return;
                 if (object instanceof THREE.Object3D) {
                     this.renderer.render(object, this.camera);
                 }
@@ -481,7 +479,10 @@ export default class SideRenderView extends Render {
             const canvasPoint = this.cameraToCanvas(point.clone().applyMatrix4(object.matrixWorld));
             const handle = this.vertexHandles[index];
             handle.dataset.index = String(index);
-            handle.style.display = 'block';
+            handle.style.display =
+                object instanceof GroundPolyline && object.isVisibilityBoundaryPoint(index)
+                    ? 'none'
+                    : 'block';
             handle.style.left = `${canvasPoint.x}px`;
             handle.style.top = `${canvasPoint.y}px`;
             handle.style.background = this.selectedVertexIndex === index ? '#00e5ff' : '#10252a';
@@ -497,6 +498,9 @@ export default class SideRenderView extends Render {
             !(object instanceof GroundPolygon) &&
             !(object instanceof GroundPolyline)
         ) {
+            return;
+        }
+        if (object instanceof GroundPolyline && object.isVisibilityBoundaryPoint(index)) {
             return;
         }
 
