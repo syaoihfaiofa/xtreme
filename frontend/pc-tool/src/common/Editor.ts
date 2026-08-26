@@ -17,6 +17,7 @@ import * as api from '../api';
 import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
 import { refreshGroundPolylineBevDisplay } from '../packages/pc-editor/utils/groundPolylineVisibility';
+import { IQaIssue, QA_ISSUE_CODE_LABELS, QaIssueCode } from './qaIssue';
 
 const SYNCABLE_MOTION_MODES: string[] = [
     MotionMode.STATIC,
@@ -87,20 +88,20 @@ function toGroundShapePoints(points: Array<{ x: number; y: number; z: number }>)
     return points.map((point) => new THREE.Vector3(Number(point.x), Number(point.y), Number(point.z)));
 }
 
-const OCCLUSION_HOTKEY = 'o';
+const QA_NAVIGATOR_HOTKEY = 'alt+shift+j';
+const QA_PREV_HOTKEY = 'alt+shift+q';
+const QA_TYPE_HOTKEYS: Array<{ keys: string; code: string }> = [
+    { keys: 'alt+shift+1', code: 'INVALID_SIZE' },
+    { keys: 'alt+shift+2', code: 'SIZE_PRIOR' },
+    { keys: 'alt+shift+3', code: 'ASPECT' },
+    { keys: 'alt+shift+4', code: 'OVERLAP' },
+    { keys: 'alt+shift+s', code: 'SIZE' },
+    { keys: 'alt+shift+o', code: 'OVERLAP' },
+];
+
 const REVIEW_CORRECT_HOTKEY = 'r';
 const REVIEW_NEXT_UNREVIEWED_HOTKEY = 'alt+n';
-
-interface IQaIssue {
-    frameId: string;
-    frameName: string;
-    objectUuid: string;
-    objectId?: string;
-    trackId?: string;
-    label: string;
-    message: string;
-    code?: 'INVALID_SIZE' | 'SIZE_PRIOR' | 'ASPECT' | 'OVERLAP';
-}
+const OCCLUSION_HOTKEY = 'o';
 
 export default class Editor extends BaseEditor {
     businessManager: BusinessManager;
@@ -109,6 +110,7 @@ export default class Editor extends BaseEditor {
     private syncKeydownHandler?: (event: KeyboardEvent) => void;
     private qaIssues: IQaIssue[] = [];
     private qaIssueIndex = 0;
+    private qaTypeCycleCursor: Record<string, number> = {};
     private reviewStatusUpdating = new Set<string>();
     constructor() {
         super();
@@ -238,6 +240,20 @@ export default class Editor extends BaseEditor {
             hotkeys('alt+q', (event) => {
                 event.preventDefault();
                 this.focusNextQaIssue();
+            });
+            hotkeys(QA_PREV_HOTKEY, (event) => {
+                event.preventDefault();
+                this.focusPrevQaIssue();
+            });
+            hotkeys(QA_NAVIGATOR_HOTKEY, (event) => {
+                event.preventDefault();
+                this.openQaIssueNavigator();
+            });
+            QA_TYPE_HOTKEYS.forEach(({ keys, code }) => {
+                hotkeys(keys, (event) => {
+                    event.preventDefault();
+                    this.focusNextQaIssueInType(code);
+                });
             });
         };
         bind();
@@ -847,7 +863,7 @@ export default class Editor extends BaseEditor {
                 const label = userData.trackName || userData.trackId || userData.id || object.uuid;
                 const classConfig = this.getClassType(userData);
                 const className = classConfig?.name || userData.classType || '';
-                const addIssue = (text: string, code?: IQaIssue['code'], targetObject: any = object) => {
+                const addIssue = (text: string, code?: QaIssueCode, targetObject: any = object) => {
                     violations.push({
                         frameId: String(frame.id),
                         frameName: frame.name || String(frame.id),
@@ -913,6 +929,100 @@ export default class Editor extends BaseEditor {
         return violations;
     }
 
+    getQaIssues(): IQaIssue[] {
+        return [...this.qaIssues];
+    }
+
+    getQaIssueGlobalIndex(): number {
+        return this.qaIssueIndex;
+    }
+
+    getQaIssueIndicesByType(typeId: string): number[] {
+        return this.qaIssues
+            .map((issue, globalIndex) => ({ issue, globalIndex }))
+            .filter(({ issue }) => {
+                if (typeId === 'ALL') {
+                    return true;
+                }
+                if (typeId === 'OTHER') {
+                    return !issue.code;
+                }
+                if (typeId === 'SIZE') {
+                    return (
+                        issue.code === 'INVALID_SIZE' ||
+                        issue.code === 'SIZE_PRIOR' ||
+                        issue.code === 'ASPECT'
+                    );
+                }
+                return issue.code === typeId;
+            })
+            .map(({ globalIndex }) => globalIndex);
+    }
+
+    async focusQaIssueAt(globalIndex: number, showMessage = true): Promise<void> {
+        if (globalIndex < 0 || globalIndex >= this.qaIssues.length) {
+            this.showMsg('warning', `问题序号无效: ${globalIndex + 1}`);
+            return;
+        }
+        this.qaIssueIndex = globalIndex;
+        await this.focusQaIssue(this.qaIssues[globalIndex], showMessage);
+    }
+
+    async focusQaIssueByType(typeId: string, typeIndex = 0): Promise<void> {
+        if (this.qaIssues.length === 0) {
+            await this.runAutoCheck();
+            if (this.qaIssues.length === 0) {
+                return;
+            }
+        }
+        const indices = this.getQaIssueIndicesByType(typeId);
+        if (indices.length === 0) {
+            const label =
+                typeId === 'SIZE'
+                    ? '尺寸相关'
+                    : QA_ISSUE_CODE_LABELS[typeId] || typeId;
+            this.showMsg('warning', `没有 ${label} 类型的问题`);
+            return;
+        }
+        const safeIndex = Math.max(0, Math.min(typeIndex, indices.length - 1));
+        await this.focusQaIssueAt(indices[safeIndex]);
+    }
+
+    async focusNextQaIssueInType(typeId: string): Promise<void> {
+        if (this.qaIssues.length === 0) {
+            await this.runAutoCheck();
+            if (this.qaIssues.length === 0) {
+                return;
+            }
+        }
+        const indices = this.getQaIssueIndicesByType(typeId);
+        if (indices.length === 0) {
+            const label =
+                typeId === 'SIZE'
+                    ? '尺寸相关'
+                    : QA_ISSUE_CODE_LABELS[typeId] || typeId;
+            this.showMsg('warning', `没有 ${label} 类型的问题`);
+            return;
+        }
+        const cursor = this.qaTypeCycleCursor[typeId] ?? -1;
+        const nextPos = (cursor + 1) % indices.length;
+        this.qaTypeCycleCursor[typeId] = nextPos;
+        await this.focusQaIssueAt(indices[nextPos]);
+    }
+
+    async openQaIssueNavigator(): Promise<void> {
+        if (this.qaIssues.length === 0) {
+            await this.runAutoCheck();
+            if (this.qaIssues.length === 0) {
+                return;
+            }
+        }
+        this.showModal('QaIssueNavigator', {
+            title: 'QA 问题导航',
+            width: 760,
+        }).catch(() => {});
+    }
+
     async focusQaIssue(issue: IQaIssue, showMessage = true) {
         const frameIndex = this.getFrameIndex(issue.frameId);
         if (typeof frameIndex === 'number' && Number.isFinite(frameIndex)) {
@@ -934,10 +1044,19 @@ export default class Editor extends BaseEditor {
         if (showMessage) {
             this.showMsg(
                 'warning',
-                `QA ${this.qaIssueIndex + 1}/${this.qaIssues.length}: ${issue.message}。Alt+Q 下一个`,
+                `QA ${this.qaIssueIndex + 1}/${this.qaIssues.length}: ${issue.message}。Alt+Q 下一个，Alt+Shift+Q 上一个，Alt+Shift+J 问题列表`,
                 8,
             );
         }
+    }
+
+    async focusPrevQaIssue() {
+        if (this.qaIssues.length === 0) {
+            await this.runAutoCheck();
+            return;
+        }
+        this.qaIssueIndex = (this.qaIssueIndex - 1 + this.qaIssues.length) % this.qaIssues.length;
+        await this.focusQaIssue(this.qaIssues[this.qaIssueIndex]);
     }
 
     async focusNextQaIssue() {
@@ -969,6 +1088,7 @@ export default class Editor extends BaseEditor {
             const violations = this.runQaLite(this.state.frames);
             this.qaIssues = violations;
             this.qaIssueIndex = 0;
+            this.qaTypeCycleCursor = {};
             if (violations.length === 0) {
                 this.showMsg('success', `Auto Check 完成：已检查 ${this.state.frames.length} 帧，未发现问题`);
                 return;
@@ -976,7 +1096,7 @@ export default class Editor extends BaseEditor {
             await this.focusQaIssue(violations[0], false);
             this.showMsg(
                 'warning',
-                `Auto Check 发现 ${violations.length} 个问题（${this.state.frames.length} 帧）: ${violations[0].message}。Alt+Q 下一个`,
+                `Auto Check 发现 ${violations.length} 个问题（${this.state.frames.length} 帧）: ${violations[0].message}。Alt+Q 下一个，Alt+Shift+J 按类型/序号跳转`,
                 8,
             );
         } catch (error: any) {

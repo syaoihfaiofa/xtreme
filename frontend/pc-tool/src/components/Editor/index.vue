@@ -32,12 +32,14 @@
 
     import ModelHelp from '../Modal/sub/ModelHelp.vue';
     import ModalConfirm from '../Modal/sub/ModalConfirm.vue';
+    import QaIssueNavigator from '../Modal/sub/QaIssueNavigator.vue';
 
     let editor = useProvideEditor();
 
     onMounted(() => {
         editor.registerModal('ModelHelp', ModelHelp);
         editor.registerModal('ModalConfirm', ModalConfirm);
+        editor.registerModal('QaIssueNavigator', QaIssueNavigator);
     });
 </script>
 

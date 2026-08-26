@@ -77,6 +77,10 @@ export default function useHeader() {
         await editor.runAutoCheck();
     }
 
+    async function onOpenQaNavigator() {
+        await editor.openQaIssueNavigator();
+    }
+
     function onToggleReviewMode() {
         editor.setReviewMode(!bsState.reviewMode);
         editor.showMsg('success', bsState.reviewMode ? '已开启审阅模式' : '已关闭审阅模式');
@@ -347,6 +351,7 @@ export default function useHeader() {
         onIndexBlur,
         onSave,
         onAutoCheck,
+        onOpenQaNavigator,
         onPre,
         onNext,
         canNavigateFrame,
