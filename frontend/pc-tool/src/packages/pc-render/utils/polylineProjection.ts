@@ -4,8 +4,6 @@ import Image2DRenderView from '../renderView/Image2DRenderView';
 
 export const CAMERA_VIEW_KEYS = ['0', '1', '2', '3'] as const;
 const SEGMENT_PROJECTION_SAMPLES = 33;
-const MAX_RELEVANT_VIEWS = 2;
-const RELATIVE_SCORE_RATIO = 0.5;
 
 export function getCameraViewKey(view: Image2DRenderView): string {
     if (view.visibilityViewKey) {
@@ -78,11 +76,8 @@ export function getRelevantViewKeysForSegment(
     if (scored.length === 0) {
         return [];
     }
-    const bestScore = Math.max(...scored.map((entry) => entry.score));
     return scored
-        .filter((entry) => entry.score >= bestScore * RELATIVE_SCORE_RATIO)
         .sort((left, right) => right.score - left.score)
-        .slice(0, MAX_RELEVANT_VIEWS)
         .map((entry) => entry.key);
 }
 
@@ -102,11 +97,8 @@ export function getRelevantViewKeysForPolyline(
     if (scored.length === 0) {
         return [];
     }
-    const bestScore = Math.max(...scored.map((entry) => entry.score));
     return scored
-        .filter((entry) => entry.score >= bestScore * RELATIVE_SCORE_RATIO)
         .sort((left, right) => right.score - left.score)
-        .slice(0, MAX_RELEVANT_VIEWS)
         .map((entry) => entry.key);
 }
 

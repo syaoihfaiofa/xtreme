@@ -97,7 +97,14 @@ export default class ModelManager {
         this.clearModelResult(frame.id);
     }
 
-    addModelTrackData(objectsMap: Record<string, IObject[]>) {
-        baseUtils.addModelTrackData(this.editor, objectsMap);
+    addModelTrackData(
+        objectsMap: Record<string, IObject[]>,
+        sourceUserDataByTrackId: Record<string, IUserData>,
+    ) {
+        baseUtils.addModelTrackData(
+            this.editor,
+            objectsMap,
+            sourceUserDataByTrackId,
+        );
     }
 }

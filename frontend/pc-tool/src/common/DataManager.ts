@@ -271,7 +271,7 @@ export default class DataManager extends BaseDataManager {
         toIds: string[],
         direction: 'BACKWARD' | 'FORWARD',
         targetObjects: any[],
-        _trackIdName: Record<string, string>,
+        sourceUserDataByTrackId: Record<string, IUserData>,
         onComplete?: () => void,
         useZ = true,
     ): Promise<void> {
@@ -326,7 +326,10 @@ export default class DataManager extends BaseDataManager {
                         editor.showMsg('warning', editor.lang('track-no-data'));
                         return;
                     }
-                    editor.modelManager.addModelTrackData(objectsMap);
+                    editor.modelManager.addModelTrackData(
+                        objectsMap,
+                        sourceUserDataByTrackId,
+                    );
                     editor.showMsg('success', editor.lang('track-ok'));
                     onComplete && onComplete();
                 },

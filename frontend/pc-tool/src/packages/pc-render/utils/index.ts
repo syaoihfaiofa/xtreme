@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import { Box, Box2D, Rect } from '../objects';
 import Image2DRenderView from '../renderView/Image2DRenderView';
 import { Lut } from 'three/examples/jsm/math/Lut';
+
+export * from './boxScale';
+
 let near = 0.01;
 let far = 10000;
 const lut = new Lut();

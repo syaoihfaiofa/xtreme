@@ -11,6 +11,7 @@ import {
     ProjectedPolygon,
     ProjectedPolyline,
     Image2DRenderView,
+    utils as renderUtils,
 } from 'pc-render';
 import Editor from '../Editor';
 import { Event as EditorEvent } from 'pc-editor';
@@ -19,7 +20,10 @@ import * as utils from '../utils';
 import { Const, ICmdName, IFilter, IUserData } from '../type';
 import Event from '../config/event';
 import * as THREE from 'three';
-import { refreshGroundPolylineBevDisplay } from '../utils/groundPolylineVisibility';
+import {
+    applyGroundPolylineImageBoundaryOcclusion,
+    refreshGroundPolylineBevDisplay,
+} from '../utils/groundPolylineVisibility';
 
 interface ITransform2DBox {
     positions2?: Record<number, THREE.Vector2>;
@@ -292,6 +296,12 @@ export default class DataManager {
         objects.forEach((obj, index) => {
             let data = Array.isArray(datas) ? datas[index] : datas;
             if (obj instanceof Box) {
+                const scale = (data as ITransform).scale;
+                if (scale && !renderUtils.isFinitePositiveBoxScale(scale)) {
+                    throw new RangeError(
+                        `Invalid Box scale: object=${obj.uuid}, x=${scale.x}, y=${scale.y}, z=${scale.z}`,
+                    );
+                }
                 this.editor.pc.updateObjectTransform(obj, data as any);
             } else if (obj instanceof Rect) {
                 this.editor.pc.update2DRect(obj, data as any);
@@ -311,6 +321,7 @@ export default class DataManager {
     ): void {
         object.setPoints(points);
         if (object instanceof GroundPolyline) {
+            applyGroundPolylineImageBoundaryOcclusion(this.editor, object);
             refreshGroundPolylineBevDisplay(this.editor, object);
         }
         this.updateGroundShapeProjections(object);
@@ -407,6 +418,9 @@ export default class DataManager {
             (object): object is GroundPolyline => object instanceof GroundPolyline,
         );
         if (polylines.length > 0) {
+            polylines.forEach((polyline) => {
+                applyGroundPolylineImageBoundaryOcclusion(this.editor, polyline);
+            });
             refreshGroundPolylineBevDisplay(this.editor, polylines);
         }
         this.editor.pc.render();
@@ -457,6 +471,17 @@ export default class DataManager {
             const rebuiltHasMap = new Map<string, AnnotateObject>();
             objects.forEach((object) => rebuiltHasMap.set(object.uuid, object));
             this.hasMap.set(frameKey, rebuiltHasMap);
+        }
+        let imageBoundaryChanged = false;
+        objects
+            .filter((object): object is GroundPolyline => object instanceof GroundPolyline)
+            .forEach((polyline) => {
+                imageBoundaryChanged =
+                    applyGroundPolylineImageBoundaryOcclusion(this.editor, polyline) ||
+                    imageBoundaryChanged;
+            });
+        if (imageBoundaryChanged) {
+            frame.needSave = true;
         }
 
         const {
@@ -611,7 +636,7 @@ export default class DataManager {
         _toIds: string[],
         _direction: 'BACKWARD' | 'FORWARD',
         _targetObjects: any[],
-        _trackIdName: Record<string, string>,
+        _sourceUserDataByTrackId: Record<string, IUserData>,
         _onComplete?: () => void,
         _useZ?: boolean,
     ) {}
@@ -709,7 +734,7 @@ export default class DataManager {
         let dataInfo = frames[frameIndex];
         let curId = dataInfo.id;
 
-        let trackIdName = {} as Record<string, string>;
+        const sourceUserDataByTrackId: Record<string, IUserData> = {};
         let targetObjects = [] as any[];
         objects.forEach((object) => {
             if (object instanceof Box) {
@@ -722,12 +747,13 @@ export default class DataManager {
                 if (!userData.trackId) {
                     userData.trackId = editor.createTrackId();
                 }
+                const trackId = userData.trackId as string;
 
-                trackIdName[userData.trackId] = userData.trackName || '';
+                sourceUserDataByTrackId[trackId] = utils.getTrackingMetadata(userData);
 
                 targetObjects.push({
                     uuid: object.uuid,
-                    trackingId: userData.trackId,
+                    trackingId: trackId,
                     objType: '3d',
                     modelClass: userData.modelClass || null,
                     confidence: userData.confidence || null,
@@ -738,8 +764,16 @@ export default class DataManager {
             }
         });
 
-        this.runModelTrack(curId, toIds, direction, targetObjects, trackIdName, () => {
-            this.gotoNext(toIds[0]);
-        }, useZ);
+        this.runModelTrack(
+            curId,
+            toIds,
+            direction,
+            targetObjects,
+            sourceUserDataByTrackId,
+            () => {
+                this.gotoNext(toIds[0]);
+            },
+            useZ,
+        );
     }
 }

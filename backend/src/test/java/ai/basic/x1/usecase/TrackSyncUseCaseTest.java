@@ -4,9 +4,33 @@ import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class TrackSyncUseCaseTest {
+
+    @Test
+    void poseFromLocationValues_usesZeroForMissingRollAndPitch() {
+        TrackSyncUseCase.Pose pose = TrackSyncUseCase.poseFromLocationValues(
+                new double[]{1, 2, 3, 0.5, Double.NaN, Double.NaN});
+
+        assertEquals(0, pose.roll, 0.000000001);
+        assertEquals(0, pose.pitch, 0.000000001);
+        assertEquals(false, pose.explicitRoll);
+        assertEquals(false, pose.explicitPitch);
+    }
+
+    @Test
+    void poseFromLocationValues_usesExplicitRollAndPitch() {
+        TrackSyncUseCase.Pose pose = TrackSyncUseCase.poseFromLocationValues(
+                new double[]{1, 2, 3, 0.5, 0.1, 0.2});
+
+        assertEquals(0.1, pose.roll, 0.000000001);
+        assertEquals(0.2, pose.pitch, 0.000000001);
+        assertEquals(true, pose.explicitRoll);
+        assertEquals(true, pose.explicitPitch);
+    }
 
     @Test
     void projectGroundPoints_preservesPolylineOrderAcrossPoses() {
@@ -144,10 +168,10 @@ class TrackSyncUseCaseTest {
         JSONArray merged = TrackSyncUseCase.mergeWorldPolylinesPreferringSource(existing, source);
 
         assertEquals(4, merged.size());
-        assertPoint(merged.getJSONObject(0), 0, 0, 0);
+        assertPoint(merged.getJSONObject(0), 0, 0, 1);
         assertPoint(merged.getJSONObject(1), 5, 0, 1);
         assertPoint(merged.getJSONObject(2), 10, 0, 1);
-        assertPoint(merged.getJSONObject(3), 15, 0, 0);
+        assertPoint(merged.getJSONObject(3), 15, 0, 1);
     }
 
     @Test
@@ -166,11 +190,11 @@ class TrackSyncUseCaseTest {
         assertEquals(3, merged.size());
         assertPoint(merged.getJSONObject(0), 5, 0, 1);
         assertPoint(merged.getJSONObject(1), 10, 0, 1);
-        assertPoint(merged.getJSONObject(2), 15, 0, 0);
+        assertPoint(merged.getJSONObject(2), 15, 0, 1);
     }
 
     @Test
-    void resolveSyncedGroundPolyline_mergesLengthThenClipsTargetFrame() {
+    void resolveSyncedGroundPolyline_usesFullSourceLengthWithoutExistingWingsOrClipping() {
         JSONArray source = new JSONArray();
         source.add(point(5, 0, 0));
         source.add(point(15, 0, 0));
@@ -182,10 +206,66 @@ class TrackSyncUseCaseTest {
         JSONArray resolved = TrackSyncUseCase.resolveSyncedGroundPolyline(
                 source, pose, existing, pose, 10);
 
-        assertEquals(3, resolved.size());
-        assertPoint(resolved.getJSONObject(0), -5, 0, 0);
-        assertPoint(resolved.getJSONObject(1), 5, 0, 0);
-        assertPoint(resolved.getJSONObject(2), 10, 0, 0);
+        assertEquals(2, resolved.size());
+        assertPoint(resolved.getJSONObject(0), 5, 0, 0);
+        assertPoint(resolved.getJSONObject(1), 15, 0, 0);
+    }
+
+    @Test
+    void splitGroundPolylineByRadius_insertsBoundariesAndMarksOutsideSegments() {
+        JSONArray points = new JSONArray();
+        points.add(point(-20, 0, 2));
+        points.add(point(20, 0, 6));
+
+        TrackSyncUseCase.PolylineDistanceMask masked =
+                TrackSyncUseCase.splitGroundPolylineByRadius(points, 10);
+
+        assertEquals(4, masked.points.size());
+        assertPoint(masked.points.getJSONObject(0), -20, 0, 2);
+        assertPoint(masked.points.getJSONObject(1), -10, 0, 3);
+        assertPoint(masked.points.getJSONObject(2), 10, 0, 5);
+        assertPoint(masked.points.getJSONObject(3), 20, 0, 6);
+        assertEquals(List.of(true, false, true), masked.outsideSegments);
+    }
+
+    @Test
+    void buildDistanceVisibility_preservesManualFlagsAndHidesOutsideForEveryView() {
+        JSONArray oldPoints = new JSONArray();
+        oldPoints.add(point(0, 0, 0));
+        oldPoints.add(point(20, 0, 0));
+        JSONArray targetPoints = new JSONArray();
+        targetPoints.add(point(0, 0, 0));
+        targetPoints.add(point(10, 0, 0));
+        targetPoints.add(point(20, 0, 0));
+        JSONObject existing = new JSONObject();
+        existing.set("0", visibilityEntries(true));
+        existing.set("1", visibilityEntries(false));
+
+        JSONObject result = TrackSyncUseCase.buildDistanceVisibility(
+                existing, oldPoints, targetPoints, List.of(false, true));
+
+        assertVisibility(result, "0", true, false);
+        assertVisibility(result, "1", false, false);
+        assertVisibility(result, "2", true, false);
+        assertVisibility(result, "3", true, false);
+    }
+
+    private static JSONArray visibilityEntries(boolean... values) {
+        JSONArray entries = new JSONArray();
+        for (int index = 0; index < values.length; index++) {
+            entries.add(new JSONObject().set("index", index).set("visible", values[index]));
+        }
+        return entries;
+    }
+
+    private static void assertVisibility(
+            JSONObject byView, String viewKey, boolean... expected) {
+        JSONArray entries = byView.getJSONArray(viewKey);
+        assertEquals(expected.length, entries.size());
+        for (int index = 0; index < expected.length; index++) {
+            assertEquals(index, entries.getJSONObject(index).getInt("index"));
+            assertEquals(expected[index], entries.getJSONObject(index).getBool("visible"));
+        }
     }
 
     private static JSONObject point(double x, double y, double z) {

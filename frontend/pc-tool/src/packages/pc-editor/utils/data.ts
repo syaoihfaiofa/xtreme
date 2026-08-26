@@ -3,10 +3,14 @@ import { IUserData, IFrame, Const, Editor, IObject } from 'pc-editor';
 import { convertObject2Annotate } from './result';
 import * as THREE from 'three';
 import { setIdInfo } from './create';
-import { sameAnnotationClass } from './track';
+import { getTrackingMetadata } from './trackingMetadata';
 
 function boxTrackClassKey(userData: { trackId?: string; classId?: unknown; classType?: string }): string {
     return `${userData.trackId || ''}::${userData.classId ?? userData.classType ?? ''}`;
+}
+
+function boxTrackKey(userData: { trackId?: string }): string {
+    return userData.trackId || '';
 }
 
 export function copyData(editor: Editor, copyId: string, toIds: string[], objects: Box[]) {
@@ -119,13 +123,17 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
     });
 }
 
-export function addModelTrackData(editor: Editor, objectsMap: Record<string, IObject[]>) {
+export function addModelTrackData(
+    editor: Editor,
+    objectsMap: Record<string, IObject[]>,
+    sourceUserDataByTrackId: Record<string, IUserData>,
+) {
     let curFrame = editor.getCurrentFrame();
     let objects = editor.dataManager.getFrameObject(curFrame.id) || [];
 
     let curObjectMap = {} as Record<string, Box>;
     objects.forEach((e) => {
-        if (e instanceof Box) curObjectMap[boxTrackClassKey(e.userData)] = e;
+        if (e instanceof Box) curObjectMap[boxTrackKey(e.userData)] = e;
     });
 
     let updateDatas = { objects: [], data: [] } as { objects: AnnotateObject[]; data: IUserData[] };
@@ -142,7 +150,7 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
         let existMap = {} as Record<string, Box>;
         let existObjects = editor.dataManager.getFrameObject(frame.id) || [];
         existObjects.forEach((e) => {
-            if (e instanceof Box) existMap[boxTrackClassKey(e.userData)] = e;
+            if (e instanceof Box) existMap[boxTrackKey(e.userData)] = e;
         });
 
         let addOption = { objects: [], frame: frame } as {
@@ -153,11 +161,16 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
         let trackObjects = objectsMap[dataId] || [];
         trackObjects.forEach((e: IObject) => {
             let trackId = (e as any).trackId;
-            let oldObject = existMap[boxTrackClassKey(e as any)];
+            const sourceMetadata = sourceUserDataByTrackId[trackId];
+            if (sourceMetadata) {
+                Object.assign(e, getTrackingMetadata(sourceMetadata));
+            }
+            let oldObject = existMap[trackId];
 
             if (oldObject) {
-                let oldUserData = editor.getObjectUserData(oldObject);
-                let updateUserData = {} as IUserData;
+                let updateUserData = sourceMetadata
+                    ? getTrackingMetadata(sourceMetadata)
+                    : ({} as IUserData);
                 updateUserData.confidence = e.confidence;
                 // updateUserData.resultStatus = Const.Predicted;
 
@@ -178,8 +191,8 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
                 updateTrans.objects.push(oldObject);
                 updateTrans.transforms.push(transform);
             } else {
-                const curObject = curObjectMap[boxTrackClassKey(e as any)];
-                if (!curObject || !sameAnnotationClass(e as any, curObject.userData)) {
+                const curObject = curObjectMap[trackId];
+                if (!curObject) {
                     const object = convertObject2Annotate([e], editor)[0];
                     editor.updateObjectRenderInfo(object);
                     setIdInfo(editor, object.userData);
@@ -187,27 +200,7 @@ export function addModelTrackData(editor: Editor, objectsMap: Record<string, IOb
                     return;
                 }
                 let userData = editor.getObjectUserData(curObject);
-
-                e.trackId = userData.trackId;
-                e.trackName = userData.trackName;
-                e.groupId = userData.groupId;
-                e.motionMode = userData.motionMode;
-                e.syncDistance = userData.syncDistance;
-                e.syncMaxDisappearGap = userData.syncMaxDisappearGap;
-                e.syncLocationGapMs = userData.syncLocationGapMs;
-                e.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled;
-                e.dynamicSyncPreviousFrames = userData.dynamicSyncPreviousFrames;
-                e.dynamicSyncNextFrames = userData.dynamicSyncNextFrames;
-                e.syncPoseSegmentId = userData.syncPoseSegmentId;
-                e.syncPoseSegmentsInitialized = userData.syncPoseSegmentsInitialized;
-                e.syncUseZ = userData.syncUseZ;
-                e.syncYawOffsetDeg = userData.syncYawOffsetDeg;
-                e.syncXOffsetM = userData.syncXOffsetM;
-                e.syncYOffsetM = userData.syncYOffsetM;
-                e.occluded = userData.occluded === true;
-                e.reviewedCorrect = userData.reviewedCorrect === true;
-                e.classType = userData.classType;
-                e.classId = userData.classId;
+                Object.assign(e, getTrackingMetadata(userData));
                 // e.resultType = userData.resultType;
                 // e.isStandard = userData.isStandard;
                 // e.resultStatus = Const.Predicted;

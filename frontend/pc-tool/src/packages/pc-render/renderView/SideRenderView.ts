@@ -305,13 +305,12 @@ export default class SideRenderView extends Render {
         this.camera.top = (cameraH / 2) * this.zoom;
         this.camera.bottom = (-cameraH / 2) * this.zoom;
         // debugger
-        // Ground polygons have zero thickness along one or more axes. A zero
-        // far plane invalidates the orthographic camera and prevents the next
-        // selected 3D box from rendering in this side view.
+        // Ground shapes have zero thickness, so keep a large far plane for them.
+        // 3D boxes follow upstream xtreme1: clip along the view axis by box thickness.
         this.camera.far =
             this.object instanceof GroundPolygon || this.object instanceof GroundPolyline
                 ? 200
-                : Math.max(projectRect.max.z - projectRect.min.z, 10);
+                : projectRect.max.z - projectRect.min.z;
         this.camera.updateProjectionMatrix();
 
         // this.camera.position.add(this.cameraOffset);

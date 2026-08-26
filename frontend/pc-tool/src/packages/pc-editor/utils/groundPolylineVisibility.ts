@@ -7,6 +7,7 @@ import {
     segmentVisibilityByViewToExport,
     type SegmentVisibilityByView,
 } from './polylineSegmentVisibility';
+import { computeImageBoundaryOcclusion } from './polylineImageBoundaryOcclusion';
 
 export function getImageViews(editor: Editor): Image2DRenderView[] {
     const prefix = editor.state.config.imgViewPrefix;
@@ -31,6 +32,38 @@ export function refreshGroundPolylineBevDisplay(
         polyline.setBevSegmentVisible(bevVisible);
     });
     editor.pc.render();
+}
+
+export function applyGroundPolylineImageBoundaryOcclusion(
+    editor: Editor,
+    polyline: GroundPolyline,
+): boolean {
+    const uniqueViews = new Map<string, Image2DRenderView>();
+    getImageViews(editor).forEach((view) => {
+        const key = getViewKeyFromImageView(view);
+        if (!uniqueViews.has(key)) {
+            uniqueViews.set(key, view);
+        }
+    });
+    const result = computeImageBoundaryOcclusion(
+        polyline.points3D,
+        polyline.segmentVisibleByView,
+        Array.from(uniqueViews.entries()).map(([key, view]) => ({
+            key,
+            width: view.imgSize.x,
+            height: view.imgSize.y,
+            project: (point) => {
+                const projected = view.worldToImg(point);
+                return { x: projected.x, y: projected.y };
+            },
+        })),
+    );
+    if (!result.changed) {
+        return false;
+    }
+    polyline.setPoints(result.points);
+    polyline.setSegmentVisibleByView(result.segmentVisibleByView);
+    return true;
 }
 
 export function getGroundPolylineSegmentVisibilityExport(

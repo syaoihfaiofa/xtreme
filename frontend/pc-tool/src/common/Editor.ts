@@ -10,7 +10,7 @@ import {
 import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
-import { Box, GroundPolygon, GroundPolyline } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline, utils as renderUtils } from 'pc-render';
 import * as THREE from 'three';
 import hotkeys from 'hotkeys-js';
 import * as api from '../api';
@@ -99,6 +99,7 @@ interface IQaIssue {
     trackId?: string;
     label: string;
     message: string;
+    code?: 'INVALID_SIZE';
 }
 
 export default class Editor extends BaseEditor {
@@ -583,7 +584,10 @@ export default class Editor extends BaseEditor {
         if (!framesToSave.some((frame) => String(frame.id) === String(sourceFrame.id))) {
             framesToSave.push(sourceFrame);
         }
-        await this.saveObject(framesToSave, true, true);
+        const saved = await this.saveObject(framesToSave, true, true);
+        if (!saved) {
+            return;
+        }
         await api.syncObject(String(sourceFrame.id), trackId, classId);
         await this.refreshTrackFromServer(trackId, sourceFrame.id, classId, classType);
     }
@@ -840,7 +844,7 @@ export default class Editor extends BaseEditor {
             objects.forEach((object: any) => {
                 const userData = object.userData as IUserData;
                 const label = userData.trackName || userData.trackId || userData.id || object.uuid;
-                const addIssue = (text: string) => {
+                const addIssue = (text: string, code?: IQaIssue['code']) => {
                     violations.push({
                         frameId: String(frame.id),
                         frameName: frame.name || String(frame.id),
@@ -849,6 +853,7 @@ export default class Editor extends BaseEditor {
                         trackId: userData.trackId,
                         label,
                         message: `${frame.name || frame.id}: ${label} ${text}`,
+                        code,
                     });
                 };
                 if (!userData.classId && !userData.classType) {
@@ -858,12 +863,12 @@ export default class Editor extends BaseEditor {
                     addIssue('缺少追踪ID');
                 }
                 if (object instanceof Box) {
-                    const invalidSize =
-                        object.scale.x <= 0 ||
-                        object.scale.y <= 0 ||
-                        object.scale.z <= 0 ||
-                        !Number.isFinite(object.scale.x + object.scale.y + object.scale.z);
-                    if (invalidSize) addIssue('尺寸异常');
+                    if (!renderUtils.isFinitePositiveBoxScale(object.scale)) {
+                        addIssue(
+                            `尺寸异常 (x=${object.scale.x}, y=${object.scale.y}, z=${object.scale.z})`,
+                            'INVALID_SIZE',
+                        );
+                    }
                     if (userData.motionMode === MotionMode.STATIC) {
                         const syncDistance = Number(userData.syncDistance || 12);
                         if (!Number.isFinite(syncDistance) || syncDistance <= 0) {
@@ -940,7 +945,22 @@ export default class Editor extends BaseEditor {
 
         if (!force && !this.needSave(frames)) return true;
 
-        const qaViolations = silent ? [] : this.runQaLite(frames);
+        const allQaViolations = this.runQaLite(frames);
+        const invalidSizeViolations = allQaViolations.filter(
+            (issue) => issue.code === 'INVALID_SIZE',
+        );
+        if (invalidSizeViolations.length > 0) {
+            this.qaIssues = invalidSizeViolations;
+            this.qaIssueIndex = 0;
+            await this.focusQaIssue(invalidSizeViolations[0], false);
+            this.showMsg(
+                'error',
+                `保存已阻止：${invalidSizeViolations[0].message}`,
+                8,
+            );
+            return false;
+        }
+        const qaViolations = silent ? [] : allQaViolations;
 
         let dataInfos = [] as any[];
         let queryTime = frames[0].queryTime;

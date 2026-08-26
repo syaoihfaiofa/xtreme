@@ -3,6 +3,10 @@ import * as THREE from 'three';
 import { Event } from '../config';
 import GroundPolyline from '../objects/GroundPolyline';
 import MainRenderView from '../renderView/MainRenderView';
+import {
+    ISnapHeightReference,
+    selectHeightContinuousHit,
+} from '../utils/groundPolylineSnap';
 import Action from './Action';
 import OrbitControlsAction from './OrbitControlsAction';
 
@@ -287,8 +291,11 @@ export default class EditGroundPolylineAction extends Action {
 
     private addExtendPoint(event: MouseEvent): void {
         const object = this.getObject();
-        const worldPoint = this.pickPointCloud(event);
-        if (!object || !this.extendEnd || !worldPoint) return;
+        if (!object || !this.extendEnd) return;
+        const endpointIndex = this.extendEnd === 'start' ? 0 : object.points3D.length - 1;
+        const reference = this.createHeightReference(object, endpointIndex);
+        const worldPoint = this.pickPointCloud(event, reference);
+        if (!worldPoint) return;
         if (object.parent !== this.renderView.pointCloud.annotate3D) return;
         object.updateMatrixWorld();
         const localPoint = object.worldToLocal(worldPoint);
@@ -352,8 +359,9 @@ export default class EditGroundPolylineAction extends Action {
         event.stopPropagation();
         this.clearDrag();
         this.handles[index].style.background = '#00e5ff';
+        const reference = this.createHeightReference(object, index);
         this.dragMove = (moveEvent: PointerEvent): void => {
-            const point = this.pickPointCloud(moveEvent);
+            const point = this.pickPointCloud(moveEvent, reference);
             if (!point || object.parent !== this.renderView.pointCloud.annotate3D) return;
             object.updateMatrixWorld();
             const points = object.points3D.map((item) => item.clone());
@@ -371,7 +379,30 @@ export default class EditGroundPolylineAction extends Action {
         document.addEventListener('pointerup', this.dragUp);
     }
 
-    private pickPointCloud(event: MouseEvent | PointerEvent): THREE.Vector3 | null {
+    private createHeightReference(
+        object: GroundPolyline,
+        index: number,
+    ): ISnapHeightReference {
+        object.updateMatrixWorld();
+        const worldZ = (point: THREE.Vector3): number =>
+            point.clone().applyMatrix4(object.matrixWorld).z;
+        const neighborZs: number[] = [];
+        if (index > 0) {
+            neighborZs.push(worldZ(object.points3D[index - 1]));
+        }
+        if (index + 1 < object.points3D.length) {
+            neighborZs.push(worldZ(object.points3D[index + 1]));
+        }
+        return {
+            anchorZ: worldZ(object.points3D[index]),
+            neighborZs,
+        };
+    }
+
+    private pickPointCloud(
+        event: MouseEvent | PointerEvent,
+        reference: ISnapHeightReference,
+    ): THREE.Vector3 | null {
         const rect = this.renderView.renderer.domElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return null;
 
@@ -380,10 +411,11 @@ export default class EditGroundPolylineAction extends Action {
             -((event.clientY - rect.top) / rect.height) * 2 + 1,
         );
         this.raycaster.setFromCamera(this.pointer, this.renderView.camera);
-        const hit = this.raycaster.intersectObject(
+        const hits = this.raycaster.intersectObject(
             this.renderView.pointCloud.groupPoints,
             true,
-        )[0];
+        );
+        const hit = selectHeightContinuousHit(hits, reference);
         return hit?.point ? hit.point.clone() : null;
     }
 

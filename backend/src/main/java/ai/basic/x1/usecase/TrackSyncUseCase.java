@@ -62,6 +62,7 @@ public class TrackSyncUseCase {
     private static final int DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES = 1;
     private static final double POLYLINE_OVERLAP_SNAP_M = 0.2;
     private static final double GEOMETRY_EPSILON = 0.000000001;
+    private static final List<String> CAMERA_VIEW_KEYS = List.of("0", "1", "2", "3");
 
     private static final String MOTION_STATIC = "STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
@@ -676,15 +677,19 @@ public class TrackSyncUseCase {
                 JSONObject existingContour = existing.getClassAttributes().getJSONObject("contour");
                 existingPoints = existingContour == null ? null : existingContour.getJSONArray("points");
             }
-            JSONArray targetPoints = resolveSyncedGroundPolyline(
+            JSONArray projectedPoints = resolveSyncedGroundPolyline(
                     sourcePoints, sourcePose, existingPoints, targetPose, syncRadius, syncWorldVertical);
-            if (targetPoints.size() < 2) {
-                if (existing != null) {
-                    deleteIds.add(existing.getId());
-                }
-                continue;
-            }
-            contour.set("points", targetPoints);
+            PolylineDistanceMask distanceMask = splitGroundPolylineByRadius(
+                    projectedPoints, syncRadius);
+            JSONArray visibilityReferencePoints = existingPoints == null
+                    ? projectedPoints
+                    : existingPoints;
+            contour.set("points", distanceMask.points);
+            contour.set("segmentVisibilityByView", buildDistanceVisibility(
+                    contour.getJSONObject("segmentVisibilityByView"),
+                    visibilityReferencePoints,
+                    distanceMask.points,
+                    distanceMask.outsideSegments));
             attrs.set("type", GROUND_POLYLINE);
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
@@ -771,11 +776,7 @@ public class TrackSyncUseCase {
             double radius,
             boolean syncWorldVertical) {
         JSONArray sourceWorld = polylineToWorld(sourceLocal, sourcePose, syncWorldVertical);
-        JSONArray existingWorld = existingTargetLocal == null
-                ? new JSONArray()
-                : polylineToWorld(existingTargetLocal, targetPose, syncWorldVertical);
-        JSONArray mergedWorld = mergeWorldPolylinesPreferringSource(existingWorld, sourceWorld);
-        return clipGroundPolylineToRadius(polylineToLocal(mergedWorld, targetPose, syncWorldVertical), radius);
+        return polylineToLocal(sourceWorld, targetPose, syncWorldVertical);
     }
 
     static JSONArray mergeWorldPolylinesPreferringSource(JSONArray existingWorld, JSONArray sourceWorld) {
@@ -793,9 +794,11 @@ public class TrackSyncUseCase {
         double lengthSquared = directionX * directionX + directionY * directionY;
 
         JSONArray prefix = new JSONArray();
+        Double prefixJoinZ = null;
         for (int index = 0; index < alignedExisting.size(); index++) {
             JSONObject point = alignedExisting.getJSONObject(index);
             if (distanceToPolyline(point, sourceWorld) <= POLYLINE_OVERLAP_SNAP_M) {
+                prefixJoinZ = getDouble(point, "z");
                 break;
             }
             if (!isNearSourceAxis(point, sourceStart, directionX, directionY, lengthSquared)) {
@@ -803,11 +806,19 @@ public class TrackSyncUseCase {
             }
             prefix.add(copyPoint(point));
         }
+        if (!prefix.isEmpty()) {
+            double referenceZ = prefixJoinZ != null
+                    ? prefixJoinZ
+                    : getDouble(prefix.getJSONObject(prefix.size() - 1), "z");
+            shiftPolylineZ(prefix, getDouble(sourceStart, "z") - referenceZ);
+        }
 
         JSONArray suffix = new JSONArray();
+        Double suffixJoinZ = null;
         for (int index = alignedExisting.size() - 1; index >= 0; index--) {
             JSONObject point = alignedExisting.getJSONObject(index);
             if (distanceToPolyline(point, sourceWorld) <= POLYLINE_OVERLAP_SNAP_M) {
+                suffixJoinZ = getDouble(point, "z");
                 break;
             }
             if (!isNearSourceAxis(point, sourceStart, directionX, directionY, lengthSquared)) {
@@ -815,12 +826,25 @@ public class TrackSyncUseCase {
             }
             suffix.add(0, copyPoint(point));
         }
+        if (!suffix.isEmpty()) {
+            double referenceZ = suffixJoinZ != null
+                    ? suffixJoinZ
+                    : getDouble(suffix.getJSONObject(0), "z");
+            shiftPolylineZ(suffix, getDouble(sourceEnd, "z") - referenceZ);
+        }
 
         JSONArray merged = new JSONArray();
         merged.addAll(prefix);
         merged.addAll(copyPoints(sourceWorld));
         merged.addAll(suffix);
         return merged;
+    }
+
+    private static void shiftPolylineZ(JSONArray points, double deltaZ) {
+        for (int index = 0; index < points.size(); index++) {
+            JSONObject point = points.getJSONObject(index);
+            point.set("z", getDouble(point, "z") + deltaZ);
+        }
     }
 
     private static boolean isNearSourceAxis(
@@ -838,6 +862,123 @@ public class TrackSyncUseCase {
         double cross = Math.abs(deltaX * directionY - deltaY * directionX);
         double perpendicularDistance = cross / Math.sqrt(lengthSquared);
         return perpendicularDistance <= POLYLINE_OVERLAP_SNAP_M;
+    }
+
+    static PolylineDistanceMask splitGroundPolylineByRadius(JSONArray points, double radius) {
+        if (points == null || points.size() < 2) {
+            throw new IllegalArgumentException("Ground polyline requires at least two points");
+        }
+        if (radius <= 0) {
+            throw new IllegalArgumentException(String.format(
+                    "Ground polyline sync radius must be positive: radius=%s", radius));
+        }
+        JSONArray splitPoints = new JSONArray();
+        splitPoints.add(copyPoint(requireGroundPoint(points, 0)));
+        for (int index = 1; index < points.size(); index++) {
+            JSONObject start = requireGroundPoint(points, index - 1);
+            JSONObject end = requireGroundPoint(points, index);
+            List<Double> intersections = circleSegmentIntersections(
+                    getDouble(start, "x"),
+                    getDouble(start, "y"),
+                    getDouble(end, "x"),
+                    getDouble(end, "y"),
+                    radius);
+            for (double parameter : intersections) {
+                splitPoints.add(interpolatePoint(start, end, parameter));
+            }
+            splitPoints.add(copyPoint(end));
+        }
+
+        List<Boolean> outsideSegments = new ArrayList<>();
+        double radiusSquared = radius * radius;
+        for (int index = 1; index < splitPoints.size(); index++) {
+            JSONObject start = splitPoints.getJSONObject(index - 1);
+            JSONObject end = splitPoints.getJSONObject(index);
+            double middleX = (getDouble(start, "x") + getDouble(end, "x")) / 2;
+            double middleY = (getDouble(start, "y") + getDouble(end, "y")) / 2;
+            outsideSegments.add(
+                    middleX * middleX + middleY * middleY > radiusSquared + GEOMETRY_EPSILON);
+        }
+        return new PolylineDistanceMask(splitPoints, outsideSegments);
+    }
+
+    static JSONObject buildDistanceVisibility(
+            JSONObject existingByView,
+            JSONArray existingPoints,
+            JSONArray targetPoints,
+            List<Boolean> outsideSegments) {
+        if (targetPoints == null || targetPoints.size() < 2) {
+            throw new IllegalArgumentException("Target ground polyline requires at least two points");
+        }
+        if (outsideSegments == null || outsideSegments.size() != targetPoints.size() - 1) {
+            throw new IllegalArgumentException(String.format(
+                    "Distance visibility count does not match target segments: points=%s, flags=%s",
+                    targetPoints.size(), outsideSegments == null ? null : outsideSegments.size()));
+        }
+        JSONObject result = new JSONObject();
+        for (String viewKey : CAMERA_VIEW_KEYS) {
+            boolean[] existingFlags = readSegmentVisibility(
+                    existingByView == null ? null : existingByView.getJSONArray(viewKey),
+                    existingPoints == null ? 0 : existingPoints.size() - 1);
+            JSONArray entries = new JSONArray();
+            for (int index = 1; index < targetPoints.size(); index++) {
+                JSONObject start = targetPoints.getJSONObject(index - 1);
+                JSONObject end = targetPoints.getJSONObject(index);
+                int existingIndex = nearestSegmentIndex(
+                        (getDouble(start, "x") + getDouble(end, "x")) / 2,
+                        (getDouble(start, "y") + getDouble(end, "y")) / 2,
+                        existingPoints);
+                boolean manuallyVisible = existingIndex < 0 || existingFlags[existingIndex];
+                entries.add(new JSONObject()
+                        .set("index", index - 1)
+                        .set("visible", manuallyVisible && !outsideSegments.get(index - 1)));
+            }
+            result.set(viewKey, entries);
+        }
+        return result;
+    }
+
+    private static boolean[] readSegmentVisibility(JSONArray entries, int segmentCount) {
+        boolean[] flags = new boolean[Math.max(0, segmentCount)];
+        java.util.Arrays.fill(flags, true);
+        if (entries == null) {
+            return flags;
+        }
+        for (int index = 0; index < entries.size(); index++) {
+            JSONObject entry = entries.getJSONObject(index);
+            if (entry == null) {
+                continue;
+            }
+            Integer segmentIndex = entry.getInt("index");
+            if (segmentIndex != null && segmentIndex >= 0 && segmentIndex < flags.length) {
+                flags[segmentIndex] = !Boolean.FALSE.equals(entry.getBool("visible"));
+            }
+        }
+        return flags;
+    }
+
+    private static int nearestSegmentIndex(double pointX, double pointY, JSONArray points) {
+        if (points == null || points.size() < 2) {
+            return -1;
+        }
+        int nearestIndex = -1;
+        double nearestDistance = Double.POSITIVE_INFINITY;
+        for (int index = 1; index < points.size(); index++) {
+            JSONObject start = requireGroundPoint(points, index - 1);
+            JSONObject end = requireGroundPoint(points, index);
+            double distance = distanceToSegment(
+                    pointX,
+                    pointY,
+                    getDouble(start, "x"),
+                    getDouble(start, "y"),
+                    getDouble(end, "x"),
+                    getDouble(end, "y"));
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearestIndex = index - 1;
+            }
+        }
+        return nearestIndex;
     }
 
     static JSONArray clipGroundPolylineToRadius(JSONArray points, double radius) {
@@ -1356,16 +1497,7 @@ public class TrackSyncUseCase {
                 if (pose == null) {
                     continue;
                 }
-                Double roll = toOptionalAngle(pose[4]);
-                Double explicitPitch = toOptionalAngle(pose[5]);
-                if (explicitPitch == null) {
-                    double estimatedPitch = LocationPoseInterpolator.estimatePitch(timestampNs, sortedSamples);
-                    poseByDataId.put(frame.getId(), new Pose(
-                            pose[0], pose[1], pose[2], pose[3], roll, estimatedPitch, roll != null, false));
-                } else {
-                    poseByDataId.put(frame.getId(), new Pose(
-                            pose[0], pose[1], pose[2], pose[3], roll, explicitPitch));
-                }
+                poseByDataId.put(frame.getId(), poseFromLocationValues(pose));
                 interpolatedCount++;
                 if (samplePoses.size() < 3) {
                     Map<String, Object> entry = new HashMap<>();
@@ -1404,7 +1536,6 @@ public class TrackSyncUseCase {
                         location.getYaw(),
                         location.getRoll(),
                         location.getPitch())));
-        attachEstimatedPitchFromFrames(frames, tablePoseByDataId);
         poseByDataId.putAll(tablePoseByDataId);
         // #region agent log
         Map<String, Object> logData = new HashMap<>();
@@ -1416,47 +1547,18 @@ public class TrackSyncUseCase {
         return poseByDataId;
     }
 
-    private static void attachEstimatedPitchFromFrames(List<DataInfo> frames, Map<Long, Pose> poseByDataId) {
-        List<DataInfo> orderedFrames = frames.stream()
-                .filter(frame -> poseByDataId.containsKey(frame.getId()))
-                .sorted(Comparator.comparing(DataInfo::getOrderName, Comparator.nullsLast(String::compareTo)))
-                .collect(Collectors.toList());
-        for (int index = 0; index < orderedFrames.size(); index++) {
-            DataInfo frame = orderedFrames.get(index);
-            Pose current = poseByDataId.get(frame.getId());
-            Pose previous = index > 0 ? poseByDataId.get(orderedFrames.get(index - 1).getId()) : null;
-            Pose next = index + 1 < orderedFrames.size()
-                    ? poseByDataId.get(orderedFrames.get(index + 1).getId())
-                    : null;
-            Double pitch = current.explicitPitch ? current.pitch : estimatePitchFromNeighbors(previous, next);
-            poseByDataId.put(frame.getId(), new Pose(
-                    current.x,
-                    current.y,
-                    current.z,
-                    current.yaw,
-                    current.explicitRoll ? current.roll : null,
-                    pitch,
-                    current.explicitRoll,
-                    current.explicitPitch));
-        }
-    }
-
     private static Double toOptionalAngle(double value) {
         return Double.isNaN(value) ? null : value;
     }
 
-    private static double estimatePitchFromNeighbors(Pose previous, Pose next) {
-        if (previous == null || next == null) {
-            return 0;
-        }
-        double deltaX = next.x - previous.x;
-        double deltaY = next.y - previous.y;
-        double deltaZ = next.z - previous.z;
-        double horizontal = Math.hypot(deltaX, deltaY);
-        if (horizontal < 1e-6) {
-            return 0;
-        }
-        return Math.atan2(-deltaZ, horizontal);
+    static Pose poseFromLocationValues(double[] values) {
+        return new Pose(
+                values[0],
+                values[1],
+                values[2],
+                values[3],
+                toOptionalAngle(values[4]),
+                toOptionalAngle(values[5]));
     }
 
     private Map<Long, Integer> buildSegmentByDataId(Long sceneId, List<DataInfo> frames, int locationGapMs) {
@@ -1933,6 +2035,16 @@ public class TrackSyncUseCase {
 
         private static double value(Double value) {
             return value == null ? 0 : value;
+        }
+    }
+
+    static class PolylineDistanceMask {
+        final JSONArray points;
+        final List<Boolean> outsideSegments;
+
+        PolylineDistanceMask(JSONArray points, List<Boolean> outsideSegments) {
+            this.points = points;
+            this.outsideSegments = outsideSegments;
         }
     }
 

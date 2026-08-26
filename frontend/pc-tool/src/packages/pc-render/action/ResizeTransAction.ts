@@ -5,6 +5,10 @@ import { ITransform, AnnotateType } from '../type';
 import { Event } from '../config';
 import { Box, GroundPolygon, GroundPolyline } from '../objects';
 import { IRectEvent, RectTool, ClearHandler } from '../common/BasicSvg';
+import {
+    getValidWorldUnitsPerPixel,
+    isFinitePositiveBoxScale,
+} from '../utils/boxScale';
 
 // type DragHandler = (offsetLocal: THREE.Vector3, offsetCamera: THREE.Vector2) => ITransform | null;
 // type ClearHandler = () => void;
@@ -97,10 +101,15 @@ export default class ResizeTransAction extends Action {
                 if (!this.editConfig.move) return;
             } else if (!this.editConfig.transform || !object.editConfig.resize) return;
 
-            this.renderView.needFit = false;
             const camera = this.renderView.camera;
             const { left, right } = camera;
-            const scaleSize = (right - left) / this.renderView.container.clientWidth;
+            const scaleSize = getValidWorldUnitsPerPixel(
+                left,
+                right,
+                this.renderView.container.clientWidth,
+            );
+            if (scaleSize == null) return;
+            this.renderView.needFit = false;
             const { scale } = object;
 
             // center.multiplyScalar(scaleSize)
@@ -128,6 +137,12 @@ export default class ResizeTransAction extends Action {
                 case '-y':
                     _scale.set(Math.abs(_scale.x), scale.y, Math.abs(_scale.z));
                     break;
+            }
+            if (
+                !Number.isFinite(_position.x + _position.y + _position.z) ||
+                (object instanceof Box && !isFinitePositiveBoxScale(_scale))
+            ) {
+                return;
             }
             this.updateChange(
                 {
@@ -182,7 +197,15 @@ export default class ResizeTransAction extends Action {
             return;
         }
 
-        const scaleSize = (right - left) / this.renderView.container.clientWidth;
+        const scaleSize = getValidWorldUnitsPerPixel(
+            left,
+            right,
+            this.renderView.container.clientWidth,
+        );
+        if (scaleSize == null) {
+            this.rectTool.hide();
+            return;
+        }
         let scale = object.scale.clone().divideScalar(scaleSize);
         this.renderView.container.style.cursor = 'grab';
         const isGroundShape = object instanceof GroundPolygon || object instanceof GroundPolyline;

@@ -156,6 +156,14 @@ export const createObjectWith3 = define({
                         transform.scale.x = Math.max(0.2, transform.scale.x);
                         transform.scale.y = Math.max(0.2, transform.scale.y);
                         transform.scale.z = Math.max(0.2, transform.scale.z);
+                        if (!utils.isFinitePositiveBoxScale(transform.scale)) {
+                            editor.showMsg(
+                                'error',
+                                `创建失败：尺寸计算异常 (x=${transform.scale.x}, y=${transform.scale.y}, z=${transform.scale.z})`,
+                                8,
+                            );
+                            return;
+                        }
                         // debugger;
 
                         let userData = {
