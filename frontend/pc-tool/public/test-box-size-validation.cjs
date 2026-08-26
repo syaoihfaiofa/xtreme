@@ -48,7 +48,7 @@ const editorSource = fs.readFileSync(
 );
 assert.match(resizeSource, /getValidWorldUnitsPerPixel/);
 assert.match(resizeSource, /isFinitePositiveBoxScale/);
-assert.match(editorSource, /保存已阻止/);
-assert.match(editorSource, /issue\.code === 'INVALID_SIZE'/);
+assert.match(editorSource, /checkAnnotationBoxSize/);
+assert.doesNotMatch(editorSource, /保存已阻止/);
 
 console.log('box size validation tests passed');

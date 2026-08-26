@@ -167,7 +167,7 @@ export default class EditGroundPolylineVisibility2DAction extends Action {
     init(): void {
         this.marker = document.createElement('div');
         this.marker.style.cssText =
-            'position:absolute;width:14px;height:14px;border-radius:50%;' +
+            'position:absolute;width:10px;height:10px;border-radius:50%;' +
             'background:#ffcc00;border:2px solid #10252a;box-sizing:border-box;' +
             'transform:translate(-50%,-50%);pointer-events:none;z-index:20;display:none;';
         this.renderView.container.appendChild(this.marker);

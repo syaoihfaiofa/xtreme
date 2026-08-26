@@ -10,7 +10,7 @@ import {
 import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
-import { Box, GroundPolygon, GroundPolyline, utils as renderUtils } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline } from 'pc-render';
 import * as THREE from 'three';
 import hotkeys from 'hotkeys-js';
 import * as api from '../api';
@@ -99,7 +99,7 @@ interface IQaIssue {
     trackId?: string;
     label: string;
     message: string;
-    code?: 'INVALID_SIZE';
+    code?: 'INVALID_SIZE' | 'SIZE_PRIOR' | 'ASPECT' | 'OVERLAP';
 }
 
 export default class Editor extends BaseEditor {
@@ -237,7 +237,7 @@ export default class Editor extends BaseEditor {
         let bind = () => {
             hotkeys('alt+q', (event) => {
                 event.preventDefault();
-                this.focusNextQaIssue();
+                this.focusFirstQaIssue();
             });
         };
         bind();
@@ -841,16 +841,19 @@ export default class Editor extends BaseEditor {
         const violations: IQaIssue[] = [];
         frames.forEach((frame) => {
             const objects = this.dataManager.getFrameObject(frame.id) || [];
+            const frameBoxes: utils.AnnotationBoxCheckInput[] = [];
             objects.forEach((object: any) => {
                 const userData = object.userData as IUserData;
                 const label = userData.trackName || userData.trackId || userData.id || object.uuid;
-                const addIssue = (text: string, code?: IQaIssue['code']) => {
+                const classConfig = this.getClassType(userData);
+                const className = classConfig?.name || userData.classType || '';
+                const addIssue = (text: string, code?: IQaIssue['code'], targetObject: any = object) => {
                     violations.push({
                         frameId: String(frame.id),
                         frameName: frame.name || String(frame.id),
-                        objectUuid: object.uuid,
-                        objectId: userData.id || userData.backId,
-                        trackId: userData.trackId,
+                        objectUuid: targetObject.uuid,
+                        objectId: (targetObject.userData as IUserData).id || (targetObject.userData as IUserData).backId,
+                        trackId: (targetObject.userData as IUserData).trackId,
                         label,
                         message: `${frame.name || frame.id}: ${label} ${text}`,
                         code,
@@ -863,12 +866,14 @@ export default class Editor extends BaseEditor {
                     addIssue('缺少追踪ID');
                 }
                 if (object instanceof Box) {
-                    if (!renderUtils.isFinitePositiveBoxScale(object.scale)) {
-                        addIssue(
-                            `尺寸异常 (x=${object.scale.x}, y=${object.scale.y}, z=${object.scale.z})`,
-                            'INVALID_SIZE',
-                        );
-                    }
+                    frameBoxes.push({
+                        box: object,
+                        className,
+                        trackId: userData.trackId,
+                    });
+                    utils.checkAnnotationBoxSize(object, className).forEach((finding) => {
+                        addIssue(finding.message, finding.code);
+                    });
                     if (userData.motionMode === MotionMode.STATIC) {
                         const syncDistance = Number(userData.syncDistance || 12);
                         if (!Number.isFinite(syncDistance) || syncDistance <= 0) {
@@ -876,7 +881,6 @@ export default class Editor extends BaseEditor {
                         }
                     }
                 }
-                const classConfig = this.getClassType(userData);
                 (classConfig?.attrs || []).forEach((attr: any) => {
                     if (!attr.required) return;
                     const value = userData.attrs?.[attr.id];
@@ -885,6 +889,24 @@ export default class Editor extends BaseEditor {
                         value === '' ||
                         (Array.isArray(value) && value.length === 0);
                     if (empty) addIssue(`缺少必填属性 ${attr.name || attr.label || attr.id}`);
+                });
+            });
+            utils.checkAnnotationFrameOverlaps(frameBoxes).forEach((finding) => {
+                const primaryUserData = finding.primaryBox.userData as IUserData;
+                const primaryLabel =
+                    primaryUserData.trackName ||
+                    primaryUserData.trackId ||
+                    primaryUserData.id ||
+                    finding.primaryBox.uuid;
+                violations.push({
+                    frameId: String(frame.id),
+                    frameName: frame.name || String(frame.id),
+                    objectUuid: finding.primaryBox.uuid,
+                    objectId: primaryUserData.id || primaryUserData.backId,
+                    trackId: primaryUserData.trackId,
+                    label: primaryLabel,
+                    message: `${frame.name || frame.id}: ${finding.message}`,
+                    code: finding.code,
                 });
             });
         });
@@ -912,19 +934,22 @@ export default class Editor extends BaseEditor {
         if (showMessage) {
             this.showMsg(
                 'warning',
-                `QA ${this.qaIssueIndex + 1}/${this.qaIssues.length}: ${issue.message}。Alt+Q 下一个`,
+                `QA ${this.qaIssueIndex + 1}/${this.qaIssues.length}: ${issue.message}。Alt+Q 定位第一个问题`,
                 8,
             );
         }
     }
 
-    async focusNextQaIssue() {
+    async focusFirstQaIssue() {
+        if (this.qaIssues.length === 0) {
+            this.qaIssues = this.runQaLite();
+        }
         if (this.qaIssues.length === 0) {
             this.showMsg('warning', '当前没有QA问题');
             return;
         }
-        this.qaIssueIndex = (this.qaIssueIndex + 1) % this.qaIssues.length;
-        await this.focusQaIssue(this.qaIssues[this.qaIssueIndex]);
+        this.qaIssueIndex = 0;
+        await this.focusQaIssue(this.qaIssues[0]);
     }
 
     async saveObject(frames?: IFrame[], force?: boolean, silent?: boolean): Promise<boolean> {
@@ -945,22 +970,7 @@ export default class Editor extends BaseEditor {
 
         if (!force && !this.needSave(frames)) return true;
 
-        const allQaViolations = this.runQaLite(frames);
-        const invalidSizeViolations = allQaViolations.filter(
-            (issue) => issue.code === 'INVALID_SIZE',
-        );
-        if (invalidSizeViolations.length > 0) {
-            this.qaIssues = invalidSizeViolations;
-            this.qaIssueIndex = 0;
-            await this.focusQaIssue(invalidSizeViolations[0], false);
-            this.showMsg(
-                'error',
-                `保存已阻止：${invalidSizeViolations[0].message}`,
-                8,
-            );
-            return false;
-        }
-        const qaViolations = silent ? [] : allQaViolations;
+        const qaViolations = silent ? [] : this.runQaLite(frames);
 
         let dataInfos = [] as any[];
         let queryTime = frames[0].queryTime;
@@ -1027,7 +1037,7 @@ export default class Editor extends BaseEditor {
                     await this.focusQaIssue(qaViolations[0], false);
                     this.showMsg(
                         'warning',
-                        `保存成功，但QA发现 ${qaViolations.length} 个问题: ${qaViolations[0].message}。已定位到第1个，Alt+Q 下一个`,
+                        `保存成功，但QA发现 ${qaViolations.length} 个问题: ${qaViolations[0].message}。已定位到第1个，Alt+Q 可重新定位`,
                         8,
                     );
                 } else {

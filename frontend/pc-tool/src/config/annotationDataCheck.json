@@ -1,0 +1,87 @@
+{
+  "minDim": 0.02,
+  "iouThreshold": 0.3,
+  "longAxisClasses": ["car", "bus"],
+  "classAliases": {
+    "barrier": "barrier",
+    "bicycle": "person",
+    "bus": "bus",
+    "camouflage vehicle": "car",
+    "car": "car",
+    "concrete ball": "pillar",
+    "cone": "cone",
+    "fence": "barrier",
+    "handcart": "barrier",
+    "human": "person",
+    "motorcycle": "car",
+    "no parking board": "no parking board",
+    "parking lock": "parking lock (locked)",
+    "parking lock (locked)": "parking lock (locked)",
+    "parking lock (unlocked)": "parking lock (locked)",
+    "pedestrian": "person",
+    "person": "person",
+    "pillar": "pillar",
+    "pole": "pole",
+    "rider": "person",
+    "tricycle": "car",
+    "truck": "bus",
+    "wall": "barrier",
+    "wheel stopper": "parking lock (locked)"
+  },
+  "overlapSkipPairs": [
+    ["cone", "cone"],
+    ["pole", "pole"],
+    ["pole", "pillar"],
+    ["cone", "pillar"],
+    ["no parking board", "pillar"],
+    ["parking lock (locked)", "car"],
+    ["parking lock (locked)", "parking lock (locked)"]
+  ],
+  "sizePrior": {
+    "car": {
+      "length": { "min": 2.5, "max": 6.8 },
+      "width": { "min": 1.2, "max": 2.9 },
+      "height": { "min": 1.05, "max": 2.6 }
+    },
+    "bus": {
+      "length": { "min": 5.0, "max": 14.0 },
+      "width": { "min": 2.0, "max": 3.2 },
+      "height": { "min": 2.4, "max": 4.2 }
+    },
+    "pillar": {
+      "length": { "min": 0.05, "max": 2.0 },
+      "width": { "min": 0.05, "max": 2.0 },
+      "height": { "min": 1.2, "max": 3.8 }
+    },
+    "pole": {
+      "length": { "min": 0.02, "max": 1.0 },
+      "width": { "min": 0.02, "max": 1.2 },
+      "height": { "min": 0.3, "max": 3.8 }
+    },
+    "cone": {
+      "length": { "min": 0.1, "max": 0.9 },
+      "width": { "min": 0.1, "max": 0.9 },
+      "height": { "min": 0.3, "max": 1.2 }
+    },
+    "person": {
+      "length": { "min": 0.15, "max": 1.5 },
+      "width": { "min": 0.2, "max": 1.3 },
+      "height": { "min": 1.0, "max": 2.15 }
+    },
+    "barrier": {
+      "length": { "min": 0.15, "max": 1.2 },
+      "width": { "min": 0.5, "max": 2.0 },
+      "height": { "min": 0.5, "max": 3.0 }
+    },
+    "no parking board": {
+      "length": { "min": 0.15, "max": 1.0 },
+      "width": { "min": 0.2, "max": 1.0 },
+      "height": { "min": 0.4, "max": 2.4 }
+    },
+    "parking lock (locked)": {
+      "length": { "min": 0.15, "max": 0.5 },
+      "width": { "min": 0.3, "max": 0.8 },
+      "height": { "min": 0.2, "max": 0.7 }
+    }
+  }
+}

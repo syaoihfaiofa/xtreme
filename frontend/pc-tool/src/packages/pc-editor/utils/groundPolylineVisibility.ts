@@ -8,6 +8,8 @@ import {
     getViewKeyFromImageView,
     normalizeSegmentForceVisible,
     normalizeSegmentVisible,
+    segmentVisibleFromImport,
+    toBevExportSegmentVisibility,
     segmentVisibilityByViewFromImport,
     segmentVisibilityByViewToExport,
     type SegmentVisibilityByView,
@@ -179,7 +181,9 @@ export function applyGroundPolylineImageBoundaryOcclusion(
 export function getGroundPolylineSegmentVisibilityExport(
     polyline: GroundPolyline,
 ): SegmentVisibilityByView {
-    return segmentVisibilityByViewToExport(polyline.segmentVisibleByView);
+    const exported = segmentVisibilityByViewToExport(polyline.segmentVisibleByView);
+    exported.bev = toBevExportSegmentVisibility(polyline.getBevSegmentVisible());
+    return exported;
 }
 
 export function getGroundPolylineForceVisibleExport(
@@ -195,6 +199,10 @@ export function applyGroundPolylineSegmentVisibilityImport(
     polyline.setSegmentVisibleByView(
         segmentVisibilityByViewFromImport(raw, polyline.points3D.length),
     );
+    if (raw?.bev) {
+        const bevVisible = segmentVisibleFromImport(raw.bev, polyline.points3D.length);
+        polyline.setBevSegmentVisible(bevVisible);
+    }
 }
 
 export function applyGroundPolylineForceVisibleImport(
@@ -215,5 +223,4 @@ export {
     getViewKeyFromImageView,
     segmentVisibilityByViewFromImport,
     segmentVisibilityByViewToExport,
-    toBevExportSegmentVisibility,
 } from './polylineSegmentVisibility';

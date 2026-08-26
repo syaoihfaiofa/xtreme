@@ -364,8 +364,8 @@ export default class Render2DAction extends Action {
             context.stroke();
         };
         strokeEdges(visibleEdges, color, lineWidth);
-        strokeEdges(hiddenEdges, HIDDEN_LINE_OUTLINE_COLOR, lineWidth * 6);
-        strokeEdges(hiddenEdges, HIDDEN_LINE_COLOR, lineWidth * 4);
+        strokeEdges(hiddenEdges, HIDDEN_LINE_OUTLINE_COLOR, lineWidth * 4);
+        strokeEdges(hiddenEdges, HIDDEN_LINE_COLOR, lineWidth * 2);
         context.restore();
     }
 
@@ -417,7 +417,7 @@ export default class Render2DAction extends Action {
             return;
         }
         const { context } = this.renderView.proxy;
-        const radius = 6 / Math.max(this.renderView.getScale(), 0.0001);
+        const radius = 5 / Math.max(this.renderView.getScale(), 0.0001);
         context.save();
         context.fillStyle = '#ffcc00';
         context.strokeStyle = '#10252a';

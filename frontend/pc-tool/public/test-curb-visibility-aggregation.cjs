@@ -15,6 +15,14 @@ const visibility = fs.readFileSync(
     path.join(root, 'pc-editor/utils/polylineSegmentVisibility.ts'),
     'utf8',
 );
+const loadManager = fs.readFileSync(
+    path.join(root, 'pc-editor/common/LoadManager.ts'),
+    'utf8',
+);
+const groundVisibility = fs.readFileSync(
+    path.join(root, 'pc-editor/utils/groundPolylineVisibility.ts'),
+    'utf8',
+);
 
 assert.match(imageView, /visibilityViewKey: string = '';/);
 assert.match(viewManager, /view\.visibilityViewKey = String\(index\);/);
@@ -24,5 +32,8 @@ assert.match(visibility, /CAMERA_VIEW_KEYS\.some\(\(viewKey\) => !viewsByKey\.ha
 assert.match(visibility, /forceVisible\[index\] \|\|/);
 assert.match(visibility, /return effectiveByView\.some\(\(flags\) => flags\[index\]\);/);
 assert.doesNotMatch(visibility, /const relevantViews =/);
+assert.doesNotMatch(loadManager, /refreshGroundPolylineBevDisplay/);
+assert.match(groundVisibility, /exported\.bev = toBevExportSegmentVisibility/);
+assert.match(groundVisibility, /polyline\.setBevSegmentVisible\(bevVisible\)/);
 
 console.log('curb visibility aggregation tests passed');

@@ -240,6 +240,7 @@ class TrackSyncUseCaseTest {
         JSONObject existing = new JSONObject();
         existing.set("0", visibilityEntries(true));
         existing.set("1", visibilityEntries(false));
+        existing.set("bev", visibilityEntries(false));
 
         JSONObject result = TrackSyncUseCase.buildDistanceVisibility(
                 existing, oldPoints, targetPoints, List.of(false, true));
@@ -248,6 +249,12 @@ class TrackSyncUseCaseTest {
         assertVisibility(result, "1", false, false);
         assertVisibility(result, "2", true, false);
         assertVisibility(result, "3", true, false);
+        assertVisibility(result, "bev", false, false);
+
+        existing.remove("bev");
+        JSONObject migrated = TrackSyncUseCase.buildDistanceVisibility(
+                existing, oldPoints, targetPoints, List.of(false, true));
+        assertVisibility(migrated, "bev", true, false);
     }
 
     private static JSONArray visibilityEntries(boolean... values) {

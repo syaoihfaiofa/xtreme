@@ -935,6 +935,39 @@ public class TrackSyncUseCase {
             }
             result.set(viewKey, entries);
         }
+        JSONArray existingBevEntries = existingByView == null
+                ? null
+                : existingByView.getJSONArray("bev");
+        boolean[] existingBevFlags = readSegmentVisibility(
+                existingBevEntries,
+                existingPoints == null ? 0 : existingPoints.size() - 1);
+        JSONArray bevEntries = new JSONArray();
+        for (int index = 1; index < targetPoints.size(); index++) {
+            boolean visible;
+            if (existingBevEntries != null) {
+                JSONObject start = targetPoints.getJSONObject(index - 1);
+                JSONObject end = targetPoints.getJSONObject(index);
+                int existingIndex = nearestSegmentIndex(
+                        (getDouble(start, "x") + getDouble(end, "x")) / 2,
+                        (getDouble(start, "y") + getDouble(end, "y")) / 2,
+                        existingPoints);
+                visible = (existingIndex < 0 || existingBevFlags[existingIndex])
+                        && !outsideSegments.get(index - 1);
+            } else {
+                visible = false;
+                for (String viewKey : CAMERA_VIEW_KEYS) {
+                    JSONObject entry = result.getJSONArray(viewKey).getJSONObject(index - 1);
+                    if (Boolean.TRUE.equals(entry.getBool("visible"))) {
+                        visible = true;
+                        break;
+                    }
+                }
+            }
+            bevEntries.add(new JSONObject()
+                    .set("index", index - 1)
+                    .set("visible", visible));
+        }
+        result.set("bev", bevEntries);
         return result;
     }
 

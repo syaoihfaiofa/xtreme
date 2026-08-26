@@ -479,13 +479,6 @@ export default class DataManager {
             filterMap,
             withoutTaskId,
         );
-        const groundPolylines = annotate3D.filter(
-            (object): object is GroundPolyline => object instanceof GroundPolyline,
-        );
-        if (groundPolylines.length > 0) {
-            refreshGroundPolylineBevDisplay(this.editor, groundPolylines);
-        }
-
         this.editor.pc.annotate2D = annotate2D;
         this.editor.pc.annotate3D.children = annotate3D;
         const currentObjects = new Set<AnnotateObject>([...annotate2D, ...annotate3D]);

@@ -18,8 +18,18 @@ assert.match(render2D, /const HIDDEN_LINE_COLOR = '#ffe600';/);
 assert.match(render2D, /getRelevantViewKeysForPolyline\(/);
 assert.match(
     render2D,
-    /strokeEdges\(hiddenEdges, HIDDEN_LINE_OUTLINE_COLOR, lineWidth \* 6\);/,
+    /strokeEdges\(hiddenEdges, HIDDEN_LINE_OUTLINE_COLOR, lineWidth \* 4\);/,
 );
+assert.match(
+    render2D,
+    /strokeEdges\(hiddenEdges, HIDDEN_LINE_COLOR, lineWidth \* 2\);/,
+);
+assert.match(render2D, /const radius = 5 \//);
+const visibilityAction = fs.readFileSync(
+    path.join(root, 'action/EditGroundPolylineVisibility2DAction.ts'),
+    'utf8',
+);
+assert.match(visibilityAction, /width:10px;height:10px/);
 assert.doesNotMatch(render2D, /const projectedPolylineSourceIds = new Set/);
 assert.match(render2D, /if \(!this\.findSourceGroundPolyline\(obj\)\) \{/);
 assert.match(

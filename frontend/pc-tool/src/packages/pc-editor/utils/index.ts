@@ -13,3 +13,4 @@ export * from './motion';
 export * from './groundPolylineVisibility';
 export * from './polylineSegmentVisibility';
 export * from './trackingMetadata';
+export * from './annotationDataCheck';
