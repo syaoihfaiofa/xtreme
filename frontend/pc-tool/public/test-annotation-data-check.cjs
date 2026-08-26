@@ -128,9 +128,8 @@ const editorSource = fs.readFileSync(
     path.resolve(__dirname, '../src/common/Editor.ts'),
     'utf8',
 );
+assert.match(editorSource, /runAutoCheck/);
 assert.doesNotMatch(editorSource, /保存已阻止/);
-assert.match(editorSource, /checkAnnotationBoxSize/);
-assert.match(editorSource, /checkAnnotationFrameOverlaps/);
 assert.match(
     fs.readFileSync(
         path.resolve(__dirname, '../src/config/annotationDataCheck.json'),

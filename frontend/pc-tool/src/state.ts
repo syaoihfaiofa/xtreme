@@ -42,6 +42,7 @@ export function getDefault(): IBSState {
         query: {},
         // flow
         saving: false,
+        checking: false,
         validing: false,
         submitting: false,
         modifying: false,

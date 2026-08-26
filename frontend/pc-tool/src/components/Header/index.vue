@@ -102,6 +102,17 @@
                 <template #icon><SaveOutlined /></template>
                 <div class="title">{{ $$('btn-save') }}</div>
             </a-button>
+            <a-button
+                class="basic-btn"
+                v-if="has(BsUIType.flowSave)"
+                :disabled="blocking || inferenceRunning"
+                size="large"
+                :loading="bsState.checking"
+                @click="onAutoCheck"
+            >
+                <template #icon><AuditOutlined /></template>
+                <div class="title">{{ $$('btn-auto-check') }}</div>
+            </a-button>
             <!-- shortcut -->
             <a-button class="basic-btn" size="large" :disabled="blocking" @click="onHelp">
                 <template #icon
@@ -182,6 +193,7 @@
         SaveOutlined,
         CloseOutlined,
         CheckCircleOutlined,
+        AuditOutlined,
     } from '@ant-design/icons-vue';
     import { useInjectEditor } from '../../state';
     import useHeader from './useHeader';
@@ -202,6 +214,7 @@
         onHelp,
         onIndexBlur,
         onSave,
+        onAutoCheck,
         onPre,
         onNext,
         onClose,

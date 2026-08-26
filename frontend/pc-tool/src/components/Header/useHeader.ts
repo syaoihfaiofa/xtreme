@@ -73,6 +73,10 @@ export default function useHeader() {
         editor.saveObject();
     }
 
+    async function onAutoCheck() {
+        await editor.runAutoCheck();
+    }
+
     function onToggleReviewMode() {
         editor.setReviewMode(!bsState.reviewMode);
         editor.showMsg('success', bsState.reviewMode ? '已开启审阅模式' : '已关闭审阅模式');
@@ -143,6 +147,7 @@ export default function useHeader() {
     let blocking = computed(() => {
         return (
             bsState.saving ||
+            bsState.checking ||
             bsState.validing ||
             bsState.submitting ||
             bsState.modifying ||
@@ -341,6 +346,7 @@ export default function useHeader() {
         onHelp,
         onIndexBlur,
         onSave,
+        onAutoCheck,
         onPre,
         onNext,
         canNavigateFrame,

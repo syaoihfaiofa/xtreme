@@ -2,6 +2,7 @@ import { ILocale } from './type';
 const zh: ILocale = {
     'btn-close': '关闭',
     'btn-save': '保存',
+    'btn-auto-check': 'Auto Check',
     'btn-shortcut': '快捷键',
     'btn-valid': '标记为有效帧',
     'btn-invalid': '标记为无效帧',

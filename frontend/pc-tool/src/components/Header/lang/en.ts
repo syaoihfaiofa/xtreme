@@ -1,6 +1,7 @@
 const en = {
     'btn-close': 'Close',
     'btn-save': 'Save',
+    'btn-auto-check': 'Auto Check',
     'btn-shortcut': 'Shortcut',
     'btn-valid': 'Mark as Valid',
     'btn-invalid': 'Mark as Invalid',

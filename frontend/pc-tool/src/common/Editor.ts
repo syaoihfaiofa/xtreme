@@ -237,7 +237,7 @@ export default class Editor extends BaseEditor {
         let bind = () => {
             hotkeys('alt+q', (event) => {
                 event.preventDefault();
-                this.focusFirstQaIssue();
+                this.focusNextQaIssue();
             });
         };
         bind();
@@ -934,22 +934,57 @@ export default class Editor extends BaseEditor {
         if (showMessage) {
             this.showMsg(
                 'warning',
-                `QA ${this.qaIssueIndex + 1}/${this.qaIssues.length}: ${issue.message}。Alt+Q 定位第一个问题`,
+                `QA ${this.qaIssueIndex + 1}/${this.qaIssues.length}: ${issue.message}。Alt+Q 下一个`,
                 8,
             );
         }
     }
 
-    async focusFirstQaIssue() {
+    async focusNextQaIssue() {
         if (this.qaIssues.length === 0) {
-            this.qaIssues = this.runQaLite();
-        }
-        if (this.qaIssues.length === 0) {
-            this.showMsg('warning', '当前没有QA问题');
+            await this.runAutoCheck();
             return;
         }
-        this.qaIssueIndex = 0;
-        await this.focusQaIssue(this.qaIssues[0]);
+        this.qaIssueIndex = (this.qaIssueIndex + 1) % this.qaIssues.length;
+        await this.focusQaIssue(this.qaIssues[this.qaIssueIndex]);
+    }
+
+    async runAutoCheck() {
+        const { bsState } = this;
+        if (bsState.checking || bsState.saving) {
+            return;
+        }
+        if (this.dataManager.isInferenceRunning()) {
+            this.showMsg(
+                'warning',
+                'Dataset inference is running. Auto check is disabled until the scene labels are refreshed.',
+                8,
+            );
+            return;
+        }
+
+        bsState.checking = true;
+        try {
+            await this.loadManager.loadAllObjects();
+            const violations = this.runQaLite(this.state.frames);
+            this.qaIssues = violations;
+            this.qaIssueIndex = 0;
+            if (violations.length === 0) {
+                this.showMsg('success', `Auto Check 完成：已检查 ${this.state.frames.length} 帧，未发现问题`);
+                return;
+            }
+            await this.focusQaIssue(violations[0], false);
+            this.showMsg(
+                'warning',
+                `Auto Check 发现 ${violations.length} 个问题（${this.state.frames.length} 帧）: ${violations[0].message}。Alt+Q 下一个`,
+                8,
+            );
+        } catch (error: any) {
+            console.error(error);
+            this.showMsg('error', 'Auto Check 失败');
+        } finally {
+            bsState.checking = false;
+        }
     }
 
     async saveObject(frames?: IFrame[], force?: boolean, silent?: boolean): Promise<boolean> {
@@ -969,8 +1004,6 @@ export default class Editor extends BaseEditor {
         frames = frames || this.state.frames;
 
         if (!force && !this.needSave(frames)) return true;
-
-        const qaViolations = silent ? [] : this.runQaLite(frames);
 
         let dataInfos = [] as any[];
         let queryTime = frames[0].queryTime;
@@ -1031,20 +1064,9 @@ export default class Editor extends BaseEditor {
                 e.needSave = false;
             });
             if (!silent) {
-                if (qaViolations.length > 0) {
-                    this.qaIssues = qaViolations;
-                    this.qaIssueIndex = 0;
-                    await this.focusQaIssue(qaViolations[0], false);
-                    this.showMsg(
-                        'warning',
-                        `保存成功，但QA发现 ${qaViolations.length} 个问题: ${qaViolations[0].message}。已定位到第1个，Alt+Q 可重新定位`,
-                        8,
-                    );
-                } else {
-                    this.qaIssues = [];
-                    this.qaIssueIndex = 0;
-                    this.showMsg('success', this.lang('save-ok'));
-                }
+                this.qaIssues = [];
+                this.qaIssueIndex = 0;
+                this.showMsg('success', this.lang('save-ok'));
             }
             return true;
         } catch (e: any) {

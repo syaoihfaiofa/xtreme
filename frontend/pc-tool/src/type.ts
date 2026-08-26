@@ -64,6 +64,7 @@ export interface IBSState {
     query: Record<string, string>;
     // flow
     saving: boolean;
+    checking: boolean;
     validing: boolean;
     submitting: boolean;
     modifying: boolean;
