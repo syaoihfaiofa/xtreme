@@ -211,7 +211,7 @@ export default class ResizeTransAction extends Action {
         const isGroundShape = object instanceof GroundPolygon || object instanceof GroundPolyline;
         this.rectTool.setOption({
             lineStyle: {
-                stroke: isGroundShape ? 'transparent' : '#ffffff',
+                stroke: 'transparent',
                 'stroke-dasharray': 0,
             },
         });
