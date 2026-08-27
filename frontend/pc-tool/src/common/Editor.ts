@@ -45,6 +45,10 @@ function matchesSyncedTrack(
     return true;
 }
 
+function matchesTrackId(candidate: { trackId?: string }, trackId: string): boolean {
+    return candidate.trackId === trackId;
+}
+
 const REVIEW_PRESERVE_USER_DATA_KEYS = ['reviewedCorrect', 'reviewedCorrectVisible'] as const;
 
 function buildSyncedUserDataPatch(
@@ -675,12 +679,12 @@ export default class Editor extends BaseEditor {
             const duplicateBoxes = frameObjects.filter(
                 (object) =>
                     object instanceof Box &&
-                    matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
+                    matchesTrackId(object.userData as IUserData, trackId),
             ) as Box[];
             const duplicateGroundShapes = frameObjects.filter(
                 (object) =>
                     isSyncableGroundShape(object) &&
-                    matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
+                    matchesTrackId(object.userData as IUserData, trackId),
             ) as SyncableGroundShape[];
 
             const freshBox = frameObjectsFromServer.find(

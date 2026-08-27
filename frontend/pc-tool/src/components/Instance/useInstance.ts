@@ -19,6 +19,7 @@ import * as locale from './lang';
 import useItem from './useItem';
 import useClassItem from './useClassItem';
 import useTrackItem from './useTrackItem';
+import { getClassGroupKey } from './classGroupKey';
 
 export const animation = {
     onEnter(node: any, done: any) {},
@@ -249,7 +250,7 @@ export default function useInstance() {
         classifyMap[noProject.key] = noProject;
 
         editor.state.classTypes.forEach((item) => {
-            let classMapId = noClassifyKey + item.id + item.name;
+            let classMapId = getClassGroupKey(noClassifyKey, item.id, item.name);
             let insList: IClass = {
                 key: classMapId,
                 classId: item.id,
@@ -281,7 +282,11 @@ export default function useInstance() {
             // only one classify
             classify = noClassifyKey;
             let trackMapId = trackId;
-            let classMapId = classify + classId + classType;
+            let classMapId = getClassGroupKey(
+                classify,
+                classId === '' ? undefined : classId,
+                classType,
+            );
 
             let name = userData.id.slice(-4);
 
@@ -399,7 +404,11 @@ export default function useInstance() {
         state.selectMap = selectMap;
         state.trackId = userData.trackId;
         editor.state.currentClass = userData.classId || '';
-        let classMapId = classify + classId + classType;
+        let classMapId = getClassGroupKey(
+            classify,
+            classId === '' ? undefined : classId,
+            classType,
+        );
 
         state.list.forEach((classifyInfo) => {
             if (classifyInfo.key !== classify) {

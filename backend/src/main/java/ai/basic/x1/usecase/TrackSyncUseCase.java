@@ -1482,8 +1482,7 @@ public class TrackSyncUseCase {
         Map<Long, Long> duplicateDataIdByObjectId = new HashMap<>();
         for (var obj : existingObjects) {
             if (ObjectUtil.isNull(obj.getClassAttributes())) continue;
-            if (!trackId.equals(obj.getClassAttributes().getStr("trackId"))) continue;
-            if (!sameClass(obj, source)) continue;
+            if (!sameTrackId(obj.getClassAttributes(), trackId)) continue;
             if (!hasSyncableBox(obj)) continue;
             var current = byDataId.get(obj.getDataId());
             if (current == null) {
@@ -1499,6 +1498,12 @@ public class TrackSyncUseCase {
             byDataId.put(obj.getDataId(), preferred);
         }
         return new ExistingRows(byDataId, duplicateObjectIds, duplicateDataIdByObjectId);
+    }
+
+    static boolean sameTrackId(JSONObject attributes, String trackId) {
+        return attributes != null
+                && StrUtil.isNotBlank(trackId)
+                && trackId.equals(attributes.getStr("trackId"));
     }
 
     private static void requireScenePose(Map<Long, Pose> poseByDataId, Long sourceDataId) {

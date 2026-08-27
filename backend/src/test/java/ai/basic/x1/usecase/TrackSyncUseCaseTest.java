@@ -33,6 +33,16 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void sameTrackId_matchesTrackAfterClassChange() {
+        JSONObject oldClassAttributes = new JSONObject()
+                .set("trackId", "track-1")
+                .set("classId", 100L);
+
+        assertEquals(true, TrackSyncUseCase.sameTrackId(oldClassAttributes, "track-1"));
+        assertEquals(false, TrackSyncUseCase.sameTrackId(oldClassAttributes, "track-2"));
+    }
+
+    @Test
     void projectGroundPoints_preservesPolylineOrderAcrossPoses() {
         JSONArray sourcePoints = new JSONArray();
         sourcePoints.add(point(1, 2, 3));
