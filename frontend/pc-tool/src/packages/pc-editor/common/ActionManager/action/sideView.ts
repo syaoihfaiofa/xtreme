@@ -110,11 +110,19 @@ function translate(editor: Editor, offset: THREE.Vector3): void {
     const object = getSelectedObject(editor);
     if (!object) return;
     if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+        const selectedVertex =
+            object instanceof GroundPolyline ? editor.getSelectedGroundPolylineVertex() : undefined;
+        const points = object.points3D.map((point) => point.clone());
+        if (selectedVertex?.object === object) {
+            points[selectedVertex.index].add(offset);
+        } else {
+            points.forEach((point) => point.add(offset));
+        }
         editor.cmdManager.execute(
             object instanceof GroundPolygon ? 'update-ground-polygon-points' : 'update-ground-polyline-points',
             {
             object,
-            points: object.points3D.map((point) => point.clone().add(offset)),
+            points,
             },
         );
         return;

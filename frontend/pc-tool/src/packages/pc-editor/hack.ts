@@ -52,6 +52,21 @@ export default function hack(editor: Editor) {
 }
 
 function hackSideView(editor: Editor, view: SideRenderView) {
+    view.onGroundPolylineHeightChange = (object: GroundPolyline, wallHeight: number) => {
+        editor.cmdManager.execute('update-ground-polyline-height', { object, wallHeight });
+    };
+    view.onGroundPolylineSegmentInsert = (
+        object: GroundPolyline,
+        segmentIndex: number,
+        point: THREE.Vector3,
+    ) => {
+        editor.cmdManager.execute('insert-ground-polyline-point', { object, segmentIndex, point });
+        editor.setSelectedGroundPolylineVertex(object, segmentIndex + 1);
+    };
+    view.onGroundPolylineVertexSelect = (object: GroundPolyline, index: number) => {
+        editor.setSelectedGroundPolylineVertex(object, index);
+    };
+    view.getSelectedGroundPolylineVertex = () => editor.getSelectedGroundPolylineVertex();
     view.onGroundPolygonPointsChange = (object: GroundPolygon, points: THREE.Vector3[]) => {
         editor.cmdManager.execute('update-ground-polygon-points', { object, points });
     };
@@ -87,6 +102,28 @@ function hackMainView(editor: Editor, view: MainRenderView) {
         'edit-ground-polyline',
     ) as EditGroundPolylineAction;
     if (editGroundPolylineAction) {
+        editGroundPolylineAction.onGroundPolylineHeightChange = (
+            object: GroundPolyline,
+            wallHeight: number,
+        ): void => {
+            editor.cmdManager.execute('update-ground-polyline-height', { object, wallHeight });
+        };
+        editGroundPolylineAction.onGroundPolylineSegmentInsert = (
+            object: GroundPolyline,
+            segmentIndex: number,
+            point: THREE.Vector3,
+        ): void => {
+            editor.cmdManager.execute('insert-ground-polyline-point', { object, segmentIndex, point });
+            editor.setSelectedGroundPolylineVertex(object, segmentIndex + 1);
+        };
+        editGroundPolylineAction.onGroundPolylineVertexSelect = (
+            object: GroundPolyline,
+            index: number,
+        ): void => {
+            editor.setSelectedGroundPolylineVertex(object, index);
+        };
+        editGroundPolylineAction.getSelectedGroundPolylineVertex = () =>
+            editor.getSelectedGroundPolylineVertex();
         editGroundPolylineAction.onGroundPolylinePointsChange = (
             object: GroundPolyline,
             points: THREE.Vector3[],

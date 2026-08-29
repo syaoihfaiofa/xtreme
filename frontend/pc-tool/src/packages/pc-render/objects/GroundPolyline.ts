@@ -15,12 +15,21 @@ export default class GroundPolyline extends THREE.LineSegments {
     annotateType = AnnotateType.ANNOTATE_3D;
     objectType = ObjectType.TYPE_GROUND_POLYLINE;
     color = new THREE.Color();
+    wallHeight = 0;
     readonly points3D: THREE.Vector3[] = [];
     segmentVisibleByView: Record<string, boolean[]> = {};
     segmentForceVisibleByView: Record<string, boolean[]> = {};
     private autoVisibilityBoundaryPointIndices = new Set<number>();
     private bevSegmentVisible: boolean[] = [];
     private readonly hiddenLine: THREE.LineSegments;
+    readonly wallMesh = new THREE.Mesh(
+        new THREE.BufferGeometry(),
+        new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    readonly topLine = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ toneMapped: false }),
+    );
 
     constructor(points: THREE.Vector3[]) {
         super(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ toneMapped: false }));
@@ -34,6 +43,10 @@ export default class GroundPolyline extends THREE.LineSegments {
         );
         this.hiddenLine.visible = false;
         this.add(this.hiddenLine);
+        this.wallMesh.visible = false;
+        this.topLine.visible = false;
+        this.add(this.wallMesh);
+        this.add(this.topLine);
         this.setPoints(points);
     }
 
@@ -47,8 +60,48 @@ export default class GroundPolyline extends THREE.LineSegments {
             this.remapAllViewSegmentVisible(oldPointCount, points.length);
         }
         this.rebuildLineGeometry(this.bevSegmentVisible);
+        this.rebuildWallGeometry();
         this.geometry.computeBoundingBox();
         this.geometry.computeBoundingSphere();
+    }
+
+    setWallHeight(height: number): void {
+        this.wallHeight = Number.isFinite(height) ? Math.max(0, height) : 0;
+        this.rebuildWallGeometry();
+    }
+
+    insertPointAfter(segmentIndex: number, point: THREE.Vector3): void {
+        if (segmentIndex < 0 || segmentIndex >= this.points3D.length - 1) {
+            throw new Error(`Invalid GroundPolyline segment index: ${segmentIndex}`);
+        }
+        const pointCount = this.points3D.length;
+        const points = this.points3D.map((item) => item.clone());
+        points.splice(segmentIndex + 1, 0, point.clone());
+        const splitVisible = this.splitSegmentFlags(this.segmentVisibleByView, pointCount, segmentIndex);
+        const splitForceVisible = this.splitSegmentFlags(
+            this.segmentForceVisibleByView,
+            pointCount,
+            segmentIndex,
+            false,
+        );
+        const splitBevVisible = this.splitFlags(
+            this.bevSegmentVisible,
+            pointCount,
+            segmentIndex,
+        );
+        const shiftedBoundaries = this.getAutoVisibilityBoundaryPointIndices().map((index) =>
+            index > segmentIndex ? index + 1 : index,
+        );
+
+        this.setPoints(points);
+        this.setSegmentVisibleByView(splitVisible);
+        this.setSegmentForceVisibleByView(splitForceVisible);
+        this.setBevSegmentVisible(splitBevVisible);
+        this.setAutoVisibilityBoundaryPointIndices(shiftedBoundaries);
+    }
+
+    getAutoVisibilityBoundaryPointIndices(): number[] {
+        return Array.from(this.autoVisibilityBoundaryPointIndices);
     }
 
     setSegmentVisibleByView(byView: Record<string, boolean[]>): void {
@@ -174,6 +227,8 @@ export default class GroundPolyline extends THREE.LineSegments {
     setColor(color: THREE.ColorRepresentation): void {
         this.color.set(color);
         (this.material as THREE.LineBasicMaterial).color.copy(this.color);
+        (this.wallMesh.material as THREE.MeshBasicMaterial).color.copy(this.color);
+        (this.topLine.material as THREE.LineBasicMaterial).color.copy(this.color);
     }
 
     private remapAllViewSegmentVisible(oldPointCount: number, newPointCount: number): void {
@@ -252,6 +307,32 @@ export default class GroundPolyline extends THREE.LineSegments {
         return this.normalizeSegmentVisibleForCount(next, newPointCount, defaultValue);
     }
 
+    private splitSegmentFlags(
+        byView: Record<string, boolean[]>,
+        pointCount: number,
+        segmentIndex: number,
+        defaultValue: boolean = true,
+    ): Record<string, boolean[]> {
+        return Object.fromEntries(
+            Object.entries(byView).map(([viewKey, flags]) => [
+                viewKey,
+                this.splitFlags(flags, pointCount, segmentIndex, defaultValue),
+            ]),
+        );
+    }
+
+    private splitFlags(
+        flags: boolean[] | undefined,
+        pointCount: number,
+        segmentIndex: number,
+        defaultValue: boolean = true,
+    ): boolean[] {
+        const normalized = this.normalizeSegmentVisibleForCount(flags, pointCount, defaultValue);
+        const segmentVisible = normalized[segmentIndex] ?? defaultValue;
+        normalized.splice(segmentIndex, 1, segmentVisible, segmentVisible);
+        return normalized;
+    }
+
     private normalizeSegmentVisibleForCount(
         flags: boolean[] | undefined,
         pointCount: number,
@@ -316,5 +397,39 @@ export default class GroundPolyline extends THREE.LineSegments {
         } else {
             this.hiddenLine.visible = false;
         }
+    }
+
+    private rebuildWallGeometry(): void {
+        const segmentCount = Math.max(0, this.points3D.length - 1);
+        if (this.wallHeight <= 0 || segmentCount === 0) {
+            this.wallMesh.visible = false;
+            this.topLine.visible = false;
+            return;
+        }
+        const vertices: number[] = [];
+        const topPoints: THREE.Vector3[] = [];
+        for (let index = 0; index < segmentCount; index++) {
+            const start = this.points3D[index];
+            const end = this.points3D[index + 1];
+            const startTop = start.clone();
+            const endTop = end.clone();
+            startTop.z += this.wallHeight;
+            endTop.z += this.wallHeight;
+            vertices.push(
+                start.x, start.y, start.z,
+                end.x, end.y, end.z,
+                endTop.x, endTop.y, endTop.z,
+                start.x, start.y, start.z,
+                endTop.x, endTop.y, endTop.z,
+                startTop.x, startTop.y, startTop.z,
+            );
+            topPoints.push(startTop, endTop);
+        }
+        this.wallMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        this.wallMesh.geometry.computeBoundingSphere();
+        this.topLine.geometry.setFromPoints(topPoints);
+        this.topLine.geometry.computeBoundingSphere();
+        this.wallMesh.visible = true;
+        this.topLine.visible = true;
     }
 }

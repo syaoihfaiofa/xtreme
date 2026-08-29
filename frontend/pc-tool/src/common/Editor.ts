@@ -64,6 +64,7 @@ function buildSyncedUserDataPatch(
         syncDistance: fresh.syncDistance,
         syncMaxDisappearGap: fresh.syncMaxDisappearGap,
         syncLocationGapMs: fresh.syncLocationGapMs,
+        showSyncLocationBoundaries: fresh.showSyncLocationBoundaries,
         dynamicRangeSyncEnabled: fresh.dynamicRangeSyncEnabled,
         dynamicSyncPreviousFrames: fresh.dynamicSyncPreviousFrames,
         dynamicSyncNextFrames: fresh.dynamicSyncNextFrames,

@@ -30,6 +30,7 @@ const zh: ILocale = {
     'sync-distance': '同步距离（到Box最近点，XY平面）',
     'sync-max-disappear-gap': '最大连续消失帧数',
     'sync-location-gap': 'Location 断档阈值',
+    'show-sync-location-boundaries': '显示 Location 断档线',
     'sync-use-z': '同步时使用Z',
     'sync-yaw-offset': '同步Yaw偏移',
     'sync-x-offset': '同步X偏移',

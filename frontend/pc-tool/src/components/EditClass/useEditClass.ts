@@ -1,7 +1,7 @@
 import { reactive, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useClipboard } from '@vueuse/core';
 import { AttrType, IClassType, Event, utils, IUserData, Const, MotionMode } from 'pc-editor';
-import { AnnotateObject, Box, Rect } from 'pc-render';
+import { AnnotateObject, Box, GroundPolyline, Rect } from 'pc-render';
 import { useInjectState } from '../../state';
 import { IState, IInstanceItem, MsgType, IControl } from './type';
 import { useInjectEditor } from '../../state';
@@ -12,6 +12,7 @@ import useControl from './useControl';
 
 let SOURCE_CLASS = 'edit_class';
 const DEFAULT_SYNC_DISTANCE = 12;
+const DEFAULT_GROUND_POLYLINE_SYNC_DISTANCE = 15;
 const DEFAULT_SYNC_MAX_DISAPPEAR_GAP = 50;
 const DEFAULT_SYNC_LOCATION_GAP_MS = 200;
 const DEFAULT_DYNAMIC_SYNC_FRAME_COUNT = 1;
@@ -53,6 +54,7 @@ export default function useEditClass() {
         syncDistance: DEFAULT_SYNC_DISTANCE,
         syncMaxDisappearGap: DEFAULT_SYNC_MAX_DISAPPEAR_GAP,
         syncLocationGapMs: DEFAULT_SYNC_LOCATION_GAP_MS,
+        showSyncLocationBoundaries: false,
         dynamicRangeSyncEnabled: false,
         dynamicSyncPreviousFrames: DEFAULT_DYNAMIC_SYNC_FRAME_COUNT,
         dynamicSyncNextFrames: DEFAULT_DYNAMIC_SYNC_FRAME_COUNT,
@@ -184,6 +186,7 @@ export default function useEditClass() {
         state.syncDistance = DEFAULT_SYNC_DISTANCE;
         state.syncMaxDisappearGap = DEFAULT_SYNC_MAX_DISAPPEAR_GAP;
         state.syncLocationGapMs = DEFAULT_SYNC_LOCATION_GAP_MS;
+        state.showSyncLocationBoundaries = false;
         state.dynamicRangeSyncEnabled = false;
         state.dynamicSyncPreviousFrames = DEFAULT_DYNAMIC_SYNC_FRAME_COUNT;
         state.dynamicSyncNextFrames = DEFAULT_DYNAMIC_SYNC_FRAME_COUNT;
@@ -236,9 +239,11 @@ export default function useEditClass() {
         state.motionMode =
             (object.userData as IUserData).motionMode ||
             utils.getDefaultMotionMode((object.userData as IUserData).classType);
-        state.syncDistance = getSyncDistance(object.userData as IUserData);
+        state.syncDistance = getSyncDistance(object.userData as IUserData, object);
         state.syncMaxDisappearGap = getSyncMaxDisappearGap(object.userData as IUserData);
         state.syncLocationGapMs = getSyncLocationGapMs(object.userData as IUserData);
+        state.showSyncLocationBoundaries =
+            (object.userData as IUserData).showSyncLocationBoundaries === true;
         state.dynamicRangeSyncEnabled =
             (object.userData as IUserData).dynamicRangeSyncEnabled === true;
         state.dynamicSyncPreviousFrames = getDynamicSyncFrameCount(
@@ -301,9 +306,10 @@ export default function useEditClass() {
         state.reviewedCorrect = userData.reviewedCorrect === true;
         state.sensorDistance = object instanceof Box ? getSensorDistance(object as Box) : 0;
         state.motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
-        state.syncDistance = getSyncDistance(userData);
+        state.syncDistance = getSyncDistance(userData, object);
         state.syncMaxDisappearGap = getSyncMaxDisappearGap(userData);
         state.syncLocationGapMs = getSyncLocationGapMs(userData);
+        state.showSyncLocationBoundaries = userData.showSyncLocationBoundaries === true;
         state.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled === true;
         state.dynamicSyncPreviousFrames = getDynamicSyncFrameCount(
             userData.dynamicSyncPreviousFrames,
@@ -457,9 +463,12 @@ export default function useEditClass() {
         updateAttrInfo(trackObject.userData, state.classType);
     }
 
-    function getSyncDistance(userData?: IUserData) {
+    function getSyncDistance(userData?: IUserData, object?: AnnotateObject) {
         const value = Number(userData?.syncDistance);
-        return Number.isFinite(value) && value > 0 ? value : DEFAULT_SYNC_DISTANCE;
+        if (Number.isFinite(value) && value > 0) return value;
+        return object instanceof GroundPolyline
+            ? DEFAULT_GROUND_POLYLINE_SYNC_DISTANCE
+            : DEFAULT_SYNC_DISTANCE;
     }
 
     function getSyncUseZ(userData?: IUserData) {
@@ -555,6 +564,7 @@ export default function useEditClass() {
                 syncDistance: state.syncDistance,
                 syncMaxDisappearGap: state.syncMaxDisappearGap,
                 syncLocationGapMs: state.syncLocationGapMs,
+                showSyncLocationBoundaries: state.showSyncLocationBoundaries,
                 dynamicRangeSyncEnabled: state.dynamicRangeSyncEnabled,
                 dynamicSyncPreviousFrames: state.dynamicSyncPreviousFrames,
                 dynamicSyncNextFrames: state.dynamicSyncNextFrames,
@@ -580,7 +590,9 @@ export default function useEditClass() {
     function onSyncDistanceChange(value?: number) {
         const nextValue = Number(value);
         state.syncDistance =
-            Number.isFinite(nextValue) && nextValue > 0 ? nextValue : DEFAULT_SYNC_DISTANCE;
+            Number.isFinite(nextValue) && nextValue > 0
+                ? nextValue
+                : getSyncDistance(undefined, trackObject);
         if (!state.trackId || !state.motionMode) return;
         applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
     }
@@ -601,6 +613,12 @@ export default function useEditClass() {
             Number.isInteger(nextValue) && nextValue > 0
                 ? nextValue
                 : DEFAULT_SYNC_LOCATION_GAP_MS;
+        if (!state.trackId || !state.motionMode) return;
+        applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
+    }
+
+    function onShowSyncLocationBoundariesChange(value: boolean): void {
+        state.showSyncLocationBoundaries = value !== false;
         if (!state.trackId || !state.motionMode) return;
         applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
     }
@@ -726,6 +744,7 @@ export default function useEditClass() {
                 syncDistance: state.syncDistance,
                 syncMaxDisappearGap: state.syncMaxDisappearGap,
                 syncLocationGapMs: state.syncLocationGapMs,
+                showSyncLocationBoundaries: state.showSyncLocationBoundaries,
                 dynamicRangeSyncEnabled: state.dynamicRangeSyncEnabled,
                 dynamicSyncPreviousFrames: state.dynamicSyncPreviousFrames,
                 dynamicSyncNextFrames: state.dynamicSyncNextFrames,
@@ -866,6 +885,7 @@ export default function useEditClass() {
         onSyncDistanceChange,
         onSyncMaxDisappearGapChange,
         onSyncLocationGapMsChange,
+        onShowSyncLocationBoundariesChange,
         onDynamicRangeSyncEnabledChange,
         onDynamicSyncPreviousFramesChange,
         onDynamicSyncNextFramesChange,

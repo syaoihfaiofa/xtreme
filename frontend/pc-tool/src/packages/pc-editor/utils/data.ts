@@ -55,6 +55,7 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
                 updateData.syncDistance = userData.syncDistance;
                 updateData.syncMaxDisappearGap = userData.syncMaxDisappearGap;
                 updateData.syncLocationGapMs = userData.syncLocationGapMs;
+                updateData.showSyncLocationBoundaries = userData.showSyncLocationBoundaries;
                 updateData.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled;
                 updateData.dynamicSyncPreviousFrames = userData.dynamicSyncPreviousFrames;
                 updateData.dynamicSyncNextFrames = userData.dynamicSyncNextFrames;

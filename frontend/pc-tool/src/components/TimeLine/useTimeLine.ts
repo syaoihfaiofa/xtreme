@@ -804,6 +804,7 @@ export default function useBottom() {
             syncPoseSegmentId: object.syncPoseSegmentId,
             syncPoseSegmentsInitialized: object.syncPoseSegmentsInitialized,
             syncLocationGapMs: object.syncLocationGapMs,
+            showSyncLocationBoundaries: object.showSyncLocationBoundaries,
             syncDirty: object.syncDirty === true,
             occluded: object.occluded === true,
             reviewedCorrect: object.reviewedCorrect === true,

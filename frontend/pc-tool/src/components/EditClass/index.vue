@@ -189,6 +189,15 @@
                             @change="onSyncLocationGapMsChange"
                         />
                     </div>
+                    <div class="sync-distance-row">
+                        <span class="sync-distance-label">
+                            {{ $$('show-sync-location-boundaries') }}
+                        </span>
+                        <a-switch
+                            v-model:checked="state.showSyncLocationBoundaries"
+                            @change="onShowSyncLocationBoundariesChange"
+                        />
+                    </div>
                     <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
                         <span class="sync-distance-label">{{ $$('sync-max-disappear-gap') }}</span>
                         <a-input-number
@@ -310,6 +319,7 @@
         onSyncDistanceChange,
         onSyncMaxDisappearGapChange,
         onSyncLocationGapMsChange,
+        onShowSyncLocationBoundariesChange,
         onDynamicRangeSyncEnabledChange,
         onDynamicSyncPreviousFramesChange,
         onDynamicSyncNextFramesChange,

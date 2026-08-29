@@ -352,9 +352,9 @@ export default class ResizeTransAction extends Action {
             let minZoom = 0.2;
             if (e.deltaY === 0 || !_this.editConfig.zoom) return;
             if (e.deltaY > 0) {
-                renderView.zoom = renderView.zoom * 1.05;
+                renderView.zoom = renderView.zoom * 1.1;
             } else {
-                renderView.zoom = renderView.zoom * 0.95;
+                renderView.zoom = renderView.zoom * 0.9;
             }
 
             if (renderView.zoom > maxZoom) renderView.zoom = maxZoom;

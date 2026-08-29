@@ -56,6 +56,7 @@ import java.util.stream.Collectors;
 public class TrackSyncUseCase {
 
     private static final double DEFAULT_STATIC_SYNC_RADIUS_M = 12.0;
+    private static final double DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M = 15.0;
     private static final int DEFAULT_SYNC_MAX_DISAPPEAR_GAP = 50;
     private static final int DEFAULT_SYNC_LOCATION_GAP_MS = 200;
     private static final int DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES = 1;
@@ -184,12 +185,7 @@ public class TrackSyncUseCase {
                 .stream()
                 .filter(object -> ObjectUtil.isNotNull(object.getClassAttributes()))
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> {
-                    JSONObject contour = object.getClassAttributes().getJSONObject("contour");
-                    return contour != null
-                            && contour.getJSONObject("center3D") != null
-                            && contour.getJSONObject("size3D") != null;
-                })
+                .filter(TrackSyncUseCase::hasSyncableObject)
                 .findFirst()
                 .orElse(null);
         if (ObjectUtil.isNull(source)) {
@@ -293,7 +289,8 @@ public class TrackSyncUseCase {
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
                 requireScenePose(poseByDataId, source.getDataId());
-                double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
+                double syncRadius = getPositiveDouble(
+                        attrs, "syncDistance", DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M);
                 syncGroundPolyline(source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical);
             }
             return;
@@ -653,11 +650,23 @@ public class TrackSyncUseCase {
                         DataAnnotationObject::getDataId,
                         object -> object,
                         (first, ignored) -> first));
+        int maxDisappearGap = getNonNegativeInt(
+                sourceAttrs,
+                "syncMaxDisappearGap",
+                DEFAULT_SYNC_MAX_DISAPPEAR_GAP);
+        Set<Long> reachableFrameIds = computeReachableFrameIds(
+                source.getDataId(), frames, existingByDataId, maxDisappearGap);
+        double wallHeight = Math.max(0D, getDouble(sourceAttrs, "wallHeight"));
+        boolean showSyncLocationBoundaries = getBoolean(
+                sourceAttrs, "showSyncLocationBoundaries", false);
 
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
         List<Long> deleteIds = new ArrayList<>();
         for (DataInfo frame : frames) {
+            if (!reachableFrameIds.contains(frame.getId())) {
+                continue;
+            }
             Pose targetPose = poseByDataId.get(frame.getId());
             if (targetPose == null || !targetPose.complete) {
                 continue;
@@ -681,6 +690,12 @@ public class TrackSyncUseCase {
                     sourcePoints, sourcePose, existingPoints, targetPose, syncRadius, syncWorldVertical);
             PolylineDistanceMask distanceMask = splitGroundPolylineByRadius(
                     projectedPoints, syncRadius);
+            if (isGroundPolylineFullyOutside(distanceMask.outsideSegments)) {
+                if (existing != null) {
+                    deleteIds.add(existing.getId());
+                }
+                continue;
+            }
             JSONArray visibilityReferencePoints = existingPoints == null
                     ? projectedPoints
                     : existingPoints;
@@ -694,6 +709,9 @@ public class TrackSyncUseCase {
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
             attrs.set("syncDistance", syncRadius);
+            attrs.set("syncMaxDisappearGap", maxDisappearGap);
+            attrs.set("wallHeight", wallHeight);
+            attrs.set("showSyncLocationBoundaries", showSyncLocationBoundaries);
             if (existing == null) {
                 inserts.add(DataAnnotationObject.builder()
                         .datasetId(source.getDatasetId())
@@ -900,6 +918,10 @@ public class TrackSyncUseCase {
                     middleX * middleX + middleY * middleY > radiusSquared + GEOMETRY_EPSILON);
         }
         return new PolylineDistanceMask(splitPoints, outsideSegments);
+    }
+
+    static boolean isGroundPolylineFullyOutside(List<Boolean> outsideSegments) {
+        return !outsideSegments.isEmpty() && outsideSegments.stream().allMatch(Boolean.TRUE::equals);
     }
 
     static JSONObject buildDistanceVisibility(

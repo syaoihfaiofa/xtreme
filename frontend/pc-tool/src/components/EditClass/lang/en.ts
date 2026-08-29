@@ -29,6 +29,7 @@ const en = {
     'sync-distance': 'Sync distance (nearest Box point, XY plane)',
     'sync-max-disappear-gap': 'Max consecutive missing frames',
     'sync-location-gap': 'Location gap threshold',
+    'show-sync-location-boundaries': 'Show Location gap markers',
     'sync-use-z': 'Use Z when syncing',
     'sync-yaw-offset': 'Sync yaw offset',
     'sync-x-offset': 'Sync X offset',

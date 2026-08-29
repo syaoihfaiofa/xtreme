@@ -18,6 +18,8 @@ import DeleteTrack, { IDeleteTrackOption } from './DeleteTrack';
 import AddTrack, { IAddTrackOption } from './AddTrack';
 import UpdateGroundPolygonPoints from './UpdateGroundPolygonPoints';
 import UpdateGroundPolylinePoints from './UpdateGroundPolylinePoints';
+import InsertGroundPolylinePoint from './InsertGroundPolylinePoint';
+import UpdateGroundPolylineHeight from './UpdateGroundPolylineHeight';
 import UpdateGroundPolylineSegmentVisibility from './UpdateGroundPolylineSegmentVisibility';
 import UpdateGroundPolylineVisibilityRange from './UpdateGroundPolylineVisibilityRange';
 export interface ICmdOption {
@@ -35,6 +37,15 @@ export interface ICmdOption {
     'update-ground-polyline-points': {
         object: import('pc-render').GroundPolyline;
         points: THREE.Vector3[];
+    };
+    'insert-ground-polyline-point': {
+        object: import('pc-render').GroundPolyline;
+        segmentIndex: number;
+        point: THREE.Vector3;
+    };
+    'update-ground-polyline-height': {
+        object: import('pc-render').GroundPolyline;
+        wallHeight: number;
     };
     'update-ground-polyline-segment-visibility': {
         object: import('pc-render').GroundPolyline;
@@ -76,6 +87,8 @@ const CMD: Record<Name, any> = {
     'update-transform': UpdateTransform,
     'update-ground-polygon-points': UpdateGroundPolygonPoints,
     'update-ground-polyline-points': UpdateGroundPolylinePoints,
+    'insert-ground-polyline-point': InsertGroundPolylinePoint,
+    'update-ground-polyline-height': UpdateGroundPolylineHeight,
     'update-ground-polyline-segment-visibility': UpdateGroundPolylineSegmentVisibility,
     'update-ground-polyline-visibility-range': UpdateGroundPolylineVisibilityRange,
     'update-2d-rect': Update2DRect,

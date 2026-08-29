@@ -60,7 +60,7 @@
                     :spanWidth="iState.frameConfig.spanWidth"
                     :activeType="iState.activeType"
                     :frame-filter-mask="iState.trackFrameMask"
-                    :segment-boundaries="iState.segmentBoundaries"
+                    :segment-boundaries="showLocationBoundaries ? iState.segmentBoundaries : []"
                 />
                 <div
                     v-if="editor.bsState.reviewMode"
@@ -115,7 +115,7 @@
 <script lang="ts" setup>
     // import ToolBody from './toolBody.vue';
     import ToolBar from './toolbar.vue';
-    import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
+    import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue';
     import useUI from '../../hook/useUI';
     import TickLine from './tickLine.vue';
     import TrackLine from './trackLine.vue';
@@ -128,6 +128,12 @@
     const { editor, updateTrackLine, iState, zoomContainer, setConfig, onHandleTrackAction } =
         useBottom();
     const visible = ref(true);
+    const showLocationBoundaries = computed(
+        () =>
+            (iState.trackTargetLine.list[editor.state.frameIndex] ||
+                iState.trackTargetLine.list.find((userData) => !!userData))
+                ?.showSyncLocationBoundaries === true,
+    );
     const props = defineProps<{
         config?: IConfig;
     }>();

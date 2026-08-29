@@ -64,6 +64,7 @@ export default class Editor extends THREE.EventDispatcher {
     classMap: Map<string, IClassType> = new Map();
     needUpdateFilter: boolean = true;
     eventSource: string = '';
+    private selectedGroundPolylineVertex?: { object: GroundPolyline; index: number };
 
     cmdManager: CmdManager;
     hotkeyManager: HotkeyManager;
@@ -133,6 +134,7 @@ export default class Editor extends THREE.EventDispatcher {
     initEvent() {
         let config = this.state.config;
         this.pc.addEventListener(RenderEvent.SELECT, (data) => {
+            this.clearSelectedGroundPolylineVertex();
             let selection = this.pc.selection;
             let box = selection.find((annotate) => annotate instanceof Box);
             // update translate status
@@ -163,6 +165,32 @@ export default class Editor extends THREE.EventDispatcher {
                 this.pc.selectObject(objects);
             }
         });
+    }
+
+    setSelectedGroundPolylineVertex(object: GroundPolyline, index: number): void {
+        this.selectedGroundPolylineVertex = { object, index };
+        this.pc.render();
+    }
+
+    clearSelectedGroundPolylineVertex(): void {
+        this.selectedGroundPolylineVertex = undefined;
+    }
+
+    getSelectedGroundPolylineVertex(): { object: GroundPolyline; index: number } | undefined {
+        const selected = this.selectedGroundPolylineVertex;
+        if (
+            !selected ||
+            !this.pc.selection.includes(selected.object) ||
+            selected.object.parent !== this.pc.annotate3D ||
+            !selected.object.visible ||
+            selected.index < 0 ||
+            selected.index >= selected.object.points3D.length ||
+            selected.object.isVisibilityBoundaryPoint(selected.index)
+        ) {
+            this.selectedGroundPolylineVertex = undefined;
+            return undefined;
+        }
+        return selected;
     }
     updateTrack() {
         if (this.navigatingFrame) return;

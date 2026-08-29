@@ -63,8 +63,19 @@ export default class SideRenderView extends Render {
     cameraOffset: THREE.Vector3 = new THREE.Vector3();
     onGroundPolygonPointsChange?: (object: GroundPolygon, points: THREE.Vector3[]) => void;
     onGroundPolylinePointsChange?: (object: GroundPolyline, points: THREE.Vector3[]) => void;
+    onGroundPolylineVertexSelect?: (object: GroundPolyline, index: number) => void;
+    onGroundPolylineSegmentInsert?: (
+        object: GroundPolyline,
+        segmentIndex: number,
+        point: THREE.Vector3,
+    ) => void;
+    onGroundPolylineHeightChange?: (object: GroundPolyline, wallHeight: number) => void;
+    getSelectedGroundPolylineVertex?: () => { object: GroundPolyline; index: number } | undefined;
     private readonly vertexHandleLayer: HTMLDivElement;
     private readonly vertexHandles: HTMLDivElement[] = [];
+    private readonly segmentHandles: HTMLDivElement[] = [];
+    private heightDragMove?: (event: PointerEvent) => void;
+    private heightDragUp?: () => void;
     private readonly groundPolylineEditLine = new THREE.Line(
         new THREE.BufferGeometry(),
         new THREE.LineBasicMaterial({
@@ -72,7 +83,6 @@ export default class SideRenderView extends Render {
             toneMapped: false,
         }),
     );
-    private selectedVertexIndex: number | null = null;
     private readonly onSelect = () => {
         const object = this.resolveSideTarget();
         if (object) {
@@ -126,6 +136,7 @@ export default class SideRenderView extends Render {
         this.renderer.setPixelRatio(pointCloud.pixelRatio);
         this.renderer.setSize(this.width, this.height);
         this.container.appendChild(this.renderer.domElement);
+        this.renderer.domElement.addEventListener('pointerdown', this.onHeightPointerDown, true);
         if (!this.container.style.position) this.container.style.position = 'relative';
         this.vertexHandleLayer = document.createElement('div');
         this.vertexHandleLayer.style.cssText =
@@ -374,6 +385,10 @@ export default class SideRenderView extends Render {
                     this.groundPolylineEditLine.matrix.copy(hasObject3D.matrixWorld);
                     this.groundPolylineEditLine.updateMatrixWorld(true);
                     this.renderer.render(this.groundPolylineEditLine, this.camera);
+                    if (hasObject3D.wallHeight > 0) {
+                        this.renderer.render(hasObject3D.wallMesh, this.camera);
+                        this.renderer.render(hasObject3D.topLine, this.camera);
+                    }
                 } else {
                     this.renderer.render(hasObject3D, this.camera);
                 }
@@ -436,10 +451,13 @@ export default class SideRenderView extends Render {
         this.cameraHelper?.dispose();
         this.renderer.dispose();
         this.renderer.forceContextLoss();
+        this.renderer.domElement.removeEventListener('pointerdown', this.onHeightPointerDown, true);
+        this.clearHeightDrag();
         this.renderer.domElement.remove();
         this.groundPolylineEditLine.geometry.dispose();
         (this.groundPolylineEditLine.material as THREE.Material).dispose();
         this.vertexHandleLayer.remove();
+        this.segmentHandles.splice(0);
         this.object = null;
         // @ts-ignore
         if (window.subView === this) window.subView = undefined;
@@ -464,6 +482,28 @@ export default class SideRenderView extends Render {
         }
     }
 
+    private ensureSegmentHandles(count: number): void {
+        while (this.segmentHandles.length < count) {
+            const handle = document.createElement('div');
+            handle.style.cssText =
+                'position:absolute;width:14px;height:14px;border:2px solid #7cff7c;' +
+                'border-radius:50%;background:#16301a;color:#7cff7c;font-size:12px;' +
+                'line-height:10px;text-align:center;box-sizing:border-box;' +
+                'transform:translate(-50%,-50%);pointer-events:auto;cursor:pointer;' +
+                'font-weight:bold;user-select:none;';
+            handle.textContent = '+';
+            handle.title = 'Insert point into this segment';
+            handle.addEventListener('pointerdown', (event) => {
+                this.insertGroundPolylineSegmentPoint(event, Number(handle.dataset.index));
+            });
+            this.vertexHandleLayer.appendChild(handle);
+            this.segmentHandles.push(handle);
+        }
+        this.segmentHandles.forEach((handle, index) => {
+            handle.dataset.index = String(index);
+        });
+    }
+
     private updateGroundPolygonVertexHandles(): void {
         const object = this.resolveSideTarget();
         if (!(object instanceof GroundPolygon) && !(object instanceof GroundPolyline)) {
@@ -475,6 +515,9 @@ export default class SideRenderView extends Render {
         this.camera.updateMatrixWorld();
         this.vertexHandleLayer.style.display = 'block';
         this.ensureVertexHandles(object.points3D.length);
+        this.ensureSegmentHandles(
+            object instanceof GroundPolyline ? object.points3D.length - 1 : 0,
+        );
         object.points3D.forEach((point, index) => {
             const canvasPoint = this.cameraToCanvas(point.clone().applyMatrix4(object.matrixWorld));
             const handle = this.vertexHandles[index];
@@ -485,11 +528,47 @@ export default class SideRenderView extends Render {
                     : 'block';
             handle.style.left = `${canvasPoint.x}px`;
             handle.style.top = `${canvasPoint.y}px`;
-            handle.style.background = this.selectedVertexIndex === index ? '#00e5ff' : '#10252a';
+            const selectedVertex = this.getSelectedGroundPolylineVertex?.();
+            handle.style.background =
+                selectedVertex?.object === object && selectedVertex.index === index
+                    ? '#00e5ff'
+                    : '#10252a';
         });
         this.vertexHandles.slice(object.points3D.length).forEach((handle) => {
             handle.style.display = 'none';
         });
+        if (object instanceof GroundPolyline) {
+            const bevVisible = object.getBevSegmentVisible();
+            for (let index = 0; index < object.points3D.length - 1; index++) {
+                const start = this.cameraToCanvas(
+                    object.points3D[index].clone().applyMatrix4(object.matrixWorld),
+                );
+                const end = this.cameraToCanvas(
+                    object.points3D[index + 1].clone().applyMatrix4(object.matrixWorld),
+                );
+                const handle = this.segmentHandles[index];
+                const canInsert =
+                    bevVisible[index] !== false &&
+                    !object.isVisibilityBoundaryPoint(index) &&
+                    !object.isVisibilityBoundaryPoint(index + 1) &&
+                    start.x >= 0 &&
+                    start.x <= this.width &&
+                    start.y >= 0 &&
+                    start.y <= this.height &&
+                    end.x >= 0 &&
+                    end.x <= this.width &&
+                    end.y >= 0 &&
+                    end.y <= this.height;
+                handle.style.display = canInsert ? 'block' : 'none';
+                handle.style.left = `${(start.x + end.x) / 2}px`;
+                handle.style.top = `${(start.y + end.y) / 2}px`;
+            }
+        }
+        this.segmentHandles.slice(object instanceof GroundPolyline ? object.points3D.length - 1 : 0).forEach(
+            (handle) => {
+                handle.style.display = 'none';
+            },
+        );
     }
 
     private startGroundPolygonVertexDrag(event: PointerEvent, index: number): void {
@@ -506,7 +585,9 @@ export default class SideRenderView extends Render {
 
         event.preventDefault();
         event.stopPropagation();
-        this.selectedVertexIndex = index;
+        if (object instanceof GroundPolyline) {
+            this.onGroundPolylineVertexSelect?.(object, index);
+        }
         this.updateGroundPolygonVertexHandles();
         this.enableFit = false;
         const start = new THREE.Vector2(event.clientX, event.clientY);
@@ -537,4 +618,85 @@ export default class SideRenderView extends Render {
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);
     }
+
+    private insertGroundPolylineSegmentPoint(event: PointerEvent, segmentIndex: number): void {
+        const object = this.object;
+        if (
+            !(object instanceof GroundPolyline) ||
+            segmentIndex < 0 ||
+            segmentIndex >= object.points3D.length - 1 ||
+            object.isVisibilityBoundaryPoint(segmentIndex) ||
+            object.isVisibilityBoundaryPoint(segmentIndex + 1)
+        ) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const point = object.points3D[segmentIndex]
+            .clone()
+            .lerp(object.points3D[segmentIndex + 1], 0.5);
+        this.onGroundPolylineSegmentInsert?.(object, segmentIndex, point);
+    }
+
+    private readonly onHeightPointerDown = (event: PointerEvent): void => {
+        if (!event.shiftKey) return;
+        const object = this.resolveSideTarget();
+        if (!(object instanceof GroundPolyline)) return;
+        object.updateMatrixWorld();
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        const pointer = new THREE.Vector2(event.clientX - rect.left, event.clientY - rect.top);
+        let midpoint: THREE.Vector3 | null = null;
+        let nearestDistance = 10;
+        for (let index = 0; index < object.points3D.length - 1; index++) {
+            if (object.isVisibilityBoundaryPoint(index) || object.isVisibilityBoundaryPoint(index + 1)) continue;
+            const start = this.cameraToCanvas(object.points3D[index].clone().applyMatrix4(object.matrixWorld));
+            const end = this.cameraToCanvas(object.points3D[index + 1].clone().applyMatrix4(object.matrixWorld));
+            const distance = distanceToScreenSegment(pointer, start, end);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                midpoint = object.points3D[index]
+                    .clone()
+                    .lerp(object.points3D[index + 1], 0.5)
+                    .applyMatrix4(object.matrixWorld);
+            }
+        }
+        if (!midpoint) return;
+        const base = this.cameraToCanvas(midpoint.clone());
+        const up = this.cameraToCanvas(midpoint.clone().add(new THREE.Vector3(0, 0, 1))).sub(base);
+        if (up.lengthSq() < 1) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.clearHeightDrag();
+        const startHeight = object.wallHeight;
+        const startPointer = new THREE.Vector2(event.clientX, event.clientY);
+        this.heightDragMove = (moveEvent: PointerEvent): void => {
+            const delta = new THREE.Vector2(moveEvent.clientX, moveEvent.clientY).sub(startPointer);
+            this.onGroundPolylineHeightChange?.(
+                object,
+                Math.max(0, startHeight + delta.dot(up) / up.lengthSq()),
+            );
+        };
+        this.heightDragUp = (): void => this.clearHeightDrag();
+        document.addEventListener('pointermove', this.heightDragMove);
+        document.addEventListener('pointerup', this.heightDragUp);
+    };
+
+    private clearHeightDrag(): void {
+        if (this.heightDragMove) {
+            document.removeEventListener('pointermove', this.heightDragMove);
+            this.heightDragMove = undefined;
+        }
+        if (this.heightDragUp) {
+            document.removeEventListener('pointerup', this.heightDragUp);
+            this.heightDragUp = undefined;
+        }
+    }
+}
+
+function distanceToScreenSegment(point: THREE.Vector2, start: THREE.Vector2, end: THREE.Vector2): number {
+    const segment = end.clone().sub(start);
+    const lengthSquared = segment.lengthSq();
+    if (lengthSquared === 0) return point.distanceTo(start);
+    const t = Math.max(0, Math.min(1, point.clone().sub(start).dot(segment) / lengthSquared));
+    return point.distanceTo(start.addScaledVector(segment, t));
 }

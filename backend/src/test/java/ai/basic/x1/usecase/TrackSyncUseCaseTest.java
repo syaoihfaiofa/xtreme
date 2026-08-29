@@ -1,12 +1,18 @@
 package ai.basic.x1.usecase;
 
+import ai.basic.x1.adapter.port.dao.mybatis.model.DataAnnotationObject;
+import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TrackSyncUseCaseTest {
 
@@ -239,6 +245,24 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void isGroundPolylineFullyOutside_returnsTrueOnlyWhenEverySegmentIsOutside() {
+        assertTrue(TrackSyncUseCase.isGroundPolylineFullyOutside(List.of(true, true)));
+        assertFalse(TrackSyncUseCase.isGroundPolylineFullyOutside(List.of(true, false)));
+    }
+
+    @Test
+    void computeReachableFrameIds_stopsAfterMaxConsecutiveMissingFrames() {
+        List<DataInfo> frames = List.of(frame(1), frame(2), frame(3), frame(4), frame(5), frame(6));
+        Map<Long, DataAnnotationObject> existingByDataId = Map.of(
+                1L, DataAnnotationObject.builder().build(),
+                3L, DataAnnotationObject.builder().build());
+
+        assertEquals(
+                Set.of(1L, 2L, 3L, 4L),
+                TrackSyncUseCase.computeReachableFrameIds(3L, frames, existingByDataId, 1));
+    }
+
+    @Test
     void buildDistanceVisibility_preservesManualFlagsAndHidesOutsideForEveryView() {
         JSONArray oldPoints = new JSONArray();
         oldPoints.add(point(0, 0, 0));
@@ -273,6 +297,10 @@ class TrackSyncUseCaseTest {
             entries.add(new JSONObject().set("index", index).set("visible", values[index]));
         }
         return entries;
+    }
+
+    private static DataInfo frame(long id) {
+        return DataInfo.builder().id(id).build();
     }
 
     private static void assertVisibility(

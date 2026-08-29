@@ -173,9 +173,11 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         trackName: object.trackName,
         groupId: object.groupId,
         motionMode: object.motionMode,
+        wallHeight: object.wallHeight,
         syncDistance: object.syncDistance,
         syncMaxDisappearGap: object.syncMaxDisappearGap,
         syncLocationGapMs: object.syncLocationGapMs,
+        showSyncLocationBoundaries: object.showSyncLocationBoundaries,
         dynamicRangeSyncEnabled: object.dynamicRangeSyncEnabled,
         dynamicSyncPreviousFrames: object.dynamicSyncPreviousFrames,
         dynamicSyncNextFrames: object.dynamicSyncNextFrames,
@@ -279,9 +281,11 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.trackName = obj.trackName || '';
         userData.groupId = obj.groupId || '';
         userData.motionMode = obj.motionMode;
+        userData.wallHeight = Number.isFinite(Number(obj.wallHeight)) ? Math.max(0, Number(obj.wallHeight)) : 0;
         userData.syncDistance = obj.syncDistance;
         userData.syncMaxDisappearGap = obj.syncMaxDisappearGap;
         userData.syncLocationGapMs = obj.syncLocationGapMs;
+        userData.showSyncLocationBoundaries = obj.showSyncLocationBoundaries;
         userData.dynamicRangeSyncEnabled = obj.dynamicRangeSyncEnabled;
         userData.dynamicSyncPreviousFrames = obj.dynamicSyncPreviousFrames;
         userData.dynamicSyncNextFrames = obj.dynamicSyncNextFrames;
@@ -337,6 +341,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
                 return;
             }
             const polyline = createUtils.createGroundPolyline(editor, points, userData);
+            polyline.setWallHeight(userData.wallHeight || 0);
             applyGroundPolylineSegmentVisibilityImport(polyline, obj.segmentVisibilityByView);
             applyGroundPolylineForceVisibleImport(polyline, obj.segmentForceVisibleByView);
             if (classConfig) polyline.setColor(getObjectDisplayColor(classConfig.color, userData));
@@ -487,9 +492,11 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             trackName: userData.trackName || '',
             groupId: userData.groupId || '',
             motionMode: userData.motionMode,
+            wallHeight: userData.wallHeight,
             syncDistance: userData.syncDistance,
             syncMaxDisappearGap: userData.syncMaxDisappearGap,
             syncLocationGapMs: userData.syncLocationGapMs,
+            showSyncLocationBoundaries: userData.showSyncLocationBoundaries,
             dynamicRangeSyncEnabled: userData.dynamicRangeSyncEnabled,
             dynamicSyncPreviousFrames: userData.dynamicSyncPreviousFrames,
             dynamicSyncNextFrames: userData.dynamicSyncNextFrames,

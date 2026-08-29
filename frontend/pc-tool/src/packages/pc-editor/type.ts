@@ -124,9 +124,11 @@ export interface IObjectV2 {
     trackName?: string;
     groupId?: string;
     motionMode?: MotionMode;
+    wallHeight?: number;
     syncDistance?: number;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
+    showSyncLocationBoundaries?: boolean;
     dynamicRangeSyncEnabled?: boolean;
     dynamicSyncPreviousFrames?: number;
     dynamicSyncNextFrames?: number;
@@ -171,9 +173,11 @@ export interface IUserData {
     trackName?: string;
     groupId?: string;
     motionMode?: MotionMode;
+    wallHeight?: number;
     syncDistance?: number;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
+    showSyncLocationBoundaries?: boolean;
     dynamicRangeSyncEnabled?: boolean;
     dynamicSyncPreviousFrames?: number;
     dynamicSyncNextFrames?: number;
