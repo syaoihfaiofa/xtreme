@@ -8,6 +8,7 @@ import Event from '../config/event';
 
 export default class LoadManager {
     editor: Editor;
+    private loadVersion = 0;
 
     constructor(editor: Editor) {
         this.editor = editor;
@@ -20,6 +21,9 @@ export default class LoadManager {
         if (!isSeriesFrame) this.editor.cmdManager.reset();
         const currentTrack = this.editor.currentTrack;
         const currentTrackName = this.editor.currentTrackName;
+        const frame = frames[index];
+        const loadVersion = ++this.loadVersion;
+        const isCurrentLoad = () => loadVersion === this.loadVersion;
 
         this.editor.navigatingFrame = true;
         try {
@@ -30,24 +34,32 @@ export default class LoadManager {
 
             this.editor.actionManager.stopCurrentAction();
 
-            showLoading && this.editor.showLoading(true);
+            if (showLoading) this.editor.showLoading(true);
             try {
-                await this.editor.getResultSources();
-                await Promise.all([this.loadObjectAndClassification(), this.loadResource()]);
+                await Promise.all([
+                    this.editor.getResultSources(frame, isCurrentLoad),
+                    this.loadObjectAndClassification(frame, isCurrentLoad),
+                    this.loadResource(frame, isCurrentLoad),
+                ]);
+                if (!isCurrentLoad()) return;
                 this.editor.dataResource.load(index);
             } catch (error: any) {
-                this.editor.handleErr(error);
+                if (isCurrentLoad()) this.editor.handleErr(error);
             }
+
+            if (!isCurrentLoad()) return;
 
             if (currentTrack) this.editor.selectByTrackId(currentTrack);
             else this.editor.pc.selectObject();
 
-            showLoading && this.editor.showLoading(false);
+            if (showLoading && isCurrentLoad()) this.editor.showLoading(false);
             this.editor.setCurrentTrack(currentTrack, currentTrackName);
         } finally {
-            this.editor.navigatingFrame = false;
+            if (isCurrentLoad()) this.editor.navigatingFrame = false;
         }
-        this.editor.dispatchEvent({ type: Event.FRAME_CHANGE, data: this.editor.state.frameIndex });
+        if (isCurrentLoad()) {
+            this.editor.dispatchEvent({ type: Event.FRAME_CHANGE, data: index });
+        }
     }
 
     async loadClassification() {
@@ -75,31 +87,22 @@ export default class LoadManager {
         }
     }
 
-    async loadObjectAndClassification() {
-        let { frameIndex, frames, classifications } = this.editor.state;
-        let frame = frames[frameIndex];
+    async loadObjectAndClassification(frame: IFrame, isCurrentLoad: () => boolean) {
+        let { classifications } = this.editor.state;
         if (!frame?.id) {
             this.editor.handleErr(
-                new Error(`Frame id is missing at index ${frameIndex}`),
+                new Error(`Frame id is missing: ${frame?.id}`),
                 this.editor.lang('load-object-error'),
             );
             return;
         }
 
         let cachedObjects = this.editor.dataManager.getFrameObject(frame.id);
-        // LiDAR Fusion "Sync Mode": a tracked object edited in *any* frame of the Scene can
-        // change what this frame's data should look like at any time (see TrackSyncUseCase on
-        // the backend). The client only proactively pushes the propagated result into frames
-        // that happen to already be cached in this session (see Editor.refreshTrackFromServer) -
-        // if this frame was never touched during that push (e.g. the session was reloaded, or it
-        // simply hadn't been visited yet when the sync ran), its cached copy - if any - can be
-        // stale. So for sync-mode datasets, always re-fetch from the server on navigation rather
-        // than trusting whatever is already cached, unless this frame has unsaved local edits
-        // (in which case re-fetching would blow those away).
+        // LiDAR Fusion sync updates every cached affected frame from the sync response. A frame
+        // not in this in-memory cache is fetched normally on first entry, so a cache hit does not
+        // need another annotation request merely because sync mode is enabled.
         const bsState = (this.editor as any).bsState;
-        let forceRefetch =
-            (!!bsState?.syncMode || !!bsState?.inferenceMode) && !frame.needSave;
-        const shouldLoad = cachedObjects === undefined || forceRefetch;
+        const shouldLoad = cachedObjects === undefined || (!!bsState?.inferenceMode && !frame.needSave);
         if (shouldLoad) {
             try {
                 if (cachedObjects && cachedObjects.length > 0 && this.editor.state.isSeriesFrame) {
@@ -123,16 +126,20 @@ export default class LoadManager {
                 }
                 if (bsState?.inferenceMode) this.updateTrackMap();
             } catch (error: any) {
-                this.editor.handleErr(error, this.editor.lang('load-object-error'));
+                if (isCurrentLoad()) {
+                    this.editor.handleErr(error, this.editor.lang('load-object-error'));
+                }
             }
         }
         // console.log(annotates);
 
         // this.editor.reset();
-        this.editor.state.filterActive = [];
+        if (isCurrentLoad()) this.editor.state.filterActive = [];
         // this.editor.dataManager.setFilterFromData();
-        this.editor.dataManager.loadDataFromManager();
-        this.editor.updateIDCounter();
+        if (isCurrentLoad()) {
+            this.editor.dataManager.loadDataFromManager();
+            this.editor.updateIDCounter();
+        }
         // this.editor.pc.addObject(annotates);
     }
     updateTrackMap(frames?: IFrame[]) {
@@ -270,14 +277,13 @@ export default class LoadManager {
     //     }
     // }
 
-    async loadResource() {
-        let { frames, frameIndex } = this.editor.state;
-        let frame = frames[frameIndex];
+    async loadResource(frame: IFrame, isCurrentLoad: () => boolean) {
 
         let resource = this.editor.dataResource.getResource(frame);
         if (resource instanceof ResourceLoader) {
             console.log('load Resource');
             resource.onProgress = (ratio: number) => {
+                if (!isCurrentLoad()) return;
                 let percent = (ratio * 100).toFixed(2);
                 this.editor.showLoading({
                     type: 'loading',
@@ -287,13 +293,15 @@ export default class LoadManager {
             return resource
                 .get()
                 .then((data) => {
-                    this.setResource(data);
+                    if (isCurrentLoad()) this.setResource(data);
                 })
                 .catch((e) => {
-                    this.editor.handleErr(e, this.editor.lang('load-resource-error'));
+                    if (isCurrentLoad()) {
+                        this.editor.handleErr(e, this.editor.lang('load-resource-error'));
+                    }
                 });
         } else {
-            this.setResource(resource);
+            if (isCurrentLoad()) this.setResource(resource);
         }
     }
 

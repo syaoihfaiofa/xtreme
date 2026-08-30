@@ -55,10 +55,15 @@ public class DataAnnotationController {
         return DefaultConverter.convert(dataAnnotationUseCase.findByDataIds(dataIds), DataAnnotationResultDTO.class);
     }
 
+    @GetMapping("trackFrameIds")
+    public List<Long> trackFrameIds(@RequestParam List<Long> dataIds, @RequestParam String trackId) {
+        return dataAnnotationUseCase.findTrackDataIds(dataIds, trackId);
+    }
+
     @PostMapping("sync")
-    public void sync(@RequestParam Long dataId, @RequestParam String trackId,
-                     @RequestParam(required = false) Long classId) {
-        trackSyncUseCase.syncByDataIdAndTrackId(dataId, trackId, classId);
+    public TrackSyncUseCase.SyncResult sync(@RequestParam Long dataId, @RequestParam String trackId,
+                                            @RequestParam(required = false) Long classId) {
+        return trackSyncUseCase.syncByDataIdAndTrackId(dataId, trackId, classId);
     }
 
     @PostMapping("track/delete")

@@ -58,6 +58,24 @@ public class DataAnnotationObjectUseCase {
     }
 
     /**
+     * Lightweight timeline lookup. Only frame ids are returned so selecting a tracked object
+     * does not require sending every annotation and contour in the scene to the browser.
+     */
+    public List<Long> findTrackDataIds(List<Long> dataIds, String trackId) {
+        if (CollUtil.isEmpty(dataIds) || ObjectUtil.isEmpty(trackId)) {
+            return List.of();
+        }
+        return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId, dataIds))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .map(DataAnnotationObject::getDataId)
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
+    /**
      * @param dataAnnotationObjectBOs object that need insert or update
      * @param deleteDataIds           data id that need delete all objects
      */

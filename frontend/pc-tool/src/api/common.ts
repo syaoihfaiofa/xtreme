@@ -49,10 +49,24 @@ export async function saveObject(config: any) {
     return keyMap;
 }
 
-export async function syncObject(dataId: string, trackId: string, classId?: string | number) {
+export interface ISyncObjectResult {
+    affectedDataIds: Array<string | number>;
+    syncVersion: number;
+}
+
+export async function syncObject(
+    dataId: string,
+    trackId: string,
+    classId?: string | number,
+): Promise<ISyncObjectResult> {
     const params: { dataId: string; trackId: string; classId?: string | number } = { dataId, trackId };
     if (classId != null && classId !== '') params.classId = classId;
-    return await post('/api/annotate/data/sync', null, { params });
+    const response = await post('/api/annotate/data/sync', null, { params });
+    const result = response?.data || response || {};
+    return {
+        affectedDataIds: Array.isArray(result.affectedDataIds) ? result.affectedDataIds : [],
+        syncVersion: Number(result.syncVersion) || Date.now(),
+    };
 }
 
 export async function deleteTrack(dataId: string, trackId: string): Promise<void> {
@@ -145,6 +159,28 @@ export async function getDataObject(dataIds: string[] | string | number) {
         classificationMap,
         queryTime: response.queryDate,
     };
+}
+
+export async function getTrackFrameIds(
+    dataIds: Array<string | number>,
+    trackId: string,
+): Promise<string[]> {
+    const normalizedIds = normalizeDataIds(dataIds);
+    if (!trackId || normalizedIds.length === 0) return [];
+    const batchSize = 200;
+    const requests: Array<Promise<Array<string | number>>> = [];
+    for (let start = 0; start < normalizedIds.length; start += batchSize) {
+        requests.push(
+            get<any>(
+                `/api/annotate/data/trackFrameIds?${queryStr({
+                    dataIds: normalizedIds.slice(start, start + batchSize),
+                    trackId,
+                })}`,
+            ).then((response) => (Array.isArray(response) ? response : response?.data || [])),
+        );
+    }
+    const batches = await Promise.all(requests);
+    return batches.flat().map((id) => String(id));
 }
 
 export async function getDataClassification(dataIds: string[] | string | number) {

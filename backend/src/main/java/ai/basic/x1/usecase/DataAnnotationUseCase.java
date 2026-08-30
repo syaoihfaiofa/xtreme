@@ -61,4 +61,8 @@ public class DataAnnotationUseCase {
         }
         return results;
     }
+
+    public List<Long> findTrackDataIds(List<Long> dataIds, String trackId) {
+        return dataAnnotationObjectUseCase.findTrackDataIds(dataIds, trackId);
+    }
 }

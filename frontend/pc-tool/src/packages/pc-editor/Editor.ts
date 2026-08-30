@@ -500,7 +500,7 @@ export default class Editor extends THREE.EventDispatcher {
             return this.classMap.get(name + '') as IClassType;
         }
     }
-    async getResultSources(frame?: IFrame): Promise<void> {}
+    async getResultSources(frame?: IFrame, shouldApply: () => boolean = () => true): Promise<void> {}
     setSources(sources: IResultSource[]) {
         if (!sources) return;
         let { FILTER_ALL, withoutTaskId } = this.state.config;

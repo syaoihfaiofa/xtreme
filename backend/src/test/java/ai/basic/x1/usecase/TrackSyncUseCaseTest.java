@@ -17,6 +17,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TrackSyncUseCaseTest {
 
     @Test
+    void syncResult_returnsSortedAffectedFrameIdsAndVersion() {
+        TrackSyncUseCase.SyncResult result = new TrackSyncUseCase.SyncResult(Set.of(9L, 2L, 5L));
+
+        assertEquals(List.of(2L, 5L, 9L), result.getAffectedDataIds());
+        assertTrue(result.getSyncVersion() > 0);
+    }
+
+    @Test
     void poseFromLocationValues_usesZeroForMissingRollAndPitch() {
         TrackSyncUseCase.Pose pose = TrackSyncUseCase.poseFromLocationValues(
                 new double[]{1, 2, 3, 0.5, Double.NaN, Double.NaN});

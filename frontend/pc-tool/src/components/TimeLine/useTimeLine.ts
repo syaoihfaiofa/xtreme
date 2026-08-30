@@ -4,7 +4,6 @@ import {
     Const,
     ObjectType,
     IFrame,
-    IObject,
     IUserData,
     utils,
 } from 'pc-editor';
@@ -132,9 +131,6 @@ export default function useBottom() {
     let trackLineRequest = 0;
     let segmentBoundaryRequest = 0;
     const trackLineCache = new Map<string, IUserData[]>();
-    let trackLineCacheKey = '';
-    let trackLineLoadingKey = '';
-    let trackLineCachePromise: Promise<void> | null = null;
     const segmentBoundaryCache = new Map<string, boolean[]>();
     const maxSegmentBoundaryCacheEntries = 20;
     const cacheSegmentBoundaries = (key: string, boundaries: boolean[]) => {
@@ -176,7 +172,6 @@ export default function useBottom() {
             }
             updateReviewProgress();
             updateTrackFrameMask();
-            void prefetchTrackLines();
             if (editor.bsState.reviewMode) refreshReviewProgressFromServer();
         },
         {
@@ -207,6 +202,7 @@ export default function useBottom() {
 
     onMounted(() => {
         editor.addEventListener(EditorEvent.CURRENT_TRACK_CHANGE, onSelect);
+        editor.addEventListener(EditorEvent.TRACK_SYNC_COMPLETE, onTrackSyncComplete);
         editor.playManager.addEventListener(EditorEvent.PLAY_STOP, onFrameStop);
         // editor.addEventListener(EditorEvent.PRE_MERGE_ACTION, onPreMergeEvent);
         // editor.addEventListener(EditorEvent.PRE_SPLIT_ACTION, onPreSplitEvent);
@@ -231,6 +227,7 @@ export default function useBottom() {
 
     onBeforeUnmount(() => {
         editor.removeEventListener(EditorEvent.CURRENT_TRACK_CHANGE, onSelect);
+        editor.removeEventListener(EditorEvent.TRACK_SYNC_COMPLETE, onTrackSyncComplete);
         editor.playManager.removeEventListener(EditorEvent.PLAY_STOP, onFrameStop);
         editor.removeEventListener(EditorEvent.ANNOTATE_CHANGE, onUpdate);
         editor.removeEventListener(EditorEvent.ANNOTATE_ADD, onUpdate);
@@ -253,7 +250,6 @@ export default function useBottom() {
         trackLineRequest += 1;
         segmentBoundaryRequest += 1;
         trackLineCache.clear();
-        trackLineCacheKey = '';
         segmentBoundaryCache.clear();
         //@ts-ignore
         if (window.iSState === iState) window.iSState = undefined;
@@ -792,27 +788,6 @@ export default function useBottom() {
         );
     }
 
-    function toTrackFrameDataFromServer(objects: IObject[]): IUserData | undefined {
-        if (!objects || objects.length === 0) return undefined;
-        const object = objects[0];
-        return {
-            trackId: object.trackId,
-            trackName: object.trackName,
-            classId: object.classId,
-            classType: object.classType,
-            motionMode: object.motionMode,
-            syncPoseSegmentId: object.syncPoseSegmentId,
-            syncPoseSegmentsInitialized: object.syncPoseSegmentsInitialized,
-            syncLocationGapMs: object.syncLocationGapMs,
-            showSyncLocationBoundaries: object.showSyncLocationBoundaries,
-            syncDirty: object.syncDirty === true,
-            occluded: object.occluded === true,
-            reviewedCorrect: object.reviewedCorrect === true,
-            invalid: false,
-            trueValue: object.resultStatus === Const.True_Value,
-        } as IUserData;
-    }
-
     function applyTrackLineList(serverList: IUserData[]) {
         if (iState.trackTargetLine.list.length !== serverList.length) {
             iState.trackTargetLine.list = serverList;
@@ -823,76 +798,27 @@ export default function useBottom() {
         });
     }
 
-    function getFramesCacheKey(frames: IFrame[]): string {
-        return frames.map((frame) => String(frame.id)).join(',');
-    }
-
-    async function prefetchTrackLines(force: boolean = false): Promise<void> {
-        const frames = [...editor.state.frames];
-        const cacheKey = getFramesCacheKey(frames);
-        if (frames.length === 0) {
-            trackLineCache.clear();
-            trackLineCacheKey = '';
-            return;
-        }
-        if (!force && trackLineCacheKey === cacheKey) return;
-        if (trackLineCachePromise && trackLineLoadingKey === cacheKey) {
-            await trackLineCachePromise;
-            return;
-        }
-
-        trackLineLoadingKey = cacheKey;
-        const loadPromise = (async (): Promise<void> => {
-            const data = await editor.businessManager.getFrameObject(frames);
-            if (getFramesCacheKey(editor.state.frames) !== cacheKey) return;
-
-            const nextCache = new Map<string, IUserData[]>();
-            frames.forEach((frame, frameIndex) => {
-                const objects = utils.objectsMapForFrame(
-                    data.objectsMap,
-                    frame.id,
-                ) as IObject[];
-                const objectsByTrack = new Map<string, IObject[]>();
-                objects.forEach((object) => {
-                    if (!object.trackId) return;
-                    const trackId = String(object.trackId);
-                    const trackObjects = objectsByTrack.get(trackId) || [];
-                    trackObjects.push(object);
-                    objectsByTrack.set(trackId, trackObjects);
-                });
-                objectsByTrack.forEach((trackObjects, trackId) => {
-                    const userData = toTrackFrameDataFromServer(trackObjects);
-                    if (!userData) return;
-                    const list = nextCache.get(trackId) || Array(frames.length);
-                    list[frameIndex] = userData;
-                    nextCache.set(trackId, list);
-                });
-            });
-            trackLineCache.clear();
-            nextCache.forEach((list, trackId) => trackLineCache.set(trackId, list));
-            trackLineCacheKey = cacheKey;
-        })();
-        trackLineCachePromise = loadPromise;
-        try {
-            await loadPromise;
-        } catch (error) {
-            console.warn('prefetch track lines failed', error);
-        } finally {
-            if (trackLineCachePromise === loadPromise) {
-                trackLineCachePromise = null;
-                trackLineLoadingKey = '';
-            }
-        }
-    }
-
     async function refreshTrackLineFromServer(trackId: string): Promise<void> {
         const frames = editor.state.frames;
         if (!trackId || frames.length === 0) return;
         const requestId = ++trackLineRequest;
         try {
-            await prefetchTrackLines(true);
+            const frameIds = await api.getTrackFrameIds(
+                frames.map((frame) => frame.id),
+                trackId,
+            );
             if (requestId !== trackLineRequest || editor.currentTrack !== trackId) return;
-            const serverList = getTrackLine(trackId);
+            const frameIdSet = new Set(frameIds.map((id) => String(id)));
+            const localList = getTrackLine(trackId);
+            const trackName = editor.trackManager.trackMap.get(trackId)?.trackName || '';
+            const serverList = frames.map((frame, frameIndex) => {
+                const local = localList[frameIndex];
+                if (local) return local;
+                return frameIdSet.has(String(frame.id))
+                    ? ({ trackId, trackName } as IUserData)
+                    : undefined;
+            }) as IUserData[];
+            trackLineCache.set(trackId, serverList);
             const frameIndices: number[] = [];
             serverList.forEach((userData, frameIndex) => {
                 if (userData) frameIndices.push(frameIndex);
@@ -1017,6 +943,14 @@ export default function useBottom() {
         if (trackId === iState.trackTargetLine.trackId) return;
         onClear();
         updateTrackLine();
+        updateReviewProgress();
+    }
+
+    function onTrackSyncComplete(event: any) {
+        if (event?.data?.trackId !== editor.currentTrack) return;
+        // Sync can create/remove this track in frames that have never been opened locally.
+        // Refresh its compact frame-id index immediately instead of waiting for deselect/reselect.
+        updateTrackLine(true, true, true);
         updateReviewProgress();
     }
     // 重置

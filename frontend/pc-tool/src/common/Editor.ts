@@ -609,8 +609,14 @@ export default class Editor extends BaseEditor {
         if (!saved) {
             return;
         }
-        await api.syncObject(String(sourceFrame.id), trackId, classId);
-        await this.refreshTrackFromServer(trackId, sourceFrame.id, classId, classType);
+        const syncResult = await api.syncObject(String(sourceFrame.id), trackId, classId);
+        await this.refreshTrackFromServer(
+            trackId,
+            sourceFrame.id,
+            classId,
+            classType,
+            syncResult.affectedDataIds,
+        );
     }
 
     async refreshTrackFromServer(
@@ -618,11 +624,17 @@ export default class Editor extends BaseEditor {
         sourceFrameId: string,
         classId?: string | number,
         classType?: string,
+        affectedDataIds?: Array<string | number>,
     ) {
         // Refresh metadata for every loaded frame so backend-generated segment ids are available
         // immediately. The source frame keeps its local transform because it is the sync source.
         const sourceFrameKey = String(sourceFrameId);
-        let frames = this.state.frames.filter((f) => !!this.dataManager.getFrameObject(f.id));
+        const affectedFrameIds = new Set((affectedDataIds || []).map((id) => String(id)));
+        let frames = this.state.frames.filter(
+            (frame) =>
+                !!this.dataManager.getFrameObject(frame.id) &&
+                (affectedFrameIds.size === 0 || affectedFrameIds.has(String(frame.id))),
+        );
         if (frames.length === 0) return;
 
         let data: any;
@@ -848,6 +860,9 @@ export default class Editor extends BaseEditor {
             refreshGroundPolylineBevDisplay(this, syncedPolylines);
         }
         this.selectByTrackId(trackId);
+        // The selected track does not change during sync, so CURRENT_TRACK_CHANGE will not fire.
+        // Use a dedicated event: normal ANNOTATE_CHANGE listeners require an objects array.
+        this.dispatchEvent({ type: Event.TRACK_SYNC_COMPLETE, data: { trackId } });
         this.pc.render();
     }
 
@@ -1130,6 +1145,8 @@ export default class Editor extends BaseEditor {
 
         if (!force && !this.needSave(frames)) return true;
 
+        if (frames.length === 0) return true;
+
         let dataInfos = [] as any[];
         let queryTime = frames[0].queryTime;
         frames.forEach((dataMeta) => {
@@ -1140,7 +1157,7 @@ export default class Editor extends BaseEditor {
                 queryTime = dataMeta.queryTime;
 
             // result object
-            let data = utils.convertAnnotate2Object(annotates, this);
+            let data = utils.convertAnnotate2Object(annotates, this) || [];
             let infos = [] as any[];
             let dataAnnotations = [] as any[];
             data.forEach((e) => {
@@ -1158,7 +1175,9 @@ export default class Editor extends BaseEditor {
                 });
             });
 
-            dataMeta.classifications.forEach((classification) => {
+            // Frames introduced into the local cache by track sync may not have loaded
+            // classification values. Saving their objects must not abort the whole sync.
+            (dataMeta.classifications || []).forEach((classification) => {
                 let values = utils.classificationToSave(classification);
                 dataAnnotations.push({
                     classificationId: classification.id,
@@ -1227,7 +1246,7 @@ export default class Editor extends BaseEditor {
             });
         });
     }
-    async getResultSources(frame?: IFrame) {
+    async getResultSources(frame?: IFrame, shouldApply: () => boolean = () => true) {
         let { state } = this;
         frame = frame || this.getCurrentFrame();
         if (!frame.sources) {
@@ -1239,7 +1258,7 @@ export default class Editor extends BaseEditor {
             });
             frame.sources = sources;
         }
-        this.setSources(frame.sources);
+        if (shouldApply()) this.setSources(frame.sources);
 
         // let sourceMap = {};
         // sources.forEach((e) => {

@@ -111,8 +111,8 @@ public class TrackSyncUseCase {
      * when the user deliberately asks to propagate one tracked object across the scene.
      */
     @Transactional(rollbackFor = Exception.class)
-    public void syncByDataIdAndTrackId(Long dataId, String trackId) {
-        syncByDataIdAndTrackId(dataId, trackId, null);
+    public SyncResult syncByDataIdAndTrackId(Long dataId, String trackId) {
+        return syncByDataIdAndTrackId(dataId, trackId, null);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -152,9 +152,9 @@ public class TrackSyncUseCase {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void syncByDataIdAndTrackId(Long dataId, String trackId, Long classId) {
+    public SyncResult syncByDataIdAndTrackId(Long dataId, String trackId, Long classId) {
         if (ObjectUtil.isNull(dataId) || StrUtil.isBlank(trackId)) {
-            return;
+            return SyncResult.empty();
         }
         var objects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .eq(DataAnnotationObject::getDataId, dataId));
@@ -168,7 +168,7 @@ public class TrackSyncUseCase {
             throw new IllegalArgumentException(
                     String.format("No syncable 3D object found: dataId=%s, trackId=%s", dataId, trackId));
         }
-        syncOne(DefaultConverter.convert(source.get(), DataAnnotationObjectBO.class));
+        return syncOne(DefaultConverter.convert(source.get(), DataAnnotationObjectBO.class));
     }
 
     public Map<Long, Integer> findPoseSegments(Long dataId, String trackId) {
@@ -239,30 +239,30 @@ public class TrackSyncUseCase {
         }
     }
 
-    private void syncOne(DataAnnotationObjectBO source) {
+    private SyncResult syncOne(DataAnnotationObjectBO source) {
         JSONObject attrs = source.getClassAttributes();
         if (ObjectUtil.isNull(attrs) || ObjectUtil.isNull(source.getDatasetId()) || ObjectUtil.isNull(source.getDataId())) {
-            return;
+            return SyncResult.empty();
         }
         String trackId = attrs.getStr("trackId");
         String motionMode = attrs.getStr("motionMode");
         if (StrUtil.isBlank(trackId) || StrUtil.isBlank(motionMode)) {
-            return;
+            return SyncResult.empty();
         }
         if (!MOTION_STATIC.equals(motionMode)
                 && !MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)
                 && !MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)) {
-            return;
+            return SyncResult.empty();
         }
 
         var dataset = datasetDAO.getById(source.getDatasetId());
         if (ObjectUtil.isNull(dataset) || !Boolean.TRUE.equals(dataset.getSyncMode())) {
-            return;
+            return SyncResult.empty();
         }
 
         var sourceFrame = dataInfoDAO.getById(source.getDataId());
         if (ObjectUtil.isNull(sourceFrame) || ObjectUtil.isNull(sourceFrame.getParentId())) {
-            return;
+            return SyncResult.empty();
         }
         Long sceneId = sourceFrame.getParentId();
 
@@ -271,9 +271,13 @@ public class TrackSyncUseCase {
                 .eq(DataInfo::getIsDeleted, false)
                 .orderByAsc(DataInfo::getOrderName));
         if (CollUtil.isEmpty(frames)) {
-            return;
+            return SyncResult.empty();
         }
         List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        // One scene-wide annotation read is shared by every sync mode. Ground shapes used to
+        // issue a second identical query after poses had already been loaded.
+        var existingObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                .in(DataAnnotationObject::getDataId, frameIds));
 
         Map<Long, Pose> poseByDataId = buildPoseByDataId(sceneId, frames, frameIds);
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
@@ -283,22 +287,21 @@ public class TrackSyncUseCase {
         if (isGroundPolygon(attrs) && MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
-            syncGroundPolygon(source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical);
-            return;
+            return syncGroundPolygon(
+                    source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
         }
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
                 requireScenePose(poseByDataId, source.getDataId());
                 double syncRadius = getPositiveDouble(
                         attrs, "syncDistance", DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M);
-                syncGroundPolyline(source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical);
+                return syncGroundPolyline(
+                        source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
             }
-            return;
+            return SyncResult.empty();
         }
 
         // existing annotation rows across the whole scene, so we can decide insert vs update vs delete
-        var existingObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                .in(DataAnnotationObject::getDataId, frameIds));
         var existingRows = collectExistingRows(existingObjects, trackId, source);
         Map<Long, DataAnnotationObject> existingByDataId = existingRows.byDataId;
         boolean segmentsInitialized = getBoolean(attrs, "syncPoseSegmentsInitialized", false)
@@ -324,7 +327,7 @@ public class TrackSyncUseCase {
                 DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES);
 
         if (MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode) && !dynamicRangeSyncEnabled) {
-            syncMotionModeOnly(
+            return syncMotionModeOnly(
                     source,
                     motionMode,
                     frames,
@@ -334,7 +337,6 @@ public class TrackSyncUseCase {
                     locationGapMs,
                     maxDisappearGap
             );
-            return;
         }
 
         JSONObject contour = attrs.getJSONObject("contour");
@@ -342,7 +344,7 @@ public class TrackSyncUseCase {
         JSONObject size3D = contour == null ? null : contour.getJSONObject("size3D");
         if (center3D == null || size3D == null) {
             // not a 3D_BOX object (e.g. a 2D_RECT/2D_BOX projection row sharing the trackId)
-            return;
+            return SyncResult.empty();
         }
 
         if (MOTION_STATIC.equals(motionMode)) {
@@ -352,14 +354,14 @@ public class TrackSyncUseCase {
             double syncYawOffset = Math.toRadians(getDouble(attrs, "syncYawOffsetDeg"));
             double syncXOffset = getDouble(attrs, "syncXOffsetM");
             double syncYOffset = getDouble(attrs, "syncYOffsetM");
-            syncStatic(source, trackId, center3D, size3D, contour.getJSONObject("rotation3D"),
+            return syncStatic(source, trackId, center3D, size3D, contour.getJSONObject("rotation3D"),
                     syncRadius, syncUseZ, syncWorldVertical, syncYawOffset, syncXOffset, syncYOffset, frames,
                     poseByDataId, existingByDataId, existingRows.duplicateObjectIds, reachableFrameIds,
                     maxDisappearGap, segmentByDataId, locationGapMs, segmentsInitialized);
         } else if (dynamicRangeSyncEnabled) {
             requireScenePose(poseByDataId, source.getDataId());
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
-            syncDynamicRange(
+            return syncDynamicRange(
                     source,
                     trackId,
                     motionMode,
@@ -379,7 +381,7 @@ public class TrackSyncUseCase {
                     syncWorldVertical
             );
         } else {
-            syncFixedSize(
+            return syncFixedSize(
                     source,
                     size3D,
                     frames,
@@ -392,7 +394,7 @@ public class TrackSyncUseCase {
         }
     }
 
-    private void syncDynamicRange(
+    private SyncResult syncDynamicRange(
             DataAnnotationObjectBO source,
             String trackId,
             String motionMode,
@@ -491,7 +493,7 @@ public class TrackSyncUseCase {
                         .build());
             }
         }
-        applyChanges(toInsert, toUpdate, toDeleteIds);
+        return applyChanges(toInsert, toUpdate, toDeleteIds);
     }
 
     private static JSONObject point3D(double x, double y, double z) {
@@ -528,8 +530,9 @@ public class TrackSyncUseCase {
      * The stored contour remains in each frame's local LiDAR coordinates; world coordinates
      * are used only while transforming between source and target frames.
      */
-    private void syncGroundPolygon(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
-                                   Map<Long, Pose> poseByDataId, boolean syncWorldVertical) {
+    private SyncResult syncGroundPolygon(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
+                                   Map<Long, Pose> poseByDataId, boolean syncWorldVertical,
+                                   List<DataAnnotationObject> existingObjects) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
         JSONArray sourcePoints = sourceContour == null ? null : sourceContour.getJSONArray("points");
@@ -553,11 +556,7 @@ public class TrackSyncUseCase {
             worldPoints.add(worldPoint);
         }
 
-        Map<Long, DataAnnotationObject> existingByDataId = dataAnnotationObjectDAO.list(
-                        Wrappers.lambdaQuery(DataAnnotationObject.class)
-                                .in(DataAnnotationObject::getDataId,
-                                        frames.stream().map(DataInfo::getId).collect(Collectors.toList())))
-                .stream()
+        Map<Long, DataAnnotationObject> existingByDataId = existingObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
                 .filter(object -> sameClass(object, source))
@@ -623,11 +622,12 @@ public class TrackSyncUseCase {
                 updates.add(existing);
             }
         }
-        applyChanges(inserts, updates, deleteIds);
+        return applyChanges(inserts, updates, deleteIds);
     }
 
-    private void syncGroundPolyline(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
-                                    Map<Long, Pose> poseByDataId, boolean syncWorldVertical) {
+    private SyncResult syncGroundPolyline(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
+                                    Map<Long, Pose> poseByDataId, boolean syncWorldVertical,
+                                    List<DataAnnotationObject> existingObjects) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
         JSONArray sourcePoints = sourceContour == null ? null : sourceContour.getJSONArray("points");
@@ -637,11 +637,7 @@ public class TrackSyncUseCase {
                             source.getDataId(), trackId));
         }
         Pose sourcePose = poseByDataId.get(source.getDataId());
-        Map<Long, DataAnnotationObject> existingByDataId = dataAnnotationObjectDAO.list(
-                        Wrappers.lambdaQuery(DataAnnotationObject.class)
-                                .in(DataAnnotationObject::getDataId,
-                                        frames.stream().map(DataInfo::getId).collect(Collectors.toList())))
-                .stream()
+        Map<Long, DataAnnotationObject> existingByDataId = existingObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
                 .filter(object -> sameClass(object, source))
@@ -729,7 +725,7 @@ public class TrackSyncUseCase {
                 updates.add(existing);
             }
         }
-        applyChanges(inserts, updates, deleteIds);
+        return applyChanges(inserts, updates, deleteIds);
     }
 
     static JSONArray projectGroundPoints(JSONArray sourcePoints, Pose sourcePose, Pose targetPose) {
@@ -1264,7 +1260,7 @@ public class TrackSyncUseCase {
         return Math.hypot(pointX - (startX + ratio * deltaX), pointY - (startY + ratio * deltaY));
     }
 
-    private void syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,
+    private SyncResult syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,
                              JSONObject rotation3D, double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
                              double syncYawOffset, double syncXOffset, double syncYOffset, List<DataInfo> frames,
                              Map<Long, Pose> poseByDataId, Map<Long, DataAnnotationObject> existingByDataId,
@@ -1391,7 +1387,7 @@ public class TrackSyncUseCase {
             }
         }
 
-        applyChanges(toInsert, toUpdate, toDeleteIds);
+        return applyChanges(toInsert, toUpdate, toDeleteIds);
     }
 
     private void updateStaticMetadata(JSONObject attrs, DataAnnotationObjectBO source, JSONObject size3D,
@@ -1430,7 +1426,7 @@ public class TrackSyncUseCase {
         attrs.set("attrs", new JSONObject());
     }
 
-    private void syncFixedSize(DataAnnotationObjectBO source, JSONObject size3D, List<DataInfo> frames,
+    private SyncResult syncFixedSize(DataAnnotationObjectBO source, JSONObject size3D, List<DataInfo> frames,
                                 Map<Long, DataAnnotationObject> existingByDataId,
                                 List<Long> duplicateObjectIds, int maxDisappearGap,
                                 Map<Long, Integer> segmentByDataId, int locationGapMs) {
@@ -1454,10 +1450,10 @@ public class TrackSyncUseCase {
             existing.setClassAttributes(existingAttrs);
             toUpdate.add(existing);
         }
-        applyChanges(new ArrayList<>(), toUpdate, new ArrayList<>(duplicateObjectIds));
+        return applyChanges(new ArrayList<>(), toUpdate, new ArrayList<>(duplicateObjectIds));
     }
 
-    private void syncMotionModeOnly(DataAnnotationObjectBO source, String motionMode, List<DataInfo> frames,
+    private SyncResult syncMotionModeOnly(DataAnnotationObjectBO source, String motionMode, List<DataInfo> frames,
                                     Map<Long, DataAnnotationObject> existingByDataId,
                                     List<Long> duplicateObjectIds, Map<Long, Integer> segmentByDataId,
                                     int locationGapMs, int maxDisappearGap) {
@@ -1476,7 +1472,7 @@ public class TrackSyncUseCase {
             existing.setClassAttributes(existingAttrs);
             toUpdate.add(existing);
         }
-        applyChanges(new ArrayList<>(), toUpdate, new ArrayList<>(duplicateObjectIds));
+        return applyChanges(new ArrayList<>(), toUpdate, new ArrayList<>(duplicateObjectIds));
     }
 
     private static void copyDynamicSyncConfiguration(JSONObject targetAttrs, JSONObject sourceAttrs) {
@@ -1931,16 +1927,62 @@ public class TrackSyncUseCase {
         return contour != null && contour.getJSONArray("points") != null;
     }
 
-    private void applyChanges(List<DataAnnotationObject> toInsert, List<DataAnnotationObject> toUpdate,
+    private SyncResult applyChanges(List<DataAnnotationObject> toInsert, List<DataAnnotationObject> toUpdate,
                                List<Long> toDeleteIds) {
+        Map<Long, DataAnnotationObject> storedById = CollUtil.isEmpty(toUpdate)
+                ? Map.of()
+                : dataAnnotationObjectDAO.listByIds(
+                                toUpdate.stream().map(DataAnnotationObject::getId).collect(Collectors.toList()))
+                        .stream()
+                        .collect(Collectors.toMap(DataAnnotationObject::getId, object -> object));
+        List<DataAnnotationObject> changedUpdates = toUpdate.stream()
+                .filter(candidate -> {
+                    DataAnnotationObject stored = storedById.get(candidate.getId());
+                    return stored == null
+                            || !ObjectUtil.equal(stored.getClassId(), candidate.getClassId())
+                            || !ObjectUtil.equal(
+                                    JSONUtil.toJsonStr(stored.getClassAttributes()),
+                                    JSONUtil.toJsonStr(candidate.getClassAttributes()));
+                })
+                .collect(Collectors.toList());
+        Set<Long> affectedDataIds = new HashSet<>();
+        toInsert.forEach(object -> affectedDataIds.add(object.getDataId()));
+        changedUpdates.forEach(object -> affectedDataIds.add(object.getDataId()));
+        if (CollUtil.isNotEmpty(toDeleteIds)) {
+            dataAnnotationObjectDAO.listByIds(toDeleteIds)
+                    .forEach(object -> affectedDataIds.add(object.getDataId()));
+        }
         if (CollUtil.isNotEmpty(toInsert)) {
             dataAnnotationObjectDAO.getBaseMapper().insertBatch(toInsert);
         }
-        if (CollUtil.isNotEmpty(toUpdate)) {
-            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(toUpdate);
+        if (CollUtil.isNotEmpty(changedUpdates)) {
+            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(changedUpdates);
         }
         if (CollUtil.isNotEmpty(toDeleteIds)) {
             dataAnnotationObjectDAO.removeBatchByIds(toDeleteIds);
+        }
+        return new SyncResult(affectedDataIds);
+    }
+
+    public static class SyncResult {
+        private final List<Long> affectedDataIds;
+        private final long syncVersion;
+
+        SyncResult(Set<Long> affectedDataIds) {
+            this.affectedDataIds = affectedDataIds.stream().sorted().collect(Collectors.toList());
+            this.syncVersion = System.currentTimeMillis();
+        }
+
+        static SyncResult empty() {
+            return new SyncResult(Set.of());
+        }
+
+        public List<Long> getAffectedDataIds() {
+            return affectedDataIds;
+        }
+
+        public long getSyncVersion() {
+            return syncVersion;
         }
     }
 
