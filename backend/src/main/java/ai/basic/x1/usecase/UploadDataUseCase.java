@@ -74,6 +74,8 @@ import static ai.basic.x1.util.Constants.*;
 @Slf4j
 public class UploadDataUseCase {
 
+    private static final int MAX_POINT_CLOUD_CHUNKS = 256;
+
     @Autowired
     private UploadUseCase uploadUseCase;
 
@@ -1035,29 +1037,49 @@ public class UploadDataUseCase {
     public void handelPointCloudConvertRender(FileBO pcdFileBO) {
         String filePath = pcdFileBO.getPath();
         String basePath = "";
-        String fileName;
+        String fileName = "";
         String binaryFileName = "";
+        String previewFileName = "";
+        String chunkManifestFileName = "";
         String imageFileName = "";
         if (filePath.contains(Constants.SLANTING_BAR)) {
             basePath = filePath.substring(0, filePath.lastIndexOf(Constants.SLANTING_BAR) + 1);
             fileName = filePath.substring(filePath.lastIndexOf(Constants.SLANTING_BAR) + 1);
             binaryFileName = "binary-" + fileName;
+            previewFileName = "preview-binary-" + fileName;
+            chunkManifestFileName = "chunks-" + fileName + ".json";
             imageFileName = "render-" + UUID.randomUUID() + ".png";
         }
 
         String binaryPath = String.format("%s%s", basePath, binaryFileName);
+        String previewPath = String.format("%s%s", basePath, previewFileName);
+        String chunkManifestPath = String.format("%s%s", basePath, chunkManifestFileName);
         String imagePath = String.format("%s%s", basePath, imageFileName);
         PresignedUrlBO binaryPreSignUrlBO;
+        PresignedUrlBO previewPreSignUrlBO;
         PresignedUrlBO imagePreSignUrlBO;
+        PresignedUrlBO chunkManifestPreSignUrlBO;
+        List<PointCloudFileInfo.ChunkUpload> chunkUploads = new ArrayList<>();
         try {
             binaryPreSignUrlBO = minioService.generatePresignedUrl(pcdFileBO.getBucketName(), binaryPath, Boolean.FALSE);
+            previewPreSignUrlBO = minioService.generatePresignedUrl(pcdFileBO.getBucketName(), previewPath, Boolean.FALSE);
             imagePreSignUrlBO = minioService.generatePresignedUrl(pcdFileBO.getBucketName(), imagePath, Boolean.FALSE);
+            chunkManifestPreSignUrlBO = minioService.generatePresignedUrl(pcdFileBO.getBucketName(), chunkManifestPath, Boolean.FALSE);
+            for (int index = 0; index < MAX_POINT_CLOUD_CHUNKS; index++) {
+                String id = String.format("%03d", index);
+                String path = String.format("%schunk-binary-%s-%s.pcd", basePath, fileName, id);
+                var uploadUrl = minioService.generatePresignedUrl(pcdFileBO.getBucketName(), path, Boolean.FALSE);
+                chunkUploads.add(PointCloudFileInfo.ChunkUpload.builder()
+                        .id(id).path(path).uploadUrl(uploadUrl.getPresignedUrl()).build());
+            }
 
         } catch (Throwable throwable) {
             log.error("generate preSignUrl error!", throwable);
             return;
         }
-        List<PointCloudCRRespDTO> pointCloudCRRespDTOS = callPointCloudConvertRender(pcdFileBO, binaryPreSignUrlBO, imagePreSignUrlBO);
+        List<PointCloudCRRespDTO> pointCloudCRRespDTOS = callPointCloudConvertRender(
+                pcdFileBO, binaryPreSignUrlBO, previewPreSignUrlBO, imagePreSignUrlBO,
+                chunkManifestPreSignUrlBO, chunkUploads);
         if (CollUtil.isNotEmpty(pointCloudCRRespDTOS)) {
             for (PointCloudCRRespDTO pointCloudCRRespDTO : pointCloudCRRespDTOS) {
                 if (pointCloudCRRespDTO.getCode() == 0) {
@@ -1071,7 +1093,40 @@ public class UploadDataUseCase {
                             .createdBy(pcdFileBO.getCreatedBy())
                             .relation(RelationEnum.BINARY)
                             .relationId(pcdFileBO.getId())
+                            .extraInfo(JSONUtil.createObj().set("pointCount", pointCloudCRRespDTO.getPointCount()))
                             .pathHash(ByteUtil.bytesToLong(SecureUtil.md5().digest(binaryPath))).build();
+                    List<FileBO> relationFiles = new ArrayList<>(List.of(binaryPcdFile));
+                    // Older converter images do not return preview fields. Persist a preview only
+                    // after the converter explicitly reports a successful generated asset.
+                    if (pointCloudCRRespDTO.getPreviewPcdSize() != null
+                            && pointCloudCRRespDTO.getPreviewPcdSize() > 0) {
+                        FileBO previewPcdFile = FileBO.builder().name(previewFileName)
+                                .originalName(previewFileName)
+                                .path(previewPath)
+                                .type(pcdFileBO.getType())
+                                .size(pointCloudCRRespDTO.getPreviewPcdSize())
+                                .bucketName(pcdFileBO.getBucketName())
+                                .createdAt(OffsetDateTime.now())
+                                .createdBy(pcdFileBO.getCreatedBy())
+                                .relation(RelationEnum.POINT_CLOUD_PREVIEW)
+                                .relationId(pcdFileBO.getId())
+                                .extraInfo(JSONUtil.createObj().set("pointCount", pointCloudCRRespDTO.getPreviewPointCount()))
+                                .pathHash(ByteUtil.bytesToLong(SecureUtil.md5().digest(previewPath))).build();
+                        relationFiles.add(previewPcdFile);
+                    }
+                    if (pointCloudCRRespDTO.getChunkManifestSize() != null
+                            && pointCloudCRRespDTO.getChunkManifestSize() > 0) {
+                        FileBO chunkManifest = FileBO.builder().name(chunkManifestFileName)
+                                .originalName(chunkManifestFileName).path(chunkManifestPath)
+                                .type("application/json").size(pointCloudCRRespDTO.getChunkManifestSize())
+                                .bucketName(pcdFileBO.getBucketName()).createdAt(OffsetDateTime.now())
+                                .createdBy(pcdFileBO.getCreatedBy()).relation(POINT_CLOUD_CHUNK_MANIFEST)
+                                .relationId(pcdFileBO.getId())
+                                .extraInfo(JSONUtil.createObj().set("chunkCount", pointCloudCRRespDTO.getChunkCount())
+                                        .set("pointCount", pointCloudCRRespDTO.getPointCount()))
+                                .pathHash(ByteUtil.bytesToLong(SecureUtil.md5().digest(chunkManifestPath))).build();
+                        relationFiles.add(chunkManifest);
+                    }
                     FileBO imageFile = FileBO.builder().name(imageFileName)
                             .originalName(imageFileName)
                             .path(imagePath)
@@ -1087,15 +1142,22 @@ public class UploadDataUseCase {
                                     .set("width", PC_RENDER_IMAGE_WIDTH)
                                     .set("height", PC_RENDER_IMAGE_HEIGHT))
                             .build();
-                    fileUseCase.saveBatchFile(pcdFileBO.getCreatedBy(), List.of(binaryPcdFile, imageFile));
+                    relationFiles.add(imageFile);
+                    fileUseCase.saveBatchFile(pcdFileBO.getCreatedBy(), relationFiles);
                 }
             }
         }
     }
 
-    private List<PointCloudCRRespDTO> callPointCloudConvertRender(FileBO relationFileBO, PresignedUrlBO binaryPreSignUrlBO, PresignedUrlBO imagePreSignUrlBO) {
+    private List<PointCloudCRRespDTO> callPointCloudConvertRender(FileBO relationFileBO,
+                                                                   PresignedUrlBO binaryPreSignUrlBO,
+                                                                   PresignedUrlBO previewPreSignUrlBO,
+                                                                   PresignedUrlBO imagePreSignUrlBO,
+                                                                   PresignedUrlBO chunkManifestPreSignUrlBO,
+                                                                   List<PointCloudFileInfo.ChunkUpload> chunkUploads) {
         PointCloudCRReqDTO pointCloudCRReqDTO = PointCloudCRReqDTO.builder()
-                .data(List.of(buildPointCloutFileInfo(relationFileBO, binaryPreSignUrlBO, imagePreSignUrlBO)))
+                .data(List.of(buildPointCloutFileInfo(relationFileBO, binaryPreSignUrlBO, previewPreSignUrlBO, imagePreSignUrlBO,
+                        chunkManifestPreSignUrlBO, chunkUploads)))
                 .type(1)
                 .renderParam(buildRenderParam())
                 .convertParam(ConvertParam.builder().extraFields(List.of("rgb")).build()).build();
@@ -1124,9 +1186,17 @@ public class UploadDataUseCase {
         return apiResult.getData();
     }
 
-    private PointCloudFileInfo buildPointCloutFileInfo(FileBO fileBO, PresignedUrlBO binaryPreSignUrlBO, PresignedUrlBO imagePreSignUrlBO) {
+    private PointCloudFileInfo buildPointCloutFileInfo(FileBO fileBO,
+                                                        PresignedUrlBO binaryPreSignUrlBO,
+                                                        PresignedUrlBO previewPreSignUrlBO,
+                                                        PresignedUrlBO imagePreSignUrlBO,
+                                                        PresignedUrlBO chunkManifestPreSignUrlBO,
+                                                        List<PointCloudFileInfo.ChunkUpload> chunkUploads) {
         return PointCloudFileInfo.builder().pointCloudFile(fileBO.getInternalUrl())
                 .uploadBinaryPcdPath(binaryPreSignUrlBO.getPresignedUrl())
+                .uploadPreviewPcdPath(previewPreSignUrlBO.getPresignedUrl())
+                .uploadChunkManifestPath(chunkManifestPreSignUrlBO.getPresignedUrl())
+                .chunkUploads(chunkUploads)
                 .uploadImagePath(imagePreSignUrlBO.getPresignedUrl())
                 .build();
     }

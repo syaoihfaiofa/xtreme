@@ -21,6 +21,7 @@ ORDER=(
   "V23__Add_image_keypoint_lifted_detection_model.sql"
   "V24__Add_image_keypoint_lifted_polyline_classes.sql"
   "V25__Add_scene_location_roll_pitch.sql"
+  "V26__Add_point_cloud_preview_relation.sql"
 )
 
 for migration in "${ORDER[@]}"; do

@@ -677,6 +677,14 @@ public class TrackSyncUseCase {
                 attrs.set("contour", contour);
             }
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            // Segment visibility is a per-frame camera observation.  A newly created synced
+            // row must never inherit either manual or automatic occlusion from its source.
+            if (existing == null) {
+                contour.remove("segmentVisibilityByView");
+                contour.remove("segmentForceVisibleByView");
+                attrs.remove("autoCurbOcclusionPointCloudPending");
+                attrs.set("autoCurbOcclusionPending", true);
+            }
             JSONArray existingPoints = null;
             if (existing != null && existing.getClassAttributes() != null) {
                 JSONObject existingContour = existing.getClassAttributes().getJSONObject("contour");
@@ -696,11 +704,18 @@ public class TrackSyncUseCase {
                     ? projectedPoints
                     : existingPoints;
             contour.set("points", distanceMask.points);
-            contour.set("segmentVisibilityByView", buildDistanceVisibility(
-                    contour.getJSONObject("segmentVisibilityByView"),
-                    visibilityReferencePoints,
-                    distanceMask.points,
-                    distanceMask.outsideSegments));
+            if (existing == null) {
+                // The target frame must start with no source-frame visibility state.  Its own
+                // camera-local visibility is calculated once by the editor when opened.
+                contour.remove("segmentVisibilityByView");
+                contour.remove("segmentForceVisibleByView");
+            } else {
+                contour.set("segmentVisibilityByView", buildDistanceVisibility(
+                        contour.getJSONObject("segmentVisibilityByView"),
+                        visibilityReferencePoints,
+                        distanceMask.points,
+                        distanceMask.outsideSegments));
+            }
             attrs.set("type", GROUND_POLYLINE);
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);

@@ -17,6 +17,7 @@
                 @click="canNavigateFrame(-1) && !blocking ? onPre() : null"
             />
             <a-input-number
+                data-testid="pc-perf-frame-index"
                 :disabled="blocking"
                 v-model:value="dataIndex"
                 size="small"
@@ -330,9 +331,10 @@
                 color: #bec1ca;
                 padding-right: 12px;
                 border-right: 1px solid #57575c;
-                max-width: 120px;
-                overflow: hidden;
-                text-overflow: ellipsis;
+                // Frame/data IDs are needed during annotation; reserve enough room for the
+                // complete common timestamp-style name instead of cutting it to `...`.
+                max-width: 360px;
+                overflow: visible;
                 white-space: nowrap;
             }
 

@@ -232,4 +232,9 @@ public class CommonConfig implements WebMvcConfigurer {
         return new SceneLocationImportService();
     }
 
+    @Bean
+    public LidarSceneFormatExportUseCase lidarSceneFormatExportUseCase() {
+        return new LidarSceneFormatExportUseCase();
+    }
+
 }

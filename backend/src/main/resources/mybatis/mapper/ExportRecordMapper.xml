@@ -3,7 +3,7 @@
 <mapper namespace="ai.basic.x1.adapter.port.dao.mybatis.mapper.ExportRecordMapper">
     <!-- 通用查询结果列 -->
     <sql id="Base_Column_List">
-        id, serial_number, file_id,file_name, status, generated_num, total_num, created_at, created_by, updated_at, updated_by
+        id, serial_number, file_id,file_name, status, error_message, generated_num, total_num, created_at, created_by, updated_at, updated_by
     </sql>
 
 

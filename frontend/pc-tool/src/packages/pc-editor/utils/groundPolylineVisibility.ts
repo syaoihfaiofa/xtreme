@@ -6,6 +6,7 @@ import {
     CAMERA_VIEW_KEYS,
     deriveBevVisibility,
     getViewKeyFromImageView,
+    isSegmentProjectedInView,
     normalizeSegmentForceVisible,
     normalizeSegmentVisible,
     segmentVisibleFromImport,
@@ -43,9 +44,7 @@ export function refreshGroundPolylineBevDisplay(
         const viewsByKey = new Map(
             views.map((view) => [getViewKeyFromImageView(view), view] as const),
         );
-        const hasAllCameraViews = CAMERA_VIEW_KEYS.every((viewKey) =>
-            viewsByKey.has(viewKey),
-        );
+        const activeCameraViewKeys = CAMERA_VIEW_KEYS.filter((viewKey) => viewsByKey.has(viewKey));
         const manualByView = Object.fromEntries(
             CAMERA_VIEW_KEYS.map((viewKey) => [
                 viewKey,
@@ -84,21 +83,26 @@ export function refreshGroundPolylineBevDisplay(
                 const from = sampleIndex / BEV_RENDER_SAMPLES_PER_SEGMENT;
                 const to = (sampleIndex + 1) / BEV_RENDER_SAMPLES_PER_SEGMENT;
                 const midpoint = start.clone().lerp(end, (from + to) / 2);
-                const visible =
-                    !hasAllCameraViews ||
-                    CAMERA_VIEW_KEYS.some((viewKey) => {
-                        if (forceVisibleByView[viewKey][segmentIndex]) {
-                            return true;
-                        }
-                        if (!manualByView[viewKey][segmentIndex]) {
-                            return false;
-                        }
-                        const view = viewsByKey.get(viewKey) as Image2DRenderView;
-                        const projected = view.worldToImg(midpoint.clone());
-                        return view.isImagePointAutoVisible(
-                            new THREE.Vector2(projected.x, projected.y),
-                        );
-                    });
+                // A segment shared by overlapping cameras remains visible if any relevant
+                // camera can see it.  Yellow is reserved for segments hidden in every camera
+                // whose projection covers this part of the curbwall.
+                const relevantViewKeys = activeCameraViewKeys.filter((viewKey) =>
+                    isSegmentProjectedInView(
+                        polyline.points3D,
+                        segmentIndex,
+                        viewsByKey.get(viewKey) as Image2DRenderView,
+                        views,
+                    ),
+                );
+                const visible = relevantViewKeys.length === 0 || relevantViewKeys.some((viewKey) => {
+                    if (forceVisibleByView[viewKey][segmentIndex]) return true;
+                    if (!manualByView[viewKey][segmentIndex]) return false;
+                    const view = viewsByKey.get(viewKey) as Image2DRenderView;
+                    const projected = view.worldToImg(midpoint.clone());
+                    return view.isImagePointAutoVisible(
+                        new THREE.Vector2(projected.x, projected.y),
+                    );
+                });
                 renderSegments.push({
                     start: start.clone().lerp(end, from),
                     end: start.clone().lerp(end, to),

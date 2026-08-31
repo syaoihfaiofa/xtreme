@@ -47,6 +47,7 @@ import * as utils from './utils';
 import { getObjectDisplayColor } from './utils/result';
 import { RegisterFn, ModalFn, MsgFn, ConfirmFn, LoadingFn } from './uitype';
 import TaskManager from './common/TaskManager/TaskManager';
+import PerformanceMonitor from './common/PerformanceMonitor';
 
 type LocaleType = typeof locale;
 
@@ -79,6 +80,7 @@ export default class Editor extends THREE.EventDispatcher {
     modelManager: ModelManager;
     trackManager: TrackManager;
     taskManager: TaskManager;
+    performanceMonitor: PerformanceMonitor;
 
     // ui
     registerModal: RegisterFn = () => {};
@@ -108,6 +110,7 @@ export default class Editor extends THREE.EventDispatcher {
         this.modelManager = new ModelManager(this);
         this.trackManager = new TrackManager(this);
         this.taskManager = new TaskManager(this);
+        this.performanceMonitor = new PerformanceMonitor();
 
         handleHack(this);
 
@@ -122,7 +125,7 @@ export default class Editor extends THREE.EventDispatcher {
         this.taskManager.destroy();
         this.dataManager.destroy();
         this.modelManager.clear();
-        this.dataResource.clear();
+        this.dataResource.destroy();
         this.viewManager.destroy();
         this.hotkeyManager.destroy();
         this.pc.destroy();

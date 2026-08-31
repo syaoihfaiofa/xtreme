@@ -57,27 +57,33 @@ export default class Points extends THREE.Points implements IPoints {
 
     updateData(data: IData) {
         let geometry = this.geometry as THREE.BufferGeometry;
-        // let position = data.position as number[];
-        // let oldPosition = geometry.getAttribute('position') as THREE.Float32BufferAttribute;
+        const position = data.position || [];
+        const oldPosition = geometry.getAttribute('position') as THREE.BufferAttribute;
 
-        geometry.dispose();
-        this.geometry = createGeometry(data);
-
-        // if (oldPosition.count < position.length / oldPosition.itemSize) {
-        //     geometry.dispose();
-        //     geometry = createGeometry(data);
-        //     this.geometry = geometry;
-        // } else {
-        // let positionAttr = geometry.getAttribute('position') as THREE.Float32BufferAttribute;
-        // this.setBufferAttribute(positionAttr, data.position || []);
-        // positionAttr.setDrawRange(0,);
-
-        // let intensityAttr = geometry.getAttribute('intensity') as THREE.Float32BufferAttribute;
-        // this.setBufferAttribute(intensityAttr, data.intensity || []);
-
-        // let colorAttr = geometry.getAttribute('color') as THREE.Float32BufferAttribute;
-        // this.setBufferAttribute(colorAttr, data.color || []);
-        // }
+        // Preview -> full resolution and adjacent-frame switching should not continuously create
+        // GPU buffers. Grow only when necessary; otherwise reuse the existing capacity.
+        if (!oldPosition || oldPosition.array.length < position.length) {
+            geometry.dispose();
+            this.geometry = createGeometry(data);
+            geometry = this.geometry as THREE.BufferGeometry;
+        } else {
+            const update = (name: string, source: number[] | undefined, ArrayType: any) => {
+                const values = source || [];
+                let attr = geometry.getAttribute(name) as THREE.BufferAttribute;
+                const itemSize = name === 'intensity' ? 1 : 3;
+                if (!attr || attr.array.length < values.length) {
+                    attr = new THREE.BufferAttribute(new ArrayType(oldPosition.array.length), itemSize);
+                    geometry.setAttribute(name, attr);
+                }
+                (attr.array as any).set(values as any);
+                attr.count = values.length / itemSize;
+                attr.needsUpdate = true;
+            };
+            update('position', position, Float32Array);
+            update('intensity', data.intensity, Float32Array);
+            update('color', data.color, Uint8Array);
+            geometry.setDrawRange(0, position.length / 3);
+        }
 
         this.geometry.computeBoundingSphere();
         this.dispatchEvent({ type: Event.POINTS_CHANGE });

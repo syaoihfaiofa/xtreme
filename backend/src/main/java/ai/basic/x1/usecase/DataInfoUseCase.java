@@ -939,7 +939,12 @@ public class DataInfoUseCase {
             }
         }
         dataInfoQueryBO.setIsAllResult(false);
-        dataInfoQueryBO.setDataFormat(IMAGE.equals(dataInfoQueryBO.getDatasetType()) ? dataInfoQueryBO.getDataFormat() : DataFormatEnum.XTREME1);
+        if (DatasetTypeEnum.LIDAR_FUSION.equals(dataInfoQueryBO.getDatasetType())
+                && (DataFormatEnum.KITTI.equals(dataInfoQueryBO.getDataFormat()) || DataFormatEnum.NUSCENES.equals(dataInfoQueryBO.getDataFormat()))) {
+            // Native scene exporters validate that the selected records expand to complete scenes.
+        } else {
+            dataInfoQueryBO.setDataFormat(IMAGE.equals(dataInfoQueryBO.getDatasetType()) ? dataInfoQueryBO.getDataFormat() : DataFormatEnum.XTREME1);
+        }
         executorService.execute(Objects.requireNonNull(TtlRunnable.get(() ->
                 exportUseCase.asyncExportDataZip(fileName, serialNumber, classMap, resultMap, dataInfoQueryBO,
                         this::findExportDataIds,
@@ -1332,6 +1337,7 @@ public class DataInfoUseCase {
             }
             var dataInfoExportBO = DataExportBO.builder().data(dataExportBaseBO).build();
             dataInfoExportBO.setSceneName(dataInfoBO.getSceneName());
+            dataInfoExportBO.setSceneId(dataInfoBO.getParentId());
             if (CollectionUtil.isNotEmpty(annotationList) || CollectionUtil.isNotEmpty(objectList)) {
                 dataInfoExportBO.setResult(dataResultExportBOList);
             }

@@ -1,17 +1,30 @@
 import Editor from '../Editor';
 import * as utils from '../utils';
 import * as THREE from 'three';
-import { IFrame, IObject, IDataResource, IUserData, Const } from '../type';
+import { IFrame, IObject, IUserData, Const } from '../type';
 import { ResourceLoader } from './DataResource';
-import { AnnotateObject } from 'pc-render';
+import { AnnotateObject, Box, GroundPolyline } from 'pc-render';
 import Event from '../config/event';
+import {
+    AUTO_OCCLUSION_PENDING_KEY,
+    AUTO_OCCLUSION_POINT_CLOUD_PENDING_KEY,
+    computeGroundPolylineAutoOcclusion,
+} from '../utils/groundPolylineAutoOcclusion';
+import { getImageViews, refreshGroundPolylineBevDisplay } from '../utils/groundPolylineVisibility';
 
 export default class LoadManager {
     editor: Editor;
     private loadVersion = 0;
+    private boxesReadyFrameId?: string | number;
+    private readonly onResourceLoadComplete = (event: { data?: IFrame }): void => {
+        const frame = event.data;
+        if (!frame || String(this.editor.getCurrentFrame()?.id) !== String(frame.id)) return;
+        this.applyPendingGroundPolylineOcclusion(frame);
+    };
 
     constructor(editor: Editor) {
         this.editor = editor;
+        this.editor.addEventListener(Event.RESOURCE_LOAD_COMPLETE, this.onResourceLoadComplete);
     }
 
     async loadFrame(index: number, showLoading: boolean = true, force: boolean = false) {
@@ -23,6 +36,7 @@ export default class LoadManager {
         const currentTrackName = this.editor.currentTrackName;
         const frame = frames[index];
         const loadVersion = ++this.loadVersion;
+        this.editor.performanceMonitor.start('frame-interactive', frame.id);
         const isCurrentLoad = () => loadVersion === this.loadVersion;
 
         this.editor.navigatingFrame = true;
@@ -31,6 +45,7 @@ export default class LoadManager {
             // mounting the next frame's annotations so render views never fit a detached object.
             this.editor.pc.selectObject();
             this.editor.state.frameIndex = index;
+            this.editor.dataResource.activateFrame(frame);
 
             this.editor.actionManager.stopCurrentAction();
 
@@ -43,6 +58,10 @@ export default class LoadManager {
                 ]);
                 if (!isCurrentLoad()) return;
                 this.editor.dataResource.load(index);
+                this.applyPendingGroundPolylineOcclusion(frame);
+                this.editor.performanceMonitor.end('frame-interactive', frame.id, {
+                    cached: frame.loadState === 'complete',
+                });
             } catch (error: any) {
                 if (isCurrentLoad()) this.editor.handleErr(error);
             }
@@ -60,6 +79,63 @@ export default class LoadManager {
         if (isCurrentLoad()) {
             this.editor.dispatchEvent({ type: Event.FRAME_CHANGE, data: index });
         }
+    }
+
+    /**
+     * A synchronized curbwall is evaluated only when its target frame is first opened, because
+     * only then do we have that frame's boxes. It first applies Box evidence immediately, then
+     * adds target-frame point-cloud evidence when the preview/full cloud arrives. Camera
+     * extrinsics are fixed relative to the ego vehicle. Clearing the markers makes subsequent
+     * edits and sync updates strictly manual.
+     */
+    private applyPendingGroundPolylineOcclusion(frame: IFrame): void {
+        const polylines = (this.editor.dataManager.getFrameObject(frame.id) || []).filter(
+            (object): object is GroundPolyline =>
+                object instanceof GroundPolyline &&
+                (object.userData as IUserData)[AUTO_OCCLUSION_PENDING_KEY] === true,
+        );
+        if (polylines.length === 0 || String(this.boxesReadyFrameId) !== String(frame.id)) return;
+        const imageViews = getImageViews(this.editor);
+        // Image pixels do not affect the 3D sight-line calculation.  The camera rig is fixed to
+        // the ego vehicle, so it is enough that the four projection views have been initialized.
+        if (imageViews.length === 0) return;
+        const resource = this.editor.dataResource.getResource(frame);
+        const usePointCloud = polylines.some(
+            (polyline) =>
+                (polyline.userData as IUserData)[AUTO_OCCLUSION_POINT_CLOUD_PENDING_KEY] === true,
+        ) && Boolean(
+            resource?.pointsData?.position?.length && resource.resourceState !== 'full-loading',
+        );
+        const boxes = this.editor.pc.getAnnotate3D().filter(
+            (object): object is Box => object instanceof Box,
+        );
+        this.editor.cmdManager.withGroup(() => {
+            polylines.forEach((polyline) => {
+                const result = computeGroundPolylineAutoOcclusion(
+                    polyline.points3D,
+                    imageViews,
+                    boxes,
+                    usePointCloud ? this.editor.pc.groupPoints : undefined,
+                );
+                if (result.changed) {
+                    this.editor.cmdManager.execute('update-ground-polyline-visibility-range', {
+                        object: polyline,
+                        points: result.points,
+                        byView: result.segmentVisibleByView,
+                        forceVisibleByView: polyline.segmentForceVisibleByView,
+                    });
+                } else {
+                    refreshGroundPolylineBevDisplay(this.editor, polyline);
+                }
+                if (usePointCloud) {
+                    delete (polyline.userData as IUserData)[AUTO_OCCLUSION_PENDING_KEY];
+                    delete (polyline.userData as IUserData)[AUTO_OCCLUSION_POINT_CLOUD_PENDING_KEY];
+                } else {
+                    (polyline.userData as IUserData)[AUTO_OCCLUSION_POINT_CLOUD_PENDING_KEY] = true;
+                }
+                this.editor.dataManager.onAnnotatesChange([polyline], frame, { type: 'userData' });
+            });
+        });
     }
 
     async loadClassification() {
@@ -139,6 +215,10 @@ export default class LoadManager {
         if (isCurrentLoad()) {
             this.editor.dataManager.loadDataFromManager();
             this.editor.updateIDCounter();
+            this.boxesReadyFrameId = frame.id;
+            // Synchronized curbwalls only wait for the target frame's annotation objects.  This
+            // is intentionally before point-cloud/image resource loading completes.
+            this.applyPendingGroundPolylineOcclusion(frame);
         }
         // this.editor.pc.addObject(annotates);
     }

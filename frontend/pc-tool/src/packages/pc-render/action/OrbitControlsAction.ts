@@ -65,6 +65,7 @@ export default class OrbitControlsAction extends Action {
 
     controlChange() {
         this.renderView.render();
+        this.renderView.pointCloud.dispatchEvent({ type: 'point-cloud-view-change' });
     }
 
     destroy(): void {

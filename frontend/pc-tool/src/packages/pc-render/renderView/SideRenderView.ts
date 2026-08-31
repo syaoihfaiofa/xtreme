@@ -5,6 +5,7 @@ import GroundPolyline from '../objects/GroundPolyline';
 import Render from './Render';
 import PointCloud from '../PointCloud';
 import { Event } from '../config';
+import type { ITransform } from '../type';
 import PointsMaterial from '../material/PointsMaterial';
 import * as _ from 'lodash';
 
@@ -97,6 +98,7 @@ export default class SideRenderView extends Render {
     };
     private readonly onObjectTransform = (e: any) => {
         let object = e.data.object;
+        const transform = e.data.option as Partial<ITransform> | undefined;
         if (
             object &&
             object instanceof THREE.Object3D &&
@@ -104,6 +106,14 @@ export default class SideRenderView extends Render {
             this.needFit &&
             this.enableFit
         ) {
+            // Keyboard X/Z updates rotation only.  Re-fitting here recomputes the
+            // orthographic range from the rotated screen bounds, which makes the
+            // top view look as though it zooms on every rotation step.
+            if (transform?.rotation && !transform.position && !transform.scale) {
+                this.updateProjectRect();
+                this.render();
+                return;
+            }
             this.fitObject();
             this.render();
         }
@@ -538,7 +548,6 @@ export default class SideRenderView extends Render {
             handle.style.display = 'none';
         });
         if (object instanceof GroundPolyline) {
-            const bevVisible = object.getBevSegmentVisible();
             for (let index = 0; index < object.points3D.length - 1; index++) {
                 const start = this.cameraToCanvas(
                     object.points3D[index].clone().applyMatrix4(object.matrixWorld),
@@ -548,9 +557,6 @@ export default class SideRenderView extends Render {
                 );
                 const handle = this.segmentHandles[index];
                 const canInsert =
-                    bevVisible[index] !== false &&
-                    !object.isVisibilityBoundaryPoint(index) &&
-                    !object.isVisibilityBoundaryPoint(index + 1) &&
                     start.x >= 0 &&
                     start.x <= this.width &&
                     start.y >= 0 &&
@@ -624,9 +630,7 @@ export default class SideRenderView extends Render {
         if (
             !(object instanceof GroundPolyline) ||
             segmentIndex < 0 ||
-            segmentIndex >= object.points3D.length - 1 ||
-            object.isVisibilityBoundaryPoint(segmentIndex) ||
-            object.isVisibilityBoundaryPoint(segmentIndex + 1)
+            segmentIndex >= object.points3D.length - 1
         ) {
             return;
         }

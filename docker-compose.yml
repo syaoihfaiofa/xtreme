@@ -104,8 +104,9 @@ services:
     ports:
       - 8291:80
   pcd-tools:
-    image: basicai/xtreme1-pcd-tools
-    pull_policy: always
+    build:
+      context: ./deploy/pcd-tools
+    image: xtreme1-pcd-tools:local
     ports:
       - 8295:5000
   image-vect-visualization:

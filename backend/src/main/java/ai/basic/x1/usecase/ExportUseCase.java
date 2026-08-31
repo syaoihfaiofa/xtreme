@@ -81,6 +81,9 @@ public class ExportUseCase {
     @Autowired
     private DataInfoUseCase dataInfoUseCase;
 
+    @Autowired
+    private LidarSceneFormatExportUseCase lidarSceneFormatExportUseCase;
+
     @Value("${file.tempPath:/tmp/xtreme1/}")
     private String tempPath;
 
@@ -126,21 +129,39 @@ public class ExportUseCase {
 
         var dataIds = fun.apply(query);
         if (CollUtil.isEmpty(dataIds)) {
-            exportRecordBOBuilder.status(ExportStatusEnum.FAILED);
+            exportRecordUsecase.saveOrUpdate(exportRecordBOBuilder.status(ExportStatusEnum.FAILED)
+                    .errorMessage("No data matched this export request").updatedAt(OffsetDateTime.now()).build());
             return;
         }
-        AtomicInteger i = new AtomicInteger(0);
-        var dataIdList = ListUtil.partition(dataIds, 1000);
-        dataIdList.forEach(subDataIds -> {
-            writeFile(subDataIds, srcPath, classMap, resultMap, query, processData);
-            var exportRecordBO = exportRecordBOBuilder
-                    .generatedNum(i.get() * BATCH_SIZE + subDataIds.size())
-                    .totalNum(dataIds.size())
-                    .updatedAt(OffsetDateTime.now())
-                    .build();
-            exportRecordUsecase.saveOrUpdate(exportRecordBO);
-            i.getAndIncrement();
-        });
+        boolean nativeLidarFormat = DataFormatEnum.KITTI.equals(query.getDataFormat()) || DataFormatEnum.NUSCENES.equals(query.getDataFormat());
+        try {
+            if (nativeLidarFormat) {
+                var data = processData.invoke(dataIds, query, classMap, resultMap);
+                lidarSceneFormatExportUseCase.export(srcPath, data, query);
+                exportRecordUsecase.saveOrUpdate(exportRecordBOBuilder.generatedNum(dataIds.size()).totalNum(dataIds.size())
+                        .updatedAt(OffsetDateTime.now()).build());
+            } else {
+                AtomicInteger i = new AtomicInteger(0);
+                var dataIdList = ListUtil.partition(dataIds, 1000);
+                dataIdList.forEach(subDataIds -> {
+                    writeFile(subDataIds, srcPath, classMap, resultMap, query, processData);
+                    var exportRecordBO = exportRecordBOBuilder
+                            .generatedNum(i.get() * BATCH_SIZE + subDataIds.size())
+                            .totalNum(dataIds.size())
+                            .updatedAt(OffsetDateTime.now())
+                            .build();
+                    exportRecordUsecase.saveOrUpdate(exportRecordBO);
+                    i.getAndIncrement();
+                });
+            }
+        } catch (Exception e) {
+            logger.error("LiDAR scene export failed", e);
+            exportRecordUsecase.saveOrUpdate(exportRecordBOBuilder.status(ExportStatusEnum.FAILED)
+                    .errorMessage(StrUtil.subWithLength(StrUtil.blankToDefault(e.getMessage(), e.getClass().getSimpleName()), 0, 4000))
+                    .updatedAt(OffsetDateTime.now()).build());
+            FileUtil.del(srcPath);
+            return;
+        }
         var zipPath = srcPath + ".zip";
         File zipFile;
         var path = String.format("%s/%s", rootPath, FileUtil.getName(zipPath));
@@ -200,6 +221,18 @@ public class ExportUseCase {
             var sceneName = dataExportBO.getSceneName();
             var zipPath = StrUtil.isNotEmpty(sceneName) ? String.format("%s/%s", zipPathOr, sceneName) : zipPathOr;
             var dataExportBaseBO = dataExportBO.getData();
+            if (dataExportBaseBO instanceof LidarFusionDataExportBO && Boolean.TRUE.equals(query.getIncludeSourceData())) {
+                var fusion = (LidarFusionDataExportBO) dataExportBaseBO;
+                try {
+                    downLoadRawFile(zipPath, fusion.getLidarPointClouds(), fusion.getName());
+                    downLoadRawFile(zipPath, fusion.getCameraImages(), fusion.getName());
+                    if (fusion.getCameraConfig() != null && StrUtil.isNotBlank(fusion.getCameraConfig().getInternalUrl())) {
+                        downLoadRawFile(zipPath, Collections.singletonList(fusion.getCameraConfig()), fusion.getName());
+                    }
+                } catch (Exception e) {
+                    throw new IllegalStateException("Unable to download LiDAR Fusion source data for " + fusion.getName(), e);
+                }
+            }
             if (dataExportBaseBO instanceof ImageDataExportBO && DataFormatEnum.COCO.equals(query.getDataFormat())) {
                 var imageDataExportBO = DefaultConverter.convert(dataExportBaseBO, ImageDataExportBO.class);
                 try {

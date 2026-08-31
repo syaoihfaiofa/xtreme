@@ -341,12 +341,24 @@ export async function getDataFile(dataId: string) {
         if (!file?.file) {
             return;
         }
-        let fileUrl = file.file;
-        if (fileUrl.binary) fileUrl = fileUrl.binary;
+        const pcdFile = file.file;
+        // Binary remains the full-resolution URL. Preview is optional so both old data and older
+        // converter responses continue to work without a separate API version.
+        const fileUrl = pcdFile.binary || pcdFile;
+        const pointCount = fileUrl.extraInfo?.pointCount;
+        const previewPointCount = pcdFile.preview?.extraInfo?.pointCount;
         configs.push({
             dirName: config.name,
             name: file.name,
             url: fileUrl.url,
+            previewUrl: pcdFile.preview?.url,
+            pointCount: pointCount == null ? undefined : Number(pointCount),
+            previewPointCount: previewPointCount == null ? undefined : Number(previewPointCount),
+            pointsByteSize: fileUrl.size == null ? undefined : Number(fileUrl.size),
+            previewPointsByteSize: pcdFile.preview?.size == null ? undefined : Number(pcdFile.preview.size),
+            chunkManifestUrl: pcdFile.chunkManifest?.url,
+            chunkCount: pcdFile.chunkManifest?.extraInfo?.chunkCount == null
+                ? undefined : Number(pcdFile.chunkManifest.extraInfo.chunkCount),
         });
     });
 

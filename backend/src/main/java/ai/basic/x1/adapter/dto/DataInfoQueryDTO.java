@@ -69,10 +69,13 @@ public class DataInfoQueryDTO {
     private String annotationStatus;
 
     /**
-     * Data format XTREME1,COCO
+     * Data format XTREME1,COCO,KITTI,NUSCENES
      */
-    @ValidStringEnum(message = "dataFormat must be one of XTREME1,COCO", enumClass = DataFormatEnum.class)
+    @ValidStringEnum(message = "dataFormat must be one of XTREME1,COCO,KITTI,NUSCENES", enumClass = DataFormatEnum.class)
     private String dataFormat;
+
+    /** Include point cloud and camera image blobs in LiDAR format exports. */
+    private Boolean includeSourceData;
 
     /**
      * Data split type TRAINING,VALIDATION,TEST,NOT_SPLIT

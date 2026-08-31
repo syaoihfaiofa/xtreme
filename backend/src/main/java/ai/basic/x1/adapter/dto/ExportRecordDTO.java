@@ -44,6 +44,9 @@ public class ExportRecordDTO {
      */
     private ExportStatusEnum status;
 
+    /** Diagnostic detail when status is FAILED. */
+    private String errorMessage;
+
     /**
      * Generated number
      */

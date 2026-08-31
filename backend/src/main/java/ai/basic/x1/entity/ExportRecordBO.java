@@ -43,6 +43,9 @@ public class ExportRecordBO {
      */
     private ExportStatusEnum status;
 
+    /** Diagnostic detail for failed asynchronous exports. */
+    private String errorMessage;
+
     /**
      * Generated number
      */

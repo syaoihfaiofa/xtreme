@@ -21,7 +21,11 @@ export default class BusinessManager extends BaseBusinessManager {
     async loadFrameConfig(data: IFrame): Promise<IDataResource> {
         const regLidar = new RegExp(/point(_?)cloud/i);
         const regConfig = new RegExp(/camera(_?)config/i);
+        this.editor.performanceMonitor.start('frame-metadata-request', String(data.id));
         let { configs: fileConfig, name } = await api.getDataFile(data.id + '');
+        this.editor.performanceMonitor.end('frame-metadata-request', String(data.id), {
+            fileCount: fileConfig.length,
+        });
         if (fileConfig.filter((e) => regLidar.test(e.dirName)).length === 0) {
             throw this.editor.lang('no-point-data');
         }
@@ -43,7 +47,9 @@ export default class BusinessManager extends BaseBusinessManager {
         let cameraInfo: any[] | Record<string, any> = [];
         if (cameraConfig) {
             try {
+                this.editor.performanceMonitor.start('camera-config-request', String(data.id));
                 cameraInfo = await api.getUrl(cameraConfig.url);
+                this.editor.performanceMonitor.end('camera-config-request', String(data.id));
             } catch (error) {
                 console.warn('load camera config json failed', error);
                 cameraInfo = [];
@@ -55,6 +61,7 @@ export default class BusinessManager extends BaseBusinessManager {
             cameraInfo = utils.normalizeCameraInfoList(cameraInfo);
         }
 
+        const pointConfig = fileConfig.find((file) => regLidar.test(file.dirName));
         let info = utils.createViewConfig(fileConfig, cameraInfo as any[]);
         info.config.forEach((view, index) => {
             view.occlusionMask =
@@ -62,6 +69,13 @@ export default class BusinessManager extends BaseBusinessManager {
         });
         let config: IDataResource = {
             pointsUrl: info.pointsUrl,
+            previewPointsUrl: pointConfig?.previewUrl,
+            pointCount: pointConfig?.pointCount,
+            previewPointCount: pointConfig?.previewPointCount,
+            pointsByteSize: pointConfig?.pointsByteSize,
+            previewPointsByteSize: pointConfig?.previewPointsByteSize,
+            chunkManifestUrl: pointConfig?.chunkManifestUrl,
+            chunkCount: pointConfig?.chunkCount,
             pointsData: {},
             viewConfig: info.config,
             time: 0,
@@ -105,7 +119,12 @@ export default class BusinessManager extends BaseBusinessManager {
             }
             dataIds = frame.id;
         }
+        const metricFrameId = Array.isArray(dataIds) ? String(dataIds[0]) : String(dataIds);
+        this.editor.performanceMonitor.start('annotation-request', metricFrameId);
         let data = await api.getDataObjectBatch(dataIds);
+        this.editor.performanceMonitor.end('annotation-request', metricFrameId, {
+            frameCount: Array.isArray(dataIds) ? dataIds.length : 1,
+        });
         return data;
     }
 }

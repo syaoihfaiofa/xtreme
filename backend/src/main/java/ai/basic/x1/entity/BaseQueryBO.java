@@ -23,4 +23,7 @@ public class BaseQueryBO {
      * Data format XTREME1,COCO
      */
     private DataFormatEnum dataFormat;
+
+    /** Defaults to false. Format-required metadata is always emitted. */
+    private Boolean includeSourceData;
 }

@@ -277,6 +277,7 @@ export interface exportFileRecord {
   status: ExportStatus;
   totalNum: number;
   fileName: string;
+  errorMessage?: string;
 }
 
 export enum ExportStatus {

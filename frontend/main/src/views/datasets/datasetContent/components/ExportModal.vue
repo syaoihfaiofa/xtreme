@@ -22,6 +22,10 @@
             </Select.Option>
           </Select>
         </div>
+        <div v-if="props.datasetType === 'LIDAR_FUSION'" class="flex items-center gap-10px">
+          <div class="whitespace-nowrap" style="color: #333; width: 100px">Source data</div>
+          <Checkbox v-model:checked="includeSourceData">Download point clouds and images</Checkbox>
+        </div>
         <div class="flex items-center gap-10px">
           <div class="whitespace-nowrap" style="color: #333; width: 100px">Results</div>
 
@@ -64,7 +68,7 @@
   import { useDesign } from '/@/hooks/web/useDesign';
   import { setEndTime, setStartTime } from '/@/utils/business/timeFormater';
 
-  import { message, Select, TreeSelect } from 'ant-design-vue';
+  import { Checkbox, message, Select, TreeSelect } from 'ant-design-vue';
   import { BasicModal, useModalInner } from '/@/components/Modal';
   import { Icon } from '/@/components/Icon';
 
@@ -94,6 +98,12 @@
             value: 'XTREME1',
             label: 'Xtreme1',
           },
+          ...(props.datasetType === 'LIDAR_FUSION'
+            ? [
+                { value: 'KITTI', label: 'KITTI Tracking' },
+                { value: 'NUSCENES', label: 'nuScenes' },
+              ]
+            : []),
         ]
       : [
           {
@@ -129,6 +139,7 @@
 
   let selectModelRunIds = ref<any>([]);
   let dataType = ref<string>('');
+  let includeSourceData = ref<boolean>(false);
 
   const isLoading = ref<boolean>(false);
   const handleSubmit = async () => {
@@ -183,6 +194,7 @@
     dataFormat.value = 'XTREME1';
     dataType.value = '';
     selectModelRunIds.value = [];
+    includeSourceData.value = false;
   };
 
   let fliterPa = (data) => {
@@ -200,6 +212,7 @@
     }
     res.selectModelRunIds = selectModelRunIds.value.toString();
     res.dataFormat = dataFormat.value;
+    res.includeSourceData = includeSourceData.value;
     return res;
   };
 </script>

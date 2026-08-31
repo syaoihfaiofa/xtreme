@@ -28,4 +28,7 @@ public class DataExportBO {
 
     private String sceneName;
 
+    /** Parent Scene id when this export item is a LiDAR Fusion frame. */
+    private Long sceneId;
+
 }

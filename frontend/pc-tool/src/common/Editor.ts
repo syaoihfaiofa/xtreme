@@ -849,12 +849,13 @@ export default class Editor extends BaseEditor {
             }
         });
         this.invalidateTrackDisplayCaches();
-        const syncedPolylines = frames.flatMap((frame) =>
-            (this.dataManager.getFrameObject(frame.id) || []).filter(
-                (object): object is GroundPolyline =>
-                    object instanceof GroundPolyline &&
-                    matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
-            ),
+        // Only the source frame is mounted with the current camera configuration.  Refreshing
+        // target-frame polylines here would incorrectly render them through the source cameras
+        // before their one-time, frame-local auto-occlusion calculation runs on first open.
+        const syncedPolylines = (this.dataManager.getFrameObject(sourceFrameId) || []).filter(
+            (object): object is GroundPolyline =>
+                object instanceof GroundPolyline &&
+                matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
         );
         if (syncedPolylines.length > 0) {
             refreshGroundPolylineBevDisplay(this, syncedPolylines);

@@ -33,6 +33,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     highlightColor: THREE.Color = new THREE.Color(1, 0, 0);
     private renderTimer: number = 0;
     private tweenAnimationId: number = 0;
+    private chunkPointIds = new Set<string>();
 
     constructor() {
         super();
@@ -272,6 +273,7 @@ export default class PointCloud extends THREE.EventDispatcher {
 
     // *********************************************
     setPointCloudData(data: any) {
+        this.clearPointCloudChunks();
         let points;
         if (this.groupPoints.children.length === 0) {
             points = new Points(this.material);
@@ -287,6 +289,57 @@ export default class PointCloud extends THREE.EventDispatcher {
         points.updateData(data);
         this.render();
         // this.dispatchEvent({ type: Event.LOAD_POINT_AFTER });
+    }
+
+    setPointCloudChunk(id: string, data: any) {
+        let points = this.groupPoints.children.find((child) => child.userData.chunkId === id) as Points;
+        if (!points) {
+            // The preview is replaced once the first high-density chunk arrives.
+            if (this.chunkPointIds.size === 0) this.groupPoints.clear();
+            points = new Points(this.material);
+            points.userData.chunkId = id;
+            this.groupPoints.add(points);
+            this.chunkPointIds.add(id);
+        }
+        points.updateData(data);
+        this.render();
+    }
+
+    removePointCloudChunk(id: string) {
+        const points = this.groupPoints.children.find((child) => child.userData.chunkId === id) as Points;
+        if (!points) return;
+        this.groupPoints.remove(points);
+        (points.geometry as THREE.BufferGeometry).dispose();
+        this.chunkPointIds.delete(id);
+        this.render();
+    }
+
+    clearPointCloudChunks() {
+        if (!this.chunkPointIds.size) return;
+        [...this.groupPoints.children].forEach((child) => {
+            if (child.userData.chunkId) {
+                this.groupPoints.remove(child);
+                ((child as THREE.Points).geometry as THREE.BufferGeometry).dispose();
+            }
+        });
+        this.chunkPointIds.clear();
+    }
+
+    getVisibleChunkIds(chunks: Array<{ id: string; bounds: number[] }>): string[] {
+        const view = this.renderViews.find((item: any) => item.camera && item.renderer) as any;
+        if (!view) return chunks.map((chunk) => chunk.id);
+        view.camera.updateMatrixWorld();
+        const frustum = new THREE.Frustum().setFromProjectionMatrix(
+            new THREE.Matrix4().multiplyMatrices(view.camera.projectionMatrix, view.camera.matrixWorldInverse),
+        );
+        const visible = chunks.filter((chunk) => {
+            const b = chunk.bounds;
+            return Array.isArray(b) && b.length === 6 && frustum.intersectsBox(
+                new THREE.Box3(new THREE.Vector3(b[0], b[1], b[2]), new THREE.Vector3(b[3], b[4], b[5])),
+            );
+        }).map((chunk) => chunk.id);
+        // Never leave a valid manifest blank merely because the camera is outside its bounds.
+        return visible.length ? visible : chunks.slice(0, 1).map((chunk) => chunk.id);
     }
     loadPointCloud(url: string, onProgress?: (percent: number) => void) {
         let points;

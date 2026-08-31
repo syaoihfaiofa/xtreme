@@ -169,17 +169,10 @@ export default class GroundPolyline extends THREE.LineSegments {
         if (pointIndex <= 0 || pointIndex >= this.points3D.length - 1) {
             return false;
         }
-        if (this.autoVisibilityBoundaryPointIndices.has(pointIndex)) {
-            return true;
-        }
-        const allFlags = [
-            ...Object.values(this.segmentVisibleByView),
-            ...Object.values(this.segmentForceVisibleByView),
-        ];
-        return allFlags.some((flags) => {
-            const normalized = this.normalizeSegmentVisible(flags);
-            return normalized[pointIndex - 1] !== normalized[pointIndex];
-        });
+        // Visibility changes alone must not hide a vertex: a manually inserted point can sit
+        // exactly where adjacent segments have different visibility. Only points explicitly
+        // created by automatic boundary splitting are non-editable boundary points.
+        return this.autoVisibilityBoundaryPointIndices.has(pointIndex);
     }
 
     setAutoVisibilityBoundaryPointIndices(indices: Iterable<number>): void {

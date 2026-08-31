@@ -95,6 +95,12 @@ public abstract class BaseDatasetController {
                         case BINARY_COMPRESSED:
                             ((PcdFileDTO) fileDTO).setBinaryCompressed(rfFileDTO);
                             break;
+                        case POINT_CLOUD_PREVIEW:
+                            ((PcdFileDTO) fileDTO).setPreview(rfFileDTO);
+                            break;
+                        case POINT_CLOUD_CHUNK_MANIFEST:
+                            ((PcdFileDTO) fileDTO).setChunkManifest(rfFileDTO);
+                            break;
                         case POINT_CLOUD_RENDER_IMAGE:
                             ((PcdFileDTO) fileDTO).setRenderImage(rfFileDTO);
                             break;

@@ -277,10 +277,15 @@
             <CheckCircleFilled style="color: #7ff0b3" />
           </div>
           <div v-else-if="item.status === ExportStatus.FAILED" class="status">
-            <span class="mr-6px text-12px" style="color: #f8827b">
-              {{ t('business.datasetContent.process.invalidFormat') }}
-            </span>
-            <CloseCircleFilled style="color: #f8827b" />
+            <Tooltip placement="top" color="rgba(0, 0, 0, 0.75)">
+              <template #title>
+                <span>{{ item.errorMessage || t('business.datasetContent.process.invalidFormat') }}</span>
+              </template>
+              <span class="mr-6px text-12px" style="color: #f8827b">
+                {{ t('business.datasetContent.process.invalidFormat') }}
+              </span>
+              <CloseCircleFilled style="color: #f8827b" />
+            </Tooltip>
           </div>
           <Progress
             v-else

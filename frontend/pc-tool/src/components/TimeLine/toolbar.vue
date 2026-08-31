@@ -147,6 +147,7 @@
                 <a-tooltip placement="top">
                     <template #title>{{ editor.lang('pre') }}</template>
                     <a-button
+                        data-testid="pc-perf-prev-frame"
                         :disabled="isPreDisabled"
                         @click="() => onAction('PreFrame')"
                         type="default"
@@ -158,6 +159,7 @@
                 </a-tooltip>
                 <!-- @change="changeFrameIndex" -->
                 <a-input-number
+                    data-testid="pc-perf-frame-index"
                     style="width: 80px"
                     :disabled="disable"
                     v-model:value="iState.frameIndex"
@@ -173,6 +175,7 @@
                 <a-tooltip placement="top">
                     <template #title>{{ editor.lang('next') }}</template>
                     <a-button
+                        data-testid="pc-perf-next-frame"
                         :disabled="isNextDisabled"
                         @click="() => onAction('NextFrame')"
                         type="default"
@@ -190,6 +193,7 @@
                             : editor.lang('play', { n: state.playSpeed })
                     }}</template>
                     <a-button
+                        data-testid="pc-perf-play-toggle"
                         v-show="!isCheck()"
                         :disabled="!canOperate()"
                         @click="() => onAction(state.play ? 'Stop' : 'Play')"

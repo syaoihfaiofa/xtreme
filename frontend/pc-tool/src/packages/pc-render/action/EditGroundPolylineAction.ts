@@ -104,7 +104,6 @@ export default class EditGroundPolylineAction extends Action {
         this.handles.slice(object.points3D.length).forEach((handle) => {
             handle.style.display = 'none';
         });
-        const bevVisible = object.getBevSegmentVisible();
         for (let index = 0; index < object.points3D.length - 1; index++) {
             const start = screenPoints[index];
             const end = screenPoints[index + 1];
@@ -112,10 +111,7 @@ export default class EditGroundPolylineAction extends Action {
             const canInsert =
                 !this.extendEnd &&
                 start.visible &&
-                end.visible &&
-                bevVisible[index] !== false &&
-                !object.isVisibilityBoundaryPoint(index) &&
-                !object.isVisibilityBoundaryPoint(index + 1);
+                end.visible;
             handle.style.display = canInsert ? 'block' : 'none';
             handle.style.left = `${(start.x + end.x) / 2}px`;
             handle.style.top = `${(start.y + end.y) / 2}px`;
@@ -292,9 +288,7 @@ export default class EditGroundPolylineAction extends Action {
         if (
             !object ||
             segmentIndex < 0 ||
-            segmentIndex >= object.points3D.length - 1 ||
-            object.isVisibilityBoundaryPoint(segmentIndex) ||
-            object.isVisibilityBoundaryPoint(segmentIndex + 1)
+            segmentIndex >= object.points3D.length - 1
         ) {
             return;
         }

@@ -42,3 +42,6 @@ frontend/**/vite.config.local.*
 
 ### Model weights ###
 *.pth
+
+# Local browser performance reports can include machine-specific timing data.
+artifacts/performance/
