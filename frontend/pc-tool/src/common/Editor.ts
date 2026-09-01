@@ -74,6 +74,9 @@ function buildSyncedUserDataPatch(
         syncYawOffsetDeg: fresh.syncYawOffsetDeg,
         syncXOffsetM: fresh.syncXOffsetM,
         syncYOffsetM: fresh.syncYOffsetM,
+        // A C-key orientation change is consumed by the backend during fixed-size sync.
+        // Explicitly clear any local one-shot marker after the server refresh.
+        pendingSyncQuarterTurns: undefined,
         occluded: fresh.occluded === true,
         syncDirty: fresh.syncDirty === true,
         reviewedCorrect: fresh.reviewedCorrect === true,
@@ -605,7 +608,7 @@ export default class Editor extends BaseEditor {
         if (!framesToSave.some((frame) => String(frame.id) === String(sourceFrame.id))) {
             framesToSave.push(sourceFrame);
         }
-        const saved = await this.saveObject(framesToSave, true, true);
+        const saved = await this.saveTrackObjectsForSync(framesToSave, trackId);
         if (!saved) {
             return;
         }
@@ -639,7 +642,7 @@ export default class Editor extends BaseEditor {
 
         let data: any;
         try {
-            data = await api.getDataObjectBatch(frames.map((f) => f.id));
+            data = await api.getSyncTrackObjectBatch(frames.map((f) => f.id), trackId);
         } catch (e) {
             console.warn('refreshTrackFromServer: fetch failed', e);
             return;
@@ -865,6 +868,57 @@ export default class Editor extends BaseEditor {
         // Use a dedicated event: normal ANNOTATE_CHANGE listeners require an objects array.
         this.dispatchEvent({ type: Event.TRACK_SYNC_COMPLETE, data: { trackId } });
         this.pc.render();
+    }
+
+    /**
+     * Ctrl+Y is an object-level operation.  The regular save path serializes every
+     * annotation in a frame, including the derived 2D image projections of the
+     * selected vehicle.  Save only the syncable 3D objects for this track instead.
+     * Frame-level dirty state remains intact so an ordinary save can still persist
+     * unrelated edits later.
+     */
+    private async saveTrackObjectsForSync(frames: IFrame[], trackId: string): Promise<boolean> {
+        if (this.bsState.saving) return false;
+        const dataInfos = frames
+            .map((frame) => {
+                const trackObjects = (this.dataManager.getFrameObject(frame.id) || []).filter(
+                    (object) =>
+                        (object instanceof Box || isSyncableGroundShape(object)) &&
+                        object.userData?.trackId === trackId,
+                );
+                const objects = utils.convertAnnotate2Object(trackObjects, this).map((object) => {
+                    const classConfig = this.getClassType(object.classId || object.classType || '');
+                    const objectV2 = utils.translateToObjectV2(object, classConfig);
+                    return {
+                        id: object.uuid || undefined,
+                        frontId: object.frontId,
+                        classId: classConfig?.id,
+                        source: object.modelRun ? 'MODEL' : 'ARTIFICIAL',
+                        sourceId: object.sourceId,
+                        sourceType: object.sourceType,
+                        promoteToHuman: object.manualModified === true,
+                        classAttributes: objectV2,
+                    };
+                });
+                return { dataId: frame.id, objects, dataAnnotations: [] };
+            })
+            .filter((dataInfo) => dataInfo.objects.length > 0);
+        if (dataInfos.length === 0) return true;
+
+        this.bsState.saving = true;
+        try {
+            const keyMap = await api.saveObject({
+                datasetId: this.bsState.datasetId,
+                dataInfos,
+            });
+            this.updateBackId(keyMap);
+            return true;
+        } catch (error) {
+            console.error('track sync source save failed', error);
+            return false;
+        } finally {
+            this.bsState.saving = false;
+        }
     }
 
     needSave(frames?: IFrame[]) {

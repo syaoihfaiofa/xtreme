@@ -7,7 +7,6 @@ import PointCloud from '../PointCloud';
 import { Event } from '../config';
 import type { ITransform } from '../type';
 import PointsMaterial from '../material/PointsMaterial';
-import * as _ from 'lodash';
 
 export let axisUpInfo = {
     x: {
@@ -41,6 +40,8 @@ export type axisType = keyof typeof axisUpInfo;
 
 // const defaultActions: string[] = [];
 const defaultActions = ['resize-translate'];
+// Keep the midpoint insertion control clear of the two vertex controls.
+const MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX = 36;
 
 export default class SideRenderView extends Render {
     container: HTMLDivElement;
@@ -106,11 +107,11 @@ export default class SideRenderView extends Render {
             this.needFit &&
             this.enableFit
         ) {
-            // Keyboard X/Z updates rotation only.  Re-fitting here recomputes the
-            // orthographic range from the rotated screen bounds, which makes the
-            // top view look as though it zooms on every rotation step.
+            // Z/X rotates only the box. Keep the current orthographic range so its
+            // behavior matches mouse rotation instead of visibly zooming every step,
+            // while still re-aligning every side-view camera to the rotated object.
             if (transform?.rotation && !transform.position && !transform.scale) {
-                this.updateProjectRect();
+                this.fitObjectKeepViewport();
                 this.render();
                 return;
             }
@@ -146,7 +147,9 @@ export default class SideRenderView extends Render {
         this.renderer.setPixelRatio(pointCloud.pixelRatio);
         this.renderer.setSize(this.width, this.height);
         this.container.appendChild(this.renderer.domElement);
-        this.renderer.domElement.addEventListener('pointerdown', this.onHeightPointerDown, true);
+        // Listen on the container so Shift-drag also works when the transparent SVG edit
+        // overlay is the event target instead of the WebGL canvas.
+        this.container.addEventListener('pointerdown', this.onHeightPointerDown, true);
         if (!this.container.style.position) this.container.style.position = 'relative';
         this.vertexHandleLayer = document.createElement('div');
         this.vertexHandleLayer.style.cssText =
@@ -306,6 +309,17 @@ export default class SideRenderView extends Render {
         // this.render();
     }
 
+    private fitObjectKeepViewport(): void {
+        const { left, right, top, bottom } = this.camera;
+        this.fitObject();
+        this.camera.left = left;
+        this.camera.right = right;
+        this.camera.top = top;
+        this.camera.bottom = bottom;
+        this.camera.updateProjectionMatrix();
+        this.cameraHelper?.update();
+    }
+
     updateCameraProject() {
         let { projectRect } = this;
         let rectWidth = projectRect.max.x - projectRect.min.x;
@@ -338,6 +352,27 @@ export default class SideRenderView extends Render {
         // this.camera.updateMatrixWorld();
         // this.camera.far = 0;
         this.cameraHelper?.update();
+    }
+
+    focusSelectedGroundPolylineVertex(): void {
+        const selected = this.getSelectedGroundPolylineVertex?.();
+        if (!selected || selected.object !== this.object) return;
+        const point = selected.object.points3D[selected.index];
+        if (!point) return;
+
+        selected.object.updateMatrixWorld();
+        this.camera.updateMatrixWorld();
+        const projected = point.clone().applyMatrix4(selected.object.matrixWorld).project(this.camera);
+        const halfWidth = (this.camera.right - this.camera.left) / 2;
+        const halfHeight = (this.camera.top - this.camera.bottom) / 2;
+        const right = new THREE.Vector3(1, 0, 0).transformDirection(this.camera.matrixWorld);
+        const up = new THREE.Vector3(0, 1, 0).transformDirection(this.camera.matrixWorld);
+        // Shift the orthographic camera by the point's current screen offset, placing
+        // the selected vertex at the centre without changing its scale or orientation.
+        this.camera.position
+            .addScaledVector(right, projected.x * halfWidth)
+            .addScaledVector(up, projected.y * halfHeight);
+        this.camera.updateMatrixWorld();
     }
 
     updateSize() {
@@ -418,10 +453,17 @@ export default class SideRenderView extends Render {
             let oldDepthTest = material.depthTest;
             let oldHasFilterBox = material.getUniforms('hasFilterBox');
             let oldType = material.getUniforms('boxInfo').type;
+            let oldHasOcclusionClip = material.getUniforms('hasOcclusionClip');
+            const occlusionAxis = new THREE.Vector3();
+            const axisValue = this.axis.replace('-', '') as 'x' | 'y' | 'z';
+            occlusionAxis[axisValue] = 1;
 
             material.depthTest = false;
             material.setUniforms({
                 hasFilterBox: 1,
+                hasOcclusionClip: 1,
+                occlusionAxis,
+                occlusionDirection: this.axis.startsWith('-') ? -1 : 1,
                 boxInfo: {
                     type: 0,
                     min: bbox.min,
@@ -433,7 +475,11 @@ export default class SideRenderView extends Render {
             try {
                 this.renderer.render(groupPoint, this.camera);
             } finally {
-                material.setUniforms({ hasFilterBox: oldHasFilterBox, boxInfo: { type: oldType } });
+                material.setUniforms({
+                    hasFilterBox: oldHasFilterBox,
+                    hasOcclusionClip: oldHasOcclusionClip,
+                    boxInfo: { type: oldType },
+                });
                 material.depthTest = oldDepthTest;
             }
 
@@ -461,7 +507,7 @@ export default class SideRenderView extends Render {
         this.cameraHelper?.dispose();
         this.renderer.dispose();
         this.renderer.forceContextLoss();
-        this.renderer.domElement.removeEventListener('pointerdown', this.onHeightPointerDown, true);
+        this.container.removeEventListener('pointerdown', this.onHeightPointerDown, true);
         this.clearHeightDrag();
         this.renderer.domElement.remove();
         this.groundPolylineEditLine.geometry.dispose();
@@ -564,7 +610,9 @@ export default class SideRenderView extends Render {
                     end.x >= 0 &&
                     end.x <= this.width &&
                     end.y >= 0 &&
-                    end.y <= this.height;
+                    end.y <= this.height &&
+                    Math.hypot(end.x - start.x, end.y - start.y) >=
+                        MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX;
                 handle.style.display = canInsert ? 'block' : 'none';
                 handle.style.left = `${(start.x + end.x) / 2}px`;
                 handle.style.top = `${(start.y + end.y) / 2}px`;
@@ -650,19 +698,34 @@ export default class SideRenderView extends Render {
         const rect = this.renderer.domElement.getBoundingClientRect();
         const pointer = new THREE.Vector2(event.clientX - rect.left, event.clientY - rect.top);
         let midpoint: THREE.Vector3 | null = null;
-        let nearestDistance = 10;
+        let nearestDistance = 18;
         for (let index = 0; index < object.points3D.length - 1; index++) {
             if (object.isVisibilityBoundaryPoint(index) || object.isVisibilityBoundaryPoint(index + 1)) continue;
-            const start = this.cameraToCanvas(object.points3D[index].clone().applyMatrix4(object.matrixWorld));
-            const end = this.cameraToCanvas(object.points3D[index + 1].clone().applyMatrix4(object.matrixWorld));
-            const distance = distanceToScreenSegment(pointer, start, end);
-            if (distance < nearestDistance) {
-                nearestDistance = distance;
-                midpoint = object.points3D[index]
-                    .clone()
-                    .lerp(object.points3D[index + 1], 0.5)
-                    .applyMatrix4(object.matrixWorld);
+            const segmentStarts = [object.points3D[index]];
+            const segmentEnds = [object.points3D[index + 1]];
+            // Once a wall has height, its top outline is the most natural handle for
+            // subsequent adjustments.  Treat it exactly like the ground segment.
+            if (object.wallHeight > 0) {
+                const heightOffset = new THREE.Vector3(0, 0, object.wallHeight);
+                segmentStarts.push(object.points3D[index].clone().add(heightOffset));
+                segmentEnds.push(object.points3D[index + 1].clone().add(heightOffset));
             }
+            segmentStarts.forEach((segmentStart, lineIndex) => {
+                const start = this.cameraToCanvas(
+                    segmentStart.clone().applyMatrix4(object.matrixWorld),
+                );
+                const end = this.cameraToCanvas(
+                    segmentEnds[lineIndex].clone().applyMatrix4(object.matrixWorld),
+                );
+                const distance = distanceToScreenSegment(pointer, start, end);
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    midpoint = segmentStart
+                        .clone()
+                        .lerp(segmentEnds[lineIndex], 0.5)
+                        .applyMatrix4(object.matrixWorld);
+                }
+            });
         }
         if (!midpoint) return;
         const base = this.cameraToCanvas(midpoint.clone());

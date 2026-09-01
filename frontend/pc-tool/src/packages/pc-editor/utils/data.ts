@@ -65,6 +65,7 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
                 updateData.syncYawOffsetDeg = userData.syncYawOffsetDeg;
                 updateData.syncXOffsetM = userData.syncXOffsetM;
                 updateData.syncYOffsetM = userData.syncYOffsetM;
+                updateData.pendingSyncQuarterTurns = userData.pendingSyncQuarterTurns;
                 updateData.occluded = userData.occluded === true;
                 // updateData.resultType = userData.resultType;
                 // updateData.isStandard = userData.isStandard;

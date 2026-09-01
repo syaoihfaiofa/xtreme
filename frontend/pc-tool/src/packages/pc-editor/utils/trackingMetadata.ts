@@ -21,6 +21,7 @@ const TRACKING_METADATA_KEYS: readonly (keyof IUserData)[] = [
     'syncYawOffsetDeg',
     'syncXOffsetM',
     'syncYOffsetM',
+    'pendingSyncQuarterTurns',
     'occluded',
     'reviewedCorrect',
     'reviewedCorrectVisible',

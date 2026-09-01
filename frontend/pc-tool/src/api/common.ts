@@ -114,6 +114,53 @@ export async function getDataObjectBatch(dataIds: string[] | string | number) {
     });
 }
 
+/** Lightweight read used by Ctrl+Y track sync; excludes derived 2D projections. */
+export async function getSyncTrackObjectBatch(
+    dataIds: string[] | string | number,
+    trackId: string,
+) {
+    const normalizedIds = normalizeDataIds(dataIds);
+    if (!trackId || normalizedIds.length === 0) {
+        return { ...EMPTY_OBJECT_RESULT, queryTime: Date.now() };
+    }
+    const batchSize = 200;
+    const objectsMap: Record<string, IObject[]> = {};
+    for (let start = 0; start < normalizedIds.length; start += batchSize) {
+        const batchIds = normalizedIds.slice(start, start + batchSize);
+        const response = await get<any>(
+            `/api/annotate/data/sync/trackObjects?${queryStr({ dataIds: batchIds, trackId })}`,
+        );
+        const rows = Array.isArray(response) ? response : response?.data || [];
+        rows.forEach((row: any) => {
+            const dataId = String(row.dataId);
+            objectsMap[dataId] = (row.objects || [])
+                .map((object: any) => {
+                    const { id, sourceId, sourceType, classId } = object;
+                    const classAttributes = object.classAttributes || {};
+                    const { meta, contour, ...rest } = classAttributes;
+                    try {
+                        return utils.translateToObject(
+                            Object.assign(
+                                { backId: id, sourceId, sourceType, classId },
+                                rest,
+                                meta || {},
+                                contour || {},
+                            ),
+                        );
+                    } catch (error) {
+                        console.warn('skip invalid synced track object', { dataId, id, error });
+                        return null;
+                    }
+                })
+                .filter((item: IObject | null): item is IObject => item != null);
+        });
+    }
+    normalizedIds.forEach((dataId) => {
+        objectsMap[dataId] ||= [];
+    });
+    return { objectsMap, classificationMap: {}, queryTime: Date.now() };
+}
+
 export async function getDataObject(dataIds: string[] | string | number) {
     const normalizedIds = normalizeDataIds(dataIds);
     if (normalizedIds.length === 0) {

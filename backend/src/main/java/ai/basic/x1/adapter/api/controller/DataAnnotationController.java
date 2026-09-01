@@ -8,6 +8,7 @@ import ai.basic.x1.adapter.dto.response.DataAnnotationResultDTO;
 import ai.basic.x1.entity.DataAnnotationClassificationBO;
 import ai.basic.x1.entity.DataAnnotationObjectBO;
 import ai.basic.x1.usecase.DataAnnotationUseCase;
+import ai.basic.x1.usecase.DataAnnotationObjectUseCase;
 import ai.basic.x1.usecase.TrackSyncUseCase;
 import ai.basic.x1.util.DefaultConverter;
 import cn.hutool.core.collection.CollUtil;
@@ -34,6 +35,9 @@ public class DataAnnotationController {
     DataAnnotationUseCase dataAnnotationUseCase;
 
     @Autowired
+    DataAnnotationObjectUseCase dataAnnotationObjectUseCase;
+
+    @Autowired
     private TrackSyncUseCase trackSyncUseCase;
 
     @PostMapping("save")
@@ -58,6 +62,24 @@ public class DataAnnotationController {
     @GetMapping("trackFrameIds")
     public List<Long> trackFrameIds(@RequestParam List<Long> dataIds, @RequestParam String trackId) {
         return dataAnnotationUseCase.findTrackDataIds(dataIds, trackId);
+    }
+
+    @GetMapping("sync/trackObjects")
+    public List<DataAnnotationResultDTO> syncTrackObjects(
+            @RequestParam List<Long> dataIds,
+            @RequestParam String trackId) {
+        var objectsByDataId = dataAnnotationObjectUseCase.findSyncableTrackObjects(dataIds, trackId)
+                .stream()
+                .collect(Collectors.groupingBy(DataAnnotationObjectBO::getDataId));
+        return dataIds.stream()
+                .map(dataId -> DataAnnotationResultDTO.builder()
+                        .dataId(dataId)
+                        .classificationValues(List.of())
+                        .objects(DefaultConverter.convert(
+                                objectsByDataId.getOrDefault(dataId, List.of()),
+                                DataAnnotationObjectDTO.class))
+                        .build())
+                .collect(Collectors.toList());
     }
 
     @PostMapping("sync")

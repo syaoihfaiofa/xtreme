@@ -691,14 +691,18 @@ export default class DataResource {
             targeted: targetIndices.has(index),
         }))).forEach(({ index }) => this.unloadFrame(index));
 
-        // Keep the selected/dirty resources, but enforce a byte budget for all other entries.
+        // The configured auto-load window is an explicit user request.  Do not silently
+        // shrink it just because its point clouds exceed the general cache budget: that
+        // made a requested 90-frame window retain only roughly 30 frames.  Resources
+        // outside the window have already been evicted above.
         if (overBudget()) {
             orderEvictionCandidates(loadedIndices.map((index) => ({
                 index,
                 distance: Math.abs(index - fromIndex),
                 time: this.dataMap[this.editor.state.frames[index].id]?.time || 0,
                 protected: this.isFrameProtected(index),
-            })), false).some(({ index }) => {
+                targeted: targetIndices.has(index),
+            }))).some(({ index }) => {
                     this.unloadFrame(index);
                     return !overBudget();
                 });

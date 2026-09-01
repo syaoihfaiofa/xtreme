@@ -56,6 +56,8 @@ import java.util.stream.Collectors;
 public class TrackSyncUseCase {
 
     private static final double DEFAULT_STATIC_SYNC_RADIUS_M = 12.0;
+    /** Do not propagate a static target between vertically separated road levels. */
+    private static final double STATIC_SYNC_VERTICAL_TOLERANCE_M = 2.0;
     private static final double DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M = 15.0;
     private static final int DEFAULT_SYNC_MAX_DISAPPEAR_GAP = 50;
     private static final int DEFAULT_SYNC_LOCATION_GAP_MS = 200;
@@ -68,6 +70,7 @@ public class TrackSyncUseCase {
     private static final String MOTION_STATIC = "STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
     private static final String MOTION_DYNAMIC_VARIABLE_SIZE = "DYNAMIC_VARIABLE_SIZE";
+    private static final String PENDING_SYNC_QUARTER_TURNS = "pendingSyncQuarterTurns";
     private static final String GROUND_POLYGON = "GROUND_POLYGON";
     private static final String GROUND_POLYLINE = "GROUND_POLYLINE";
 
@@ -389,7 +392,8 @@ public class TrackSyncUseCase {
                     existingRows.duplicateObjectIds,
                     maxDisappearGap,
                     segmentByDataId,
-                    locationGapMs
+                    locationGapMs,
+                    getPendingSyncQuarterTurns(attrs)
             );
         }
     }
@@ -1354,7 +1358,7 @@ public class TrackSyncUseCase {
             // visible/physical edge is within the configured distance.
             double distance = distanceToBoxFootprint(tgtLocalX, tgtLocalY, tgtLocalYaw, size3D);
 
-            if (distance > syncRadius) {
+            if (!isWithinStaticSyncRange(distance, syncRadius, worldZ, pose.z, syncUseZ)) {
                 if (existing != null && !frame.getId().equals(source.getDataId())) {
                     toDeleteIds.add(existing.getId());
                 }
@@ -1405,6 +1409,17 @@ public class TrackSyncUseCase {
         return applyChanges(toInsert, toUpdate, toDeleteIds);
     }
 
+    static boolean isWithinStaticSyncRange(
+            double horizontalDistance,
+            double horizontalRadius,
+            double objectWorldZ,
+            double targetSensorWorldZ,
+            boolean syncUseZ) {
+        if (horizontalDistance > horizontalRadius) return false;
+        return !syncUseZ
+                || Math.abs(objectWorldZ - targetSensorWorldZ) <= STATIC_SYNC_VERTICAL_TOLERANCE_M;
+    }
+
     private void updateStaticMetadata(JSONObject attrs, DataAnnotationObjectBO source, JSONObject size3D,
                                       double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
                                       double syncYawOffset, double syncXOffset, double syncYOffset,
@@ -1444,7 +1459,8 @@ public class TrackSyncUseCase {
     private SyncResult syncFixedSize(DataAnnotationObjectBO source, JSONObject size3D, List<DataInfo> frames,
                                 Map<Long, DataAnnotationObject> existingByDataId,
                                 List<Long> duplicateObjectIds, int maxDisappearGap,
-                                Map<Long, Integer> segmentByDataId, int locationGapMs) {
+                                Map<Long, Integer> segmentByDataId, int locationGapMs,
+                                int pendingQuarterTurns) {
         var toUpdate = new ArrayList<DataAnnotationObject>();
         for (DataInfo frame : frames) {
             var existing = existingByDataId.get(frame.getId());
@@ -1457,6 +1473,12 @@ public class TrackSyncUseCase {
                 continue;
             }
             existingContour.set("size3D", JSONUtil.parseObj(JSONUtil.toJsonStr(size3D)));
+            if (!frame.getId().equals(source.getDataId()) && pendingQuarterTurns != 0) {
+                applyFixedSizeOrientationTurn(existingContour, pendingQuarterTurns);
+            }
+            // This is an action marker, not persistent track metadata.  Clearing it on every
+            // row makes a later Sync Now idempotent.
+            existingAttrs.remove(PENDING_SYNC_QUARTER_TURNS);
             existingAttrs.set("classId", source.getClassId());
             existingAttrs.set("motionMode", MOTION_DYNAMIC_FIXED_SIZE);
             copyDynamicSyncConfiguration(existingAttrs, source.getClassAttributes());
@@ -1466,6 +1488,29 @@ public class TrackSyncUseCase {
             toUpdate.add(existing);
         }
         return applyChanges(new ArrayList<>(), toUpdate, new ArrayList<>(duplicateObjectIds));
+    }
+
+    static void applyFixedSizeOrientationTurn(JSONObject contour, int quarterTurns) {
+        if (contour == null || quarterTurns == 0) return;
+        JSONObject rotation = contour.getJSONObject("rotation3D");
+        if (rotation == null) {
+            rotation = new JSONObject();
+            contour.set("rotation3D", rotation);
+        }
+        double yaw = getDouble(rotation, "z") + quarterTurns * Math.PI / 2.0;
+        rotation.set("z", normalizeYaw(yaw));
+    }
+
+    private static int getPendingSyncQuarterTurns(JSONObject attrs) {
+        if (attrs == null || !(attrs.get(PENDING_SYNC_QUARTER_TURNS) instanceof Number)) return 0;
+        int turns = ((Number) attrs.get(PENDING_SYNC_QUARTER_TURNS)).intValue() % 4;
+        return turns > 2 ? turns - 4 : turns < -2 ? turns + 4 : turns;
+    }
+
+    private static double normalizeYaw(double yaw) {
+        double fullTurn = Math.PI * 2.0;
+        yaw %= fullTurn;
+        return yaw < 0.0 ? yaw + fullTurn : yaw;
     }
 
     private SyncResult syncMotionModeOnly(DataAnnotationObjectBO source, String motionMode, List<DataInfo> frames,

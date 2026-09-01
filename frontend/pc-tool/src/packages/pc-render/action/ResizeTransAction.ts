@@ -37,6 +37,8 @@ export default class ResizeTransAction extends Action {
     isRotating: boolean = false;
     rotation: number = 0;
     private groundShapeStartPoints: THREE.Vector3[] = [];
+    // Keep resize edges easy to hit even when a box is only a few screen pixels tall.
+    // The hit zone is centered on the true edge, so it does not alter resize geometry.
     rectTool: RectTool = {} as RectTool;
     clearCall: ClearHandler[] = [];
     editConfig: IEditConfig = {
@@ -58,6 +60,7 @@ export default class ResizeTransAction extends Action {
         super();
         this.renderView = renderView;
         this.rectTool = new RectTool(renderView.container);
+        this.rectTool.lineSize = 12;
         this.rectTool.setOption({
             lineStyle: {
                 stroke: '#ffffff',
@@ -306,7 +309,9 @@ export default class ResizeTransAction extends Action {
         let camera = renderView.camera;
 
         dom.style.cursor = 'grab';
-        dom.addEventListener('mousedown', onmousedown);
+        // Capture before the transparent line/vertex edit overlays so a long selected
+        // ground polyline never prevents right-button canvas panning.
+        dom.addEventListener('mousedown', onmousedown, true);
         dom.addEventListener('wheel', onmousewheel);
         function onmousedown(e: MouseEvent) {
             if (!_this.isEnable() || _this.isLeft(e) || !_this.editConfig.moveCanvas) return;
@@ -349,7 +354,9 @@ export default class ResizeTransAction extends Action {
             e.stopPropagation();
 
             let maxZoom = 10;
-            let minZoom = 0.2;
+            // zoom < 1 means magnification.  Allow 20x for fine adjustment of
+            // very small targets in the three orthographic views.
+            let minZoom = 0.05;
             if (e.deltaY === 0 || !_this.editConfig.zoom) return;
             if (e.deltaY > 0) {
                 renderView.zoom = renderView.zoom * 1.1;
@@ -360,6 +367,7 @@ export default class ResizeTransAction extends Action {
             if (renderView.zoom > maxZoom) renderView.zoom = maxZoom;
             if (renderView.zoom < minZoom) renderView.zoom = minZoom;
 
+            renderView.focusSelectedGroundPolylineVertex();
             renderView.updateCameraProject();
             // renderView.needFit = false;
             _this.render();

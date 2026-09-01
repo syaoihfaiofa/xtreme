@@ -5,6 +5,7 @@ import GroundPolyline from '../objects/GroundPolyline';
 import MainRenderView from '../renderView/MainRenderView';
 import {
     ISnapHeightReference,
+    selectGroundPreferredContinuousHit,
     selectHeightContinuousHit,
 } from '../utils/groundPolylineSnap';
 import Action from './Action';
@@ -12,6 +13,9 @@ import OrbitControlsAction from './OrbitControlsAction';
 
 const SNAP_THRESHOLD_METERS = 0.5;
 const EXTEND_HANDLE_OFFSET_PX = 14;
+// A segment insertion handle sits at the midpoint.  Keep it hidden until it
+// has enough room to stay clear of both vertex handles; zooming in reveals it.
+const MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX = 36;
 
 type ExtendEnd = 'start' | 'end';
 
@@ -111,7 +115,9 @@ export default class EditGroundPolylineAction extends Action {
             const canInsert =
                 !this.extendEnd &&
                 start.visible &&
-                end.visible;
+                end.visible &&
+                Math.hypot(end.x - start.x, end.y - start.y) >=
+                    MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX;
             handle.style.display = canInsert ? 'block' : 'none';
             handle.style.left = `${(start.x + end.x) / 2}px`;
             handle.style.top = `${(start.y + end.y) / 2}px`;
@@ -425,7 +431,7 @@ export default class EditGroundPolylineAction extends Action {
         if (!object || !this.extendEnd) return;
         const endpointIndex = this.extendEnd === 'start' ? 0 : object.points3D.length - 1;
         const reference = this.createHeightReference(object, endpointIndex);
-        const worldPoint = this.pickPointCloud(event, reference);
+        const worldPoint = this.pickPointCloud(event, reference, true);
         if (!worldPoint) return;
         if (object.parent !== this.renderView.pointCloud.annotate3D) return;
         object.updateMatrixWorld();
@@ -533,6 +539,7 @@ export default class EditGroundPolylineAction extends Action {
     private pickPointCloud(
         event: MouseEvent | PointerEvent,
         reference: ISnapHeightReference,
+        preferGround = false,
     ): THREE.Vector3 | null {
         const rect = this.renderView.renderer.domElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return null;
@@ -546,7 +553,9 @@ export default class EditGroundPolylineAction extends Action {
             this.renderView.pointCloud.groupPoints,
             true,
         );
-        const hit = selectHeightContinuousHit(hits, reference);
+        const hit = preferGround
+            ? selectGroundPreferredContinuousHit(hits, reference)
+            : selectHeightContinuousHit(hits, reference);
         if (hit?.point) return hit.point.clone();
 
         // Keep editing possible where the point cloud is sparse or absent: estimate the

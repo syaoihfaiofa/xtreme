@@ -76,6 +76,40 @@ public class DataAnnotationObjectUseCase {
     }
 
     /**
+     * Returns only the 3D object(s) that participate in a track sync.  This is
+     * intentionally narrower than the normal frame load: image projections
+     * carry the same trackId but are derived display data and need not travel
+     * through the Ctrl+Y sync round trip.
+     */
+    public List<DataAnnotationObjectBO> findSyncableTrackObjects(List<Long> dataIds, String trackId) {
+        if (CollUtil.isEmpty(dataIds) || ObjectUtil.isEmpty(trackId)) {
+            return List.of();
+        }
+        return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId, dataIds))
+                .stream()
+                .filter(this::isSyncableTrackObject)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .map(object -> DefaultConverter.convert(object, DataAnnotationObjectBO.class))
+                .collect(Collectors.toList());
+    }
+
+    private boolean isSyncableTrackObject(DataAnnotationObject object) {
+        if (object.getClassAttributes() == null) {
+            return false;
+        }
+        var attrs = object.getClassAttributes();
+        var contour = attrs.getJSONObject("contour");
+        if (contour != null && contour.getJSONObject("center3D") != null
+                && contour.getJSONObject("size3D") != null) {
+            return true;
+        }
+        String type = attrs.getStr("type");
+        return ("GROUND_POLYGON".equals(type) || "GROUND_POLYLINE".equals(type))
+                && contour != null && contour.getJSONArray("points") != null;
+    }
+
+    /**
      * @param dataAnnotationObjectBOs object that need insert or update
      * @param deleteDataIds           data id that need delete all objects
      */

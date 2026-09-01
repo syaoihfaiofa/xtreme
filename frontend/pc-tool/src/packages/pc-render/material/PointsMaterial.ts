@@ -76,6 +76,10 @@ function getShaderCode(
     // filter box
     uniform float hasFilterBox;
     uniform FilterBox boxInfo;
+    // In a side view, hide only points between the camera and the selected box.
+    uniform float hasOcclusionClip;
+    uniform vec3 occlusionAxis;
+    uniform float occlusionDirection;
 
     // camera region
     uniform float hasCameraRegion;
@@ -201,6 +205,20 @@ function getShaderCode(
             }
             
         }
+        if(hasOcclusionClip > 0.0){
+            vec3 boxPos = (boxInfo.matrix * vec4(position, 1.0)).xyz;
+            vec3 inBounds = step(boxInfo.min, boxPos) * step(boxPos, boxInfo.max);
+            // Only clip inside the box's projected footprint.  This retains nearby
+            // context while removing points that can visually cover this object.
+            float withinProjection = dot(inBounds, vec3(1.0) - abs(occlusionAxis));
+            float frontFace = occlusionDirection > 0.0
+                ? dot(boxInfo.max, occlusionAxis)
+                : dot(boxInfo.min, occlusionAxis);
+            float pointDepth = dot(boxPos, occlusionAxis);
+            if(withinProjection >= 2.0 && occlusionDirection * (pointDepth - frontFace) > 0.0){
+                vDiscard = 1.0;
+            }
+        }
         vColor *= brightness;
         gl_PointSize = vPointSize;
         if(vDiscard > 0.0) {
@@ -258,6 +276,9 @@ export interface IUniformOption {
         color?: THREE.Color;
         matrix?: THREE.Matrix4;
     };
+    hasOcclusionClip?: -1 | 1;
+    occlusionAxis?: THREE.Vector3;
+    occlusionDirection?: -1 | 1;
     heightRange?: THREE.Vector2;
     pointHeight?: THREE.Vector2;
     edgeColor?: [string, string];
@@ -313,6 +334,9 @@ export default class PointsMaterial extends THREE.RawShaderMaterial {
                         matrix: new THREE.Matrix4(),
                     },
                 },
+                hasOcclusionClip: { value: -1 },
+                occlusionAxis: { value: new THREE.Vector3(0, 0, 1) },
+                occlusionDirection: { value: 1 },
                 edgeColor: {
                     value: ['#000dff', '#ff0000'].map((color) => new THREE.Color(color)),
                 },

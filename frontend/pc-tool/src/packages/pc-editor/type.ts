@@ -138,6 +138,8 @@ export interface IObjectV2 {
     syncYawOffsetDeg?: number;
     syncXOffsetM?: number;
     syncYOffsetM?: number;
+    /** One-shot C-key rotation delta consumed by fixed-size track sync. */
+    pendingSyncQuarterTurns?: number;
     autoCurbOcclusionPending?: boolean;
     autoCurbOcclusionPointCloudPending?: boolean;
     occluded?: boolean;
@@ -189,6 +191,8 @@ export interface IUserData {
     syncYawOffsetDeg?: number;
     syncXOffsetM?: number;
     syncYOffsetM?: number;
+    /** One-shot C-key rotation delta consumed by fixed-size track sync. */
+    pendingSyncQuarterTurns?: number;
     autoCurbOcclusionPending?: boolean;
     autoCurbOcclusionPointCloudPending?: boolean;
     occluded?: boolean;

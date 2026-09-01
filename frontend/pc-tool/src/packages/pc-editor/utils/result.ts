@@ -187,6 +187,7 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         syncYawOffsetDeg: object.syncYawOffsetDeg,
         syncXOffsetM: object.syncXOffsetM,
         syncYOffsetM: object.syncYOffsetM,
+        pendingSyncQuarterTurns: object.pendingSyncQuarterTurns,
         autoCurbOcclusionPending: object.autoCurbOcclusionPending === true,
         autoCurbOcclusionPointCloudPending: object.autoCurbOcclusionPointCloudPending === true,
         occluded: object.occluded === true,
@@ -297,6 +298,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.syncYawOffsetDeg = obj.syncYawOffsetDeg;
         userData.syncXOffsetM = obj.syncXOffsetM;
         userData.syncYOffsetM = obj.syncYOffsetM;
+        userData.pendingSyncQuarterTurns = obj.pendingSyncQuarterTurns;
         userData.autoCurbOcclusionPending = obj.autoCurbOcclusionPending === true;
         userData.autoCurbOcclusionPointCloudPending = obj.autoCurbOcclusionPointCloudPending === true;
         userData.occluded = obj.occluded === true;
@@ -510,6 +512,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             syncYawOffsetDeg: userData.syncYawOffsetDeg,
             syncXOffsetM: userData.syncXOffsetM,
             syncYOffsetM: userData.syncYOffsetM,
+            pendingSyncQuarterTurns: userData.pendingSyncQuarterTurns,
             autoCurbOcclusionPending: userData.autoCurbOcclusionPending === true,
             autoCurbOcclusionPointCloudPending: userData.autoCurbOcclusionPointCloudPending === true,
             occluded: userData.occluded === true,

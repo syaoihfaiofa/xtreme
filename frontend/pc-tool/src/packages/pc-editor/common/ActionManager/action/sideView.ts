@@ -1,5 +1,7 @@
 import { Box, GroundPolygon, GroundPolyline } from 'pc-render';
 import Editor from '../../../Editor';
+import { MotionMode } from '../../../type';
+import { getDefaultMotionMode } from '../../../utils';
 import { define } from '../define';
 import * as THREE from 'three';
 
@@ -93,7 +95,21 @@ export const rotationZRight90 = define({
         scale.x = scale.y;
         scale.y = temp;
 
-        editor.cmdManager.execute('update-transform', { object, transform: { rotation, scale } });
+        editor.cmdManager.withGroup(() => {
+            editor.cmdManager.execute('update-transform', { object, transform: { rotation, scale } });
+            // Fixed-size sync normally copies dimensions only.  Record that this dimension
+            // change is a C-key orientation switch, so sync can apply the same yaw delta to
+            // every target frame instead of leaving swapped dimensions at the old heading.
+            const motionMode =
+                object.userData?.motionMode || getDefaultMotionMode(object.userData?.classType);
+            if (motionMode === MotionMode.DYNAMIC_FIXED_SIZE) {
+                const previous = Number(object.userData.pendingSyncQuarterTurns) || 0;
+                editor.cmdManager.execute('update-object-user-data', {
+                    objects: object,
+                    data: { pendingSyncQuarterTurns: previous - 1 },
+                });
+            }
+        });
     },
 });
 

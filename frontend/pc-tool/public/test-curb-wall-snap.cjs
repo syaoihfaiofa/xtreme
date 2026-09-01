@@ -22,7 +22,10 @@ new Function('module', 'exports', compiled)(
     loadedModule.exports,
 );
 
-const { selectHeightContinuousHit } = loadedModule.exports;
+const {
+    selectGroundPreferredContinuousHit,
+    selectHeightContinuousHit,
+} = loadedModule.exports;
 const reference = { anchorZ: 0, neighborZs: [0.1, -0.1] };
 const roofHit = { distance: 1, point: { z: 3 } };
 const groundHit = { distance: 2, point: { z: 0.2 } };
@@ -41,6 +44,16 @@ assert.strictEqual(
         reference,
     )?.point.z,
     0.45,
+);
+
+const shallowRoofHit = { distance: 1, point: { z: 0.35 } };
+assert.strictEqual(
+    selectGroundPreferredContinuousHit([shallowRoofHit, groundHit], reference),
+    groundHit,
+);
+assert.strictEqual(
+    selectGroundPreferredContinuousHit([shallowRoofHit], reference),
+    shallowRoofHit,
 );
 
 console.log('curb wall snap tests passed');

@@ -57,6 +57,22 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void fixedSizeSync_appliesPendingCKeyTurnToTargetYaw() {
+        JSONObject contour = new JSONObject().set("rotation3D", point(0, 0, Math.PI / 4));
+
+        TrackSyncUseCase.applyFixedSizeOrientationTurn(contour, -1);
+
+        assertEquals(Math.PI * 7 / 4, contour.getJSONObject("rotation3D").getDouble("z"), 0.000000001);
+    }
+
+    @Test
+    void staticSync_rejectsCrossLevelTargetBeyondTwoMeters() {
+        assertTrue(TrackSyncUseCase.isWithinStaticSyncRange(11.9, 12, 8, 6, true));
+        assertFalse(TrackSyncUseCase.isWithinStaticSyncRange(11.9, 12, 8, 5.9, true));
+        assertTrue(TrackSyncUseCase.isWithinStaticSyncRange(11.9, 12, 8, 0, false));
+    }
+
+    @Test
     void projectGroundPoints_preservesPolylineOrderAcrossPoses() {
         JSONArray sourcePoints = new JSONArray();
         sourcePoints.add(point(1, 2, 3));
