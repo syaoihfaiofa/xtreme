@@ -49,6 +49,18 @@ export async function saveObject(config: any) {
     return keyMap;
 }
 
+export async function saveSyncObjects(config: any) {
+    const response = await post('/api/annotate/data/sync/save', config);
+    const rows = response?.data || [];
+    const keyMap = {} as Record<string, Record<string, string>>;
+    rows.forEach((row: any) => {
+        const dataId = row.dataId;
+        keyMap[dataId] = keyMap[dataId] || {};
+        keyMap[dataId][row.frontId] = row.id;
+    });
+    return keyMap;
+}
+
 export interface ISyncObjectResult {
     affectedDataIds: Array<string | number>;
     syncVersion: number;

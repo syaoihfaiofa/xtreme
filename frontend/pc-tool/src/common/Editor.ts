@@ -907,7 +907,7 @@ export default class Editor extends BaseEditor {
 
         this.bsState.saving = true;
         try {
-            const keyMap = await api.saveObject({
+            const keyMap = await api.saveSyncObjects({
                 datasetId: this.bsState.datasetId,
                 dataInfos,
             });

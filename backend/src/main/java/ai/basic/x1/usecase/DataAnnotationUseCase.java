@@ -47,6 +47,16 @@ public class DataAnnotationUseCase {
         return dataAnnotationObjectUseCase.save(dataAnnotationObjectBOs, deletedDataIds);
     }
 
+    @Transactional(rollbackFor = Exception.class)
+    public List<DataAnnotationObjectBO> savePartialDataAnnotation(
+            List<DataAnnotationObjectBO> dataAnnotationObjectBOs) {
+        Set<Long> dataIds = dataAnnotationObjectBOs.stream()
+                .map(DataAnnotationObjectBO::getDataId)
+                .collect(Collectors.toSet());
+        dataEditUseCase.checkLock(dataIds);
+        return dataAnnotationObjectUseCase.savePartial(dataAnnotationObjectBOs);
+    }
+
     public List<DataAnnotationResultBO> findByDataIds(List<Long> dataIds) {
         if (CollUtil.isEmpty(dataIds)) {
             return List.of();

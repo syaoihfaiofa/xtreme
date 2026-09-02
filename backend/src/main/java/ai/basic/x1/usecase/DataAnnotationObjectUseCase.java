@@ -118,11 +118,19 @@ public class DataAnnotationObjectUseCase {
         Set<Long> dataIds = dataAnnotationObjectBOs.stream().map(DataAnnotationObjectBO::getDataId).collect(Collectors.toSet());
         dataIds.addAll(deleteDataIds);
         removeAllObjectByDataIds(deleteDataIds);
-        List<DataAnnotationObjectBO> dataAnnotationObjectBOS = updateDataAnnotationObject(dataAnnotationObjectBOs);
+        List<DataAnnotationObjectBO> dataAnnotationObjectBOS = updateDataAnnotationObject(dataAnnotationObjectBOs, true);
         return dataAnnotationObjectBOS;
     }
 
-    private List<DataAnnotationObjectBO> updateDataAnnotationObject(List<DataAnnotationObjectBO> dataAnnotationObjectBOs) {
+    /** Update supplied objects without treating every omitted object in a frame as deleted. */
+    @Transactional(rollbackFor = Exception.class)
+    public List<DataAnnotationObjectBO> savePartial(List<DataAnnotationObjectBO> dataAnnotationObjectBOs) {
+        return updateDataAnnotationObject(dataAnnotationObjectBOs, false);
+    }
+
+    private List<DataAnnotationObjectBO> updateDataAnnotationObject(
+            List<DataAnnotationObjectBO> dataAnnotationObjectBOs,
+            boolean removeMissingObjects) {
         if (ObjectUtil.isEmpty(dataAnnotationObjectBOs)) {
             return new ArrayList<>();
         }
@@ -168,9 +176,11 @@ public class DataAnnotationObjectUseCase {
         }
         Set<Long> dataAnnotationIds = needUpdateObjectBOs.stream().map(DataAnnotationObjectBO::getId).filter(Objects::nonNull).collect(Collectors.toSet());
         Set<Long> oldIds = oldInfoMap.keySet();
-        // remove all incoming object ids, the rest are deleted
-        oldIds.removeIf(dataAnnotationIds::contains);
-        dataAnnotationObjectDAO.removeBatchByIds(oldIds);
+        if (removeMissingObjects) {
+            // A normal frame save is a complete replacement.  Omitted objects are deleted.
+            oldIds.removeIf(dataAnnotationIds::contains);
+            dataAnnotationObjectDAO.removeBatchByIds(oldIds);
+        }
         return insertObjectBOs;
     }
 

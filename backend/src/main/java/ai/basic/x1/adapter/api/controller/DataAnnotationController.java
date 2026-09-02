@@ -54,6 +54,16 @@ public class DataAnnotationController {
         return DefaultConverter.convert(result, DataAnnotationObjectResponseDTO.class);
     }
 
+    /** Object-level persistence for track sync; unlike /save it never deletes omitted labels. */
+    @PostMapping("sync/save")
+    public List<DataAnnotationObjectResponseDTO> saveSyncObjects(
+            @Validated @RequestBody ObjectResultDTO objectResultDTO) {
+        List<DataAnnotationObjectDTO> objectDTOs = convertToDataAnnotationObject(objectResultDTO);
+        List<DataAnnotationObjectBO> result = dataAnnotationUseCase.savePartialDataAnnotation(
+                DefaultConverter.convert(objectDTOs, DataAnnotationObjectBO.class));
+        return DefaultConverter.convert(result, DataAnnotationObjectResponseDTO.class);
+    }
+
     @GetMapping("listByDataIds")
     public List<DataAnnotationResultDTO> listByDataIds(@RequestParam List<Long> dataIds) {
         return DefaultConverter.convert(dataAnnotationUseCase.findByDataIds(dataIds), DataAnnotationResultDTO.class);
