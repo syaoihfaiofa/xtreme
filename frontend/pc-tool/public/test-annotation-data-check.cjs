@@ -77,6 +77,14 @@ const tinyPole = checkAnnotationBoxSize(
 assert.strictEqual(tinyPole.length, 1);
 assert.strictEqual(tinyPole[0].code, 'INVALID_SIZE');
 
+// A pole can be laid down.  Its semantic H remains the shaft (the longest
+// dimension), rather than whichever local axis happens to be Z.
+const horizontalPole = checkAnnotationBoxSize(
+    makeBox({ x: 0, y: 0, z: 1, dx: 2, dy: 0.12, dz: 0.12 }),
+    'pole',
+);
+assert.strictEqual(horizontalPole.length, 0);
+
 const hugeCar = checkAnnotationBoxSize(
     makeBox({ x: 0, y: 0, z: 1, dx: 10, dy: 1.8, dz: 1.5 }),
     'car',

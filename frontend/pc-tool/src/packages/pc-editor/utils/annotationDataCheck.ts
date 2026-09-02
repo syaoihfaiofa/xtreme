@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Box } from 'pc-render';
 
 import { ClassSizePrior } from '../../../config/annotationDataCheckConfig';
@@ -84,6 +85,41 @@ function checkSizePrior(
     return findings;
 }
 
+/**
+ * The actual world-Z span of an oriented box.  This is intentionally kept
+ * separate from a pole's semantic H (its shaft length): a horizontal pole is
+ * long, but occupies only roughly one diameter in the vertical direction.
+ */
+function getWorldVerticalSpan(box: Box, length: number, width: number, height: number): number {
+    const rotation = new THREE.Matrix4().makeRotationFromEuler(box.rotation);
+    const elements = rotation.elements;
+    return (
+        Math.abs(elements[2]) * length +
+        Math.abs(elements[6]) * width +
+        Math.abs(elements[10]) * height
+    );
+}
+
+function getSizeForClass(
+    cls: string,
+    box: Box,
+): { length: number; width: number; height: number; verticalSpan?: number } {
+    const dimensions = [box.scale.x, box.scale.y, box.scale.z];
+    if (cls !== 'pole') {
+        return { length: dimensions[0], width: dimensions[1], height: dimensions[2] };
+    }
+
+    // Pole may be laid down, so local Z is not reliably its shaft.  Its two
+    // shortest dimensions form the cross-section and the longest is its H.
+    const [length, width, height] = [...dimensions].sort((left, right) => left - right);
+    return {
+        length,
+        width,
+        height,
+        verticalSpan: getWorldVerticalSpan(box, ...dimensions),
+    };
+}
+
 export function checkAnnotationBoxSize(
     box: Box,
     className: string,
@@ -92,9 +128,7 @@ export function checkAnnotationBoxSize(
 ): AnnotationBoxSizeFinding[] {
     const findings: AnnotationBoxSizeFinding[] = [];
     const cls = resolveAnnotationClassName(className, runtimeConfig);
-    const length = box.scale.x;
-    const width = box.scale.y;
-    const height = box.scale.z;
+    const { length, width, height, verticalSpan } = getSizeForClass(cls, box);
     const dims = [length, width, height];
 
     if (!dims.every((value) => Number.isFinite(value) && value > 0)) {
@@ -115,7 +149,15 @@ export function checkAnnotationBoxSize(
 
     const prior = runtimeConfig.sizePrior[cls];
     if (prior) {
-        findings.push(...checkSizePrior(cls, length, width, height, prior));
+        findings.push(
+            ...checkSizePrior(cls, length, width, height, prior).map((finding) => ({
+                ...finding,
+                message:
+                    verticalSpan == null
+                        ? finding.message
+                        : `${finding.message}；世界 Z 向高度 ${verticalSpan.toFixed(2)}m`,
+            })),
+        );
     }
 
     if (runtimeConfig.longAxisClasses.has(cls) && width > length) {
