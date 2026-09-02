@@ -442,6 +442,7 @@
   const scrollRef = ref<Nullable<ScrollActionType>>(null);
   const total = ref<number>(0);
   const pageNo = ref<number>(1);
+  const isFetching = ref<boolean>(false);
   let fetchListRequestId = 0;
   const modelrunOption = ref<any>();
   const annotationStatus = ref<any>();
@@ -525,10 +526,9 @@
     });
   };
   const loadMore = () => {
-    if (canload.value) {
-      pageNo.value++;
-      fetchList(filterForm, true);
-    }
+    if (!canload.value || isFetching.value || list.value.length >= total.value) return;
+    pageNo.value++;
+    fetchList(filterForm, true);
   };
   onMounted(async () => {
     fetchStatusNum();
@@ -612,10 +612,11 @@
 
   const fetchList = async (filter?, fetchType?) => {
     const requestId = ++fetchListRequestId;
+    isFetching.value = true;
     open();
     let params = {
       pageNo: pageNo.value,
-      pageSize: 16,
+      pageSize: 100,
       datasetId: id as string,
       // listType: listTypeEnum.list,
 
@@ -652,10 +653,8 @@
         if (requestId !== fetchListRequestId) return;
         tempList = res.list;
         list.value = list.value.concat(res.list);
-        if (res.list.length === 0) {
-          canload.value = false;
-        }
         total.value = res.total;
+        canload.value = list.value.length < res.total;
       } else {
         const res: DatasetGetResultModel = await datasetApi(params);
         if (requestId !== fetchListRequestId) return;
@@ -663,6 +662,7 @@
 
         list.value = res.list;
         total.value = res.total;
+        canload.value = list.value.length < res.total;
       }
       const dataIds = tempList.map((e: any) => e.firstDataId ?? e.id);
       if (dataIds.length)
@@ -688,6 +688,7 @@
       console.log(error);
     }
     if (requestId === fetchListRequestId) {
+      isFetching.value = false;
       close();
     }
   };

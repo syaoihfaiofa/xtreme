@@ -61,6 +61,7 @@ function buildSyncedUserDataPatch(
         classType: fresh.classType,
         classId: fresh.classId,
         motionMode: fresh.motionMode,
+        wallHeight: fresh.wallHeight,
         syncDistance: fresh.syncDistance,
         syncMaxDisappearGap: fresh.syncMaxDisappearGap,
         syncLocationGapMs: fresh.syncLocationGapMs,
@@ -639,6 +640,9 @@ export default class Editor extends BaseEditor {
                 (affectedFrameIds.size === 0 || affectedFrameIds.has(String(frame.id))),
         );
         if (frames.length === 0) return;
+        const needSaveBeforeRefresh = new Map(
+            frames.map((frame) => [String(frame.id), frame.needSave]),
+        );
 
         let data: any;
         try {
@@ -659,6 +663,10 @@ export default class Editor extends BaseEditor {
             object: SyncableGroundShape;
             points: THREE.Vector3[];
             frame: IFrame;
+        }[] = [];
+        let groundPolylineHeightUpdates: {
+            object: GroundPolyline;
+            wallHeight: number;
         }[] = [];
         const sourceClass = { classId, classType };
 
@@ -779,6 +787,11 @@ export default class Editor extends BaseEditor {
                         frame,
                     });
                 }
+                const wallHeight = Number(freshGroundPolyline.wallHeight);
+                groundPolylineHeightUpdates.push({
+                    object: existingGroundPolyline,
+                    wallHeight: Number.isFinite(wallHeight) ? Math.max(0, wallHeight) : 0,
+                });
                 updateDatas.objects.push(existingGroundPolyline);
                 updateDatas.data.push(
                     buildSyncedUserDataPatch(
@@ -838,6 +851,9 @@ export default class Editor extends BaseEditor {
                     }
                     this.dataManager.setGroundPolygonPoints(object, points, frame);
                 });
+                groundPolylineHeightUpdates.forEach(({ object, wallHeight }) => {
+                    object.setWallHeight(wallHeight);
+                });
                 if (updateTrans.objects.length > 0)
                     this.cmdManager.execute('update-transform-batch', updateTrans);
                 if (updateDatas.objects.length > 0)
@@ -850,6 +866,12 @@ export default class Editor extends BaseEditor {
             ) {
                 this.dataManager.loadDataFromManager();
             }
+        });
+        // Sync changes are already persisted by the backend. Refresh commands mark target
+        // frames dirty as a side effect; restoring the previous state prevents a later full
+        // frame save from deleting server objects missing from a stale local snapshot.
+        frames.forEach((frame) => {
+            frame.needSave = needSaveBeforeRefresh.get(String(frame.id)) === true;
         });
         this.invalidateTrackDisplayCaches();
         // Only the source frame is mounted with the current camera configuration.  Refreshing
