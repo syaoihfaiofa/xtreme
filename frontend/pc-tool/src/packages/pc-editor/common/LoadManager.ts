@@ -178,7 +178,10 @@ export default class LoadManager {
         // not in this in-memory cache is fetched normally on first entry, so a cache hit does not
         // need another annotation request merely because sync mode is enabled.
         const bsState = (this.editor as any).bsState;
-        const shouldLoad = cachedObjects === undefined || (!!bsState?.inferenceMode && !frame.needSave);
+        const shouldLoad =
+            cachedObjects === undefined ||
+            !this.editor.dataManager.hasCompleteFrameObjects(frame.id) ||
+            (!!bsState?.inferenceMode && !frame.needSave);
         if (shouldLoad) {
             try {
                 if (cachedObjects && cachedObjects.length > 0 && this.editor.state.isSeriesFrame) {
@@ -196,6 +199,7 @@ export default class LoadManager {
                 let objects = utils.objectsMapForFrame(data.objectsMap, frame.id);
                 let annotates = utils.convertObject2Annotate(objects, this.editor);
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
+                this.editor.dataManager.markFrameObjectsComplete(frame.id);
                 this.editor.dataManager.updateFrameId(frame.id);
                 if (this.editor.state.isSeriesFrame) {
                     this.editor.trackManager.addTrackCount(annotates, frame);
@@ -290,10 +294,19 @@ export default class LoadManager {
     }
 
     // SeriesFrame load
-    async loadAllObjects() {
+    async loadAllObjects(framesToLoad?: IFrame[]) {
         let { frames, isSeriesFrame, classifications } = this.editor.state;
 
-        let filterFrames = frames.filter((e) => !this.editor.dataManager.getFrameObject(e.id));
+        // Tracking can write its propagated object into a target frame before that frame has
+        // ever been opened.  Callers may therefore preload only the target frames, so their
+        // existing server annotations are merged with the propagated box instead of being
+        // mistaken for an already-complete local cache.
+        const candidateFrames = framesToLoad || frames;
+        let filterFrames = candidateFrames.filter(
+            (frame) =>
+                !this.editor.dataManager.getFrameObject(frame.id) ||
+                !this.editor.dataManager.hasCompleteFrameObjects(frame.id),
+        );
 
         if (filterFrames.length === 0) return;
 
@@ -316,6 +329,7 @@ export default class LoadManager {
                     if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
                 });
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
+                this.editor.dataManager.markFrameObjectsComplete(frame.id);
             });
             if (isSeriesFrame) this.editor.trackManager.rebuildTrackCountCaches();
         } catch (error: any) {

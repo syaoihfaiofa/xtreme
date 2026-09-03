@@ -42,6 +42,9 @@ export default class DataManager {
     dataMap: Map<string, AnnotateObject[]> = new Map();
     hasMap: Map<string, Map<string, AnnotateObject>> = new Map();
     private deletedObjectIdsByFrame: Map<string, Set<string>> = new Map();
+    // `dataMap` may temporarily contain only objects propagated by Track. Keep that distinct
+    // from a frame whose complete annotation set was fetched from the server.
+    private completeFrameObjectIds: Set<string> = new Set();
     private displayCacheFrameKey?: string;
     private displayCacheFrameIndex?: number;
 
@@ -414,6 +417,7 @@ export default class DataManager {
     clear(): void {
         this.dataMap.clear();
         this.hasMap.clear();
+        this.completeFrameObjectIds.clear();
     }
 
     destroy(): void {
@@ -481,6 +485,14 @@ export default class DataManager {
 
     getFrameObject(frameId: string) {
         return this.dataMap.get(this.normalizeFrameId(frameId));
+    }
+
+    hasCompleteFrameObjects(frameId: string | number): boolean {
+        return this.completeFrameObjectIds.has(this.normalizeFrameId(frameId));
+    }
+
+    markFrameObjectsComplete(frameId: string | number): void {
+        this.completeFrameObjectIds.add(this.normalizeFrameId(frameId));
     }
 
     loadDataFromManager() {
@@ -724,6 +736,14 @@ export default class DataManager {
             editor.showMsg('warning', editor.lang('track-no-source'));
             return;
         }
+
+        // A target frame may not have been opened yet.  Loading it before adding a propagated
+        // box prevents the partial local cache (containing only that box) from hiding the
+        // frame's pre-existing annotations when we navigate to it.
+        const targetIdSet = new Set(ids.map((id) => String(id)));
+        await editor.loadManager.loadAllObjects(
+            frames.filter((frame) => targetIdSet.has(String(frame.id))),
+        );
 
         if (option.method === 'copy') {
             utils.copyData(editor, curId, ids, objects);
