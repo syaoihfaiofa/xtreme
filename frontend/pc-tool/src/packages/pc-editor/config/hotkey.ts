@@ -15,6 +15,8 @@ const hotkeyConfig: IHotkeyConfig[] = [
     { key: isMac ? 'backspace' : 'del', action: 'deleteObject' },
     { key: isMac ? '⌘+z' : 'ctrl+z', action: 'undo' },
     { key: isMac ? '⌘+shift+z' : 'ctrl+shift+z', action: 'redo' },
+    { key: isMac ? '⌘+c' : 'ctrl+c', action: 'copyObject' },
+    { key: isMac ? '⌘+v' : 'ctrl+v', action: 'pasteObject' },
 
     // side view
     { key: 'e', action: 'translateYMinus' },

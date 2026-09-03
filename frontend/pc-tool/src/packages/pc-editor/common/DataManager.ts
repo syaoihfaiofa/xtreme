@@ -417,6 +417,7 @@ export default class DataManager {
     clear(): void {
         this.dataMap.clear();
         this.hasMap.clear();
+        this.deletedObjectIdsByFrame.clear();
         this.completeFrameObjectIds.clear();
     }
 

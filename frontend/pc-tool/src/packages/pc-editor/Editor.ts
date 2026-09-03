@@ -66,6 +66,27 @@ export default class Editor extends THREE.EventDispatcher {
     needUpdateFilter: boolean = true;
     eventSource: string = '';
     private selectedGroundPolylineVertex?: { object: GroundPolyline; index: number };
+    private copiedAnnotations: AnnotateObject[] = [];
+    private lastMainViewPointer?: THREE.Vector2;
+    private readonly trackMainViewPointer = (event: PointerEvent): void => {
+        const view = this.viewManager.getMainView();
+        const canvas = view?.renderer?.domElement;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        if (
+            event.clientX < rect.left ||
+            event.clientX > rect.right ||
+            event.clientY < rect.top ||
+            event.clientY > rect.bottom
+        ) {
+            this.lastMainViewPointer = undefined;
+            return;
+        }
+        this.lastMainViewPointer = new THREE.Vector2(
+            event.clientX - rect.left,
+            event.clientY - rect.top,
+        );
+    };
 
     cmdManager: CmdManager;
     hotkeyManager: HotkeyManager;
@@ -115,12 +136,15 @@ export default class Editor extends THREE.EventDispatcher {
         handleHack(this);
 
         this.initEvent();
+        window.addEventListener('pointermove', this.trackMainViewPointer, true);
 
         // util
         this.blurPage = _.throttle(this.blurPage.bind(this), 40);
     }
 
     destroy(): void {
+        window.removeEventListener('pointermove', this.trackMainViewPointer, true);
+        this.lastMainViewPointer = undefined;
         this.playManager.stop();
         this.taskManager.destroy();
         this.dataManager.destroy();
@@ -369,6 +393,118 @@ export default class Editor extends THREE.EventDispatcher {
     getCurTrack() {
         let box = this.pc.selection.find((object) => object instanceof Box);
         return box ? box.userData.trackId : '';
+    }
+
+    copySelectedAnnotations(): number {
+        const selected = this.pc.selection.filter(
+            (object): object is AnnotateObject =>
+                object instanceof Box ||
+                object instanceof GroundPolygon ||
+                object instanceof GroundPolyline,
+        );
+        this.copiedAnnotations = selected
+            .map((object) => this.cloneAnnotation(object, false))
+            .filter((object): object is AnnotateObject => Boolean(object));
+        return this.copiedAnnotations.length;
+    }
+
+    pasteCopiedAnnotations(): AnnotateObject[] {
+        const view = this.viewManager.getMainView();
+        if (!view || !this.lastMainViewPointer || this.copiedAnnotations.length === 0) return [];
+        const target = view.canvasToWorld(this.lastMainViewPointer);
+        if (!target || !Number.isFinite(target.x) || !Number.isFinite(target.y)) return [];
+        const objects = this.copiedAnnotations
+            .map((object) => this.cloneAnnotation(object, true))
+            .filter((object): object is AnnotateObject => Boolean(object));
+        if (objects.length === 0) return [];
+        this.moveAnnotationsToPointer(objects, target);
+
+        this.cmdManager.withGroup(() => {
+            objects.forEach((object) => {
+                this.cmdManager.execute('add-object', object);
+                if (this.state.isSeriesFrame) {
+                    this.cmdManager.execute('add-track', {
+                        trackId: object.userData.trackId,
+                        trackName: object.userData.trackName,
+                        classType: object.userData.classType,
+                        classId: object.userData.classId,
+                    });
+                }
+            });
+            this.cmdManager.execute('select-object', objects);
+        });
+        return objects;
+    }
+
+    private moveAnnotationsToPointer(objects: AnnotateObject[], target: THREE.Vector3): void {
+        const centers = objects.map((object) => {
+            if (object instanceof Box) return object.position.clone();
+            return new THREE.Box3().setFromPoints(object.points3D).getCenter(new THREE.Vector3());
+        });
+        const anchor = centers
+            .reduce((sum, center) => sum.add(center), new THREE.Vector3())
+            .divideScalar(centers.length);
+        const offset = new THREE.Vector3(target.x - anchor.x, target.y - anchor.y, 0);
+
+        objects.forEach((object) => {
+            if (object instanceof Box) {
+                object.position.add(offset);
+                object.updateMatrixWorld();
+            } else if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+                object.setPoints(object.points3D.map((point) => point.clone().add(offset)));
+            }
+        });
+    }
+
+    private cloneAnnotation(source: AnnotateObject, createIdentity: boolean): AnnotateObject | null {
+        const userData = _.cloneDeep(source.userData || {}) as IUserData;
+        if (createIdentity) {
+            delete userData.id;
+            delete userData.backId;
+            delete userData.trackId;
+            delete userData.trackName;
+            delete userData.createdAt;
+            delete userData.createdBy;
+            delete userData.modelRun;
+            delete userData.modelRunLabel;
+            delete userData.confidence;
+            delete userData.reviewedCorrect;
+            delete userData.reviewedCorrectVisible;
+            userData.manualModified = true;
+            utils.setIdInfo(this, userData);
+        }
+
+        let clone: AnnotateObject;
+        if (source instanceof Box) {
+            clone = utils.createAnnotate3D(
+                this,
+                source.position.clone(),
+                source.scale.clone(),
+                source.rotation.clone(),
+                userData,
+            );
+        } else if (source instanceof GroundPolygon) {
+            clone = utils.createGroundPolygon(
+                this,
+                source.points3D.map((point) => point.clone()),
+                userData,
+            );
+        } else if (source instanceof GroundPolyline) {
+            const polyline = utils.createGroundPolyline(
+                this,
+                source.points3D.map((point) => point.clone()),
+                userData,
+            );
+            polyline.setWallHeight(source.wallHeight);
+            polyline.setSegmentVisibleByView(source.segmentVisibleByView);
+            polyline.setSegmentForceVisibleByView(source.segmentForceVisibleByView);
+            clone = polyline;
+        } else {
+            return null;
+        }
+        if (createIdentity && userData.id) clone.uuid = userData.id;
+        this.updateObjectRenderInfo(clone);
+        return clone;
     }
     // create
     createAnnotate3D(

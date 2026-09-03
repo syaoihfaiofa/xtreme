@@ -63,6 +63,8 @@ export const executeActions: IBsActionName[] = [
     'undo',
     'redo',
     'deleteObject',
+    'copyObject',
+    'pasteObject',
     'focusObject',
     'projectObject2D',
     'toggleTranslate',

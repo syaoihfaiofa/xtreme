@@ -271,6 +271,37 @@ export default class LoadManager {
             return maxId;
         }
     }
+
+    /**
+     * Add metadata for newly fetched frames without discarding tracks that were already loaded
+     * elsewhere in the Scene. This is used by Track's target-frame preload.
+     */
+    mergeTrackData(objectsMap: Record<string, IObject[]>) {
+        Object.values(objectsMap).forEach((objects) => {
+            objects.forEach((object) => {
+                if (!object.trackId) object.trackId = this.editor.createTrackId();
+            });
+        });
+
+        const trackInfo = utils.getTrackFromObject(objectsMap);
+        const newTracks = Object.values(trackInfo.globalTrack);
+        let maxId = 0;
+        this.editor.trackManager.trackMap.forEach((track) => {
+            const id = parseInt(track.trackName || '', 10);
+            if (Number.isFinite(id)) maxId = Math.max(maxId, id);
+        });
+        newTracks.forEach((track) => {
+            const id = parseInt(track.trackName || '', 10);
+            if (Number.isFinite(id)) maxId = Math.max(maxId, id);
+        });
+
+        let nextId = maxId + 1;
+        Object.entries(trackInfo.globalTrack).forEach(([trackId, track]) => {
+            if (!track.trackName) track.trackName = `${nextId++}`;
+            this.editor.trackManager.addTrackObject(trackId, track);
+        });
+        this.editor.idCount = Math.max(this.editor.idCount, nextId);
+    }
     async loadAllClassification() {
         let { frames, classifications } = this.editor.state;
 
@@ -312,7 +343,10 @@ export default class LoadManager {
 
         try {
             let data = await this.editor.businessManager.getFrameObject(filterFrames);
-            if (isSeriesFrame) this.setTrackData(data.objectsMap);
+            if (isSeriesFrame) {
+                if (framesToLoad) this.mergeTrackData(data.objectsMap);
+                else this.setTrackData(data.objectsMap);
+            }
 
             filterFrames.forEach((frame) => {
                 let objects = utils.objectsMapForFrame(data.objectsMap, frame.id);

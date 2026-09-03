@@ -46,6 +46,26 @@ export const deleteObject = define({
     },
 });
 
+export const copyObject = define({
+    valid(editor: Editor) {
+        return editor.pc.selection.length > 0;
+    },
+    execute(editor: Editor) {
+        const count = editor.copySelectedAnnotations();
+        if (count > 0) editor.showMsg('success', `已复制 ${count} 个目标`);
+    },
+});
+
+export const pasteObject = define({
+    valid(editor: Editor) {
+        return !!editor.state.modeConfig.actions['pasteObject'];
+    },
+    execute(editor: Editor) {
+        const objects = editor.pasteCopiedAnnotations();
+        if (objects.length > 0) editor.showMsg('success', `已粘贴 ${objects.length} 个目标`);
+    },
+});
+
 export const toggleShowAnnotation = define({
     valid(editor: Editor) {
         return true;
