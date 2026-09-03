@@ -594,33 +594,35 @@ export default class Editor extends BaseEditor {
         }
         let sourceFrame = this.getFrame(sourceFrameId || this.getCurrentFrame().id);
         if (!sourceFrame) sourceFrame = this.getCurrentFrame();
+        const sourceFrameNeededSaveBeforeSync = sourceFrame.needSave;
         sourceFrame.needSave = true;
-        // Sync refreshes every loaded frame from the server. Persist pending changes first for
-        // every loaded frame containing this track, otherwise a local per-frame state such as
-        // occlusion could be replaced by its stale server value after a frame switch.
-        const framesToSave = this.state.frames.filter((frame) => {
-            if (!frame.needSave) return false;
-            return (this.dataManager.getFrameObject(frame.id) || []).some(
-                (object) =>
-                    (object instanceof Box || isSyncableGroundShape(object)) &&
-                    object.userData?.trackId === trackId,
-            );
-        });
+        // Persist every unsaved syncable 3D object on dirty loaded frames first. The selected
+        // track is still the only one propagated by /sync, but other new boxes/polylines on
+        // those frames must not stay local-only.
+        const framesToSave = this.state.frames.filter((frame) => frame.needSave);
         if (!framesToSave.some((frame) => String(frame.id) === String(sourceFrame.id))) {
             framesToSave.push(sourceFrame);
         }
-        const saved = await this.saveTrackObjectsForSync(framesToSave, trackId);
+        const saved = await this.saveDirtySyncableObjects(framesToSave);
         if (!saved) {
+            sourceFrame.needSave = sourceFrameNeededSaveBeforeSync;
             return;
         }
-        const syncResult = await api.syncObject(String(sourceFrame.id), trackId, classId);
-        await this.refreshTrackFromServer(
-            trackId,
-            sourceFrame.id,
-            classId,
-            classType,
-            syncResult.affectedDataIds,
-        );
+        try {
+            const syncResult = await api.syncObject(String(sourceFrame.id), trackId, classId);
+            await this.refreshTrackFromServer(
+                trackId,
+                sourceFrame.id,
+                classId,
+                classType,
+                syncResult.affectedDataIds,
+            );
+        } finally {
+            // The selected track was persisted through the partial sync-save endpoint.
+            // Keep only dirty state that existed before sync so a later normal save does not
+            // replace the complete source frame unnecessarily.
+            sourceFrame.needSave = sourceFrameNeededSaveBeforeSync;
+        }
     }
 
     async refreshTrackFromServer(
@@ -688,7 +690,7 @@ export default class Editor extends BaseEditor {
             const primary = resolvePrimaryShape(shapes);
             const duplicates = shapes.filter((shape) => shape !== primary);
             if (duplicates.length > 0) {
-                this.dataManager.removeAnnotates(duplicates, frame, false);
+                this.dataManager.removeAnnotates(duplicates, frame, false, false);
             }
             return primary;
         };
@@ -831,7 +833,7 @@ export default class Editor extends BaseEditor {
         this.withEventSource(Editor.SYNC_EVENT_SOURCE, () => {
             this.cmdManager.withGroup(() => {
                 removeDatas.forEach(({ objects, frame }) => {
-                    this.dataManager.removeAnnotates(objects, frame, false);
+                    this.dataManager.removeAnnotates(objects, frame, false, false);
                 });
                 if (addDatas.length > 0) this.cmdManager.execute('add-object', addDatas);
                 groundShapePointUpdates.forEach(({ object, points, frame }) => {
@@ -893,20 +895,16 @@ export default class Editor extends BaseEditor {
     }
 
     /**
-     * Ctrl+Y is an object-level operation.  The regular save path serializes every
-     * annotation in a frame, including the derived 2D image projections of the
-     * selected vehicle.  Save only the syncable 3D objects for this track instead.
-     * Frame-level dirty state remains intact so an ordinary save can still persist
-     * unrelated edits later.
+     * Persist unsaved 3D boxes and ground shapes through the partial sync-save endpoint.
+     * This includes every track on the dirty frames, not only the one about to be synced.
+     * Derived 2D projections are omitted so a later ordinary save can still write them.
      */
-    private async saveTrackObjectsForSync(frames: IFrame[], trackId: string): Promise<boolean> {
+    private async saveDirtySyncableObjects(frames: IFrame[]): Promise<boolean> {
         if (this.bsState.saving) return false;
         const dataInfos = frames
             .map((frame) => {
                 const trackObjects = (this.dataManager.getFrameObject(frame.id) || []).filter(
-                    (object) =>
-                        (object instanceof Box || isSyncableGroundShape(object)) &&
-                        object.userData?.trackId === trackId,
+                    (object) => object instanceof Box || isSyncableGroundShape(object),
                 );
                 const objects = utils.convertAnnotate2Object(trackObjects, this).map((object) => {
                     const classConfig = this.getClassType(object.classId || object.classType || '');
@@ -1269,6 +1267,7 @@ export default class Editor extends BaseEditor {
                 dataId: dataMeta.id,
                 objects: infos,
                 dataAnnotations: dataAnnotations,
+                deletedObjectIds: this.dataManager.getDeletedObjectIds(dataMeta.id),
             });
         });
 
@@ -1278,8 +1277,14 @@ export default class Editor extends BaseEditor {
         };
         bsState.saving = true;
         try {
-            await api.saveObject(objectInfo).then((keyMap) => {
+            await api.saveDelta(objectInfo).then((keyMap) => {
                 this.updateBackId(keyMap);
+            });
+            dataInfos.forEach((dataInfo) => {
+                this.dataManager.clearDeletedObjectIds(
+                    dataInfo.dataId,
+                    dataInfo.deletedObjectIds,
+                );
             });
             frames.forEach((e) => {
                 e.needSave = false;

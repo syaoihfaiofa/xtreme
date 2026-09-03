@@ -41,6 +41,7 @@ export default class DataManager {
     // object
     dataMap: Map<string, AnnotateObject[]> = new Map();
     hasMap: Map<string, Map<string, AnnotateObject>> = new Map();
+    private deletedObjectIdsByFrame: Map<string, Set<string>> = new Map();
     private displayCacheFrameKey?: string;
     private displayCacheFrameIndex?: number;
 
@@ -144,6 +145,38 @@ export default class DataManager {
         if (frameMap) frameMap.delete(uuid);
     }
 
+    getDeletedObjectIds(frameId: string | number): string[] {
+        return Array.from(
+            this.deletedObjectIdsByFrame.get(this.normalizeFrameId(frameId)) || [],
+        );
+    }
+
+    clearDeletedObjectIds(frameId: string | number, objectIds: string[]): void {
+        const frameKey = this.normalizeFrameId(frameId);
+        const deletedIds = this.deletedObjectIdsByFrame.get(frameKey);
+        if (!deletedIds) return;
+        objectIds.forEach((objectId) => deletedIds.delete(String(objectId)));
+        if (deletedIds.size === 0) this.deletedObjectIdsByFrame.delete(frameKey);
+    }
+
+    private restoreDeletedObject(object: AnnotateObject, frame: IFrame): void {
+        const backId = (object.userData as IUserData).backId;
+        if (!backId) return;
+        this.clearDeletedObjectIds(frame.id, [String(backId)]);
+    }
+
+    private recordDeletedObjects(objects: AnnotateObject[], frame: IFrame): void {
+        const objectIds = objects
+            .map((object) => (object.userData as IUserData).backId)
+            .filter((backId): backId is string => Boolean(backId))
+            .map(String);
+        if (objectIds.length === 0) return;
+        const frameKey = this.normalizeFrameId(frame.id);
+        const deletedIds = this.deletedObjectIdsByFrame.get(frameKey) || new Set<string>();
+        objectIds.forEach((objectId) => deletedIds.add(objectId));
+        this.deletedObjectIdsByFrame.set(frameKey, deletedIds);
+    }
+
     addAnnotates(
         objects: AnnotateObject[] | AnnotateObject,
         frame?: IFrame,
@@ -155,6 +188,7 @@ export default class DataManager {
         let allObjects = this.getFrameObject(frame.id) || [];
 
         objects.forEach((object) => {
+            this.restoreDeletedObject(object, frame);
             if (this.hasObject(object.uuid, frame)) return;
             if (this.isTrackDedupeTarget(object) && object.userData?.trackId) {
                 const trackId = object.userData.trackId;
@@ -185,12 +219,14 @@ export default class DataManager {
         objects: AnnotateObject[] | AnnotateObject,
         frame?: IFrame,
         reload: boolean = true,
+        recordDeletion: boolean = true,
     ) {
         if (!Array.isArray(objects)) objects = [objects];
 
         frame = frame || this.editor.getCurrentFrame();
         let allObjects = this.getFrameObject(frame.id) || [];
         if (allObjects.length === 0) return;
+        if (recordDeletion) this.recordDeletedObjects(objects, frame);
 
         let removeMap = {} as Record<string, boolean>;
         let selectionMap = this.editor.pc.selectionMap;

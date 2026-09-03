@@ -41,6 +41,8 @@ public class ObjectResultDTO {
 
         @Valid
         private List<DataAnnotation> dataAnnotations;
+
+        private List<Long> deletedObjectIds;
     }
 
     @Data

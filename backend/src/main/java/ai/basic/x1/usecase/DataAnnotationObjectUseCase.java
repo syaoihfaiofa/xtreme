@@ -128,6 +128,21 @@ public class DataAnnotationObjectUseCase {
         return updateDataAnnotationObject(dataAnnotationObjectBOs, false);
     }
 
+    public void deletePartial(Long datasetId, Map<Long, Set<Long>> deletedObjectIdsByDataId) {
+        if (datasetId == null || CollUtil.isEmpty(deletedObjectIdsByDataId)) {
+            return;
+        }
+        deletedObjectIdsByDataId.forEach((dataId, objectIds) -> {
+            if (dataId == null || CollUtil.isEmpty(objectIds)) {
+                return;
+            }
+            dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                    .eq(DataAnnotationObject::getDatasetId, datasetId)
+                    .eq(DataAnnotationObject::getDataId, dataId)
+                    .in(DataAnnotationObject::getId, objectIds));
+        });
+    }
+
     private List<DataAnnotationObjectBO> updateDataAnnotationObject(
             List<DataAnnotationObjectBO> dataAnnotationObjectBOs,
             boolean removeMissingObjects) {

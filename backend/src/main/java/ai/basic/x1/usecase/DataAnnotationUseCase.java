@@ -10,6 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -55,6 +56,27 @@ public class DataAnnotationUseCase {
                 .collect(Collectors.toSet());
         dataEditUseCase.checkLock(dataIds);
         return dataAnnotationObjectUseCase.savePartial(dataAnnotationObjectBOs);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public List<DataAnnotationObjectBO> saveDeltaDataAnnotation(
+            Long datasetId,
+            List<DataAnnotationClassificationBO> dataAnnotationClassificationBOs,
+            List<DataAnnotationObjectBO> dataAnnotationObjectBOs,
+            Map<Long, Set<Long>> deletedObjectIdsByDataId) {
+        Set<Long> dataIds = new HashSet<>(deletedObjectIdsByDataId.keySet());
+        dataIds.addAll(dataAnnotationClassificationBOs.stream()
+                .map(DataAnnotationClassificationBO::getDataId)
+                .collect(Collectors.toSet()));
+        dataIds.addAll(dataAnnotationObjectBOs.stream()
+                .map(DataAnnotationObjectBO::getDataId)
+                .collect(Collectors.toSet()));
+        dataEditUseCase.checkLock(dataIds);
+        dataAnnotationClassificationUseCase.save(dataAnnotationClassificationBOs);
+        List<DataAnnotationObjectBO> insertedObjects =
+                dataAnnotationObjectUseCase.savePartial(dataAnnotationObjectBOs);
+        dataAnnotationObjectUseCase.deletePartial(datasetId, deletedObjectIdsByDataId);
+        return insertedObjects;
     }
 
     public List<DataAnnotationResultBO> findByDataIds(List<Long> dataIds) {

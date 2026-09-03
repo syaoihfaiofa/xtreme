@@ -237,14 +237,14 @@ export default function useHeader() {
         bsState.submitting = true;
         try {
             if (isSeriesFrame) {
-                await editor.saveObject(frames, true);
+                await editor.saveObject(frames);
                 await api.submitData(seriesFrameId ?? '');
                 // await updateDataStatus(frames);
                 unlockData();
                 bsState.submitting = false;
                 return;
             } else {
-                await editor.saveObject([frame], true);
+                await editor.saveObject([frame]);
                 await api.submitData(frame.id);
                 await updateDataStatus([frame]);
             }

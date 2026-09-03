@@ -19,8 +19,11 @@ import org.springframework.web.bind.annotation.*;
 
 import javax.validation.groups.Default;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -61,6 +64,31 @@ public class DataAnnotationController {
         List<DataAnnotationObjectDTO> objectDTOs = convertToDataAnnotationObject(objectResultDTO);
         List<DataAnnotationObjectBO> result = dataAnnotationUseCase.savePartialDataAnnotation(
                 DefaultConverter.convert(objectDTOs, DataAnnotationObjectBO.class));
+        return DefaultConverter.convert(result, DataAnnotationObjectResponseDTO.class);
+    }
+
+    @PostMapping("save/delta")
+    public List<DataAnnotationObjectResponseDTO> saveDelta(
+            @Validated @RequestBody ObjectResultDTO objectResultDTO) {
+        List<DataAnnotationClassificationDTO> classificationDTOs =
+                convertToDataAnnotation(objectResultDTO);
+        List<DataAnnotationObjectDTO> objectDTOs =
+                convertToDataAnnotationObject(objectResultDTO);
+        Map<Long, Set<Long>> deletedObjectIdsByDataId = new HashMap<>();
+        objectResultDTO.getDataInfos().forEach(dataInfo -> {
+            if (CollUtil.isNotEmpty(dataInfo.getDeletedObjectIds())) {
+                deletedObjectIdsByDataId.put(
+                        dataInfo.getDataId(),
+                        new HashSet<>(dataInfo.getDeletedObjectIds()));
+            }
+        });
+        List<DataAnnotationObjectBO> result = dataAnnotationUseCase.saveDeltaDataAnnotation(
+                objectResultDTO.getDatasetId(),
+                DefaultConverter.convert(
+                        classificationDTOs,
+                        DataAnnotationClassificationBO.class),
+                DefaultConverter.convert(objectDTOs, DataAnnotationObjectBO.class),
+                deletedObjectIdsByDataId);
         return DefaultConverter.convert(result, DataAnnotationObjectResponseDTO.class);
     }
 
