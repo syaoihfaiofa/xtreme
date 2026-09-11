@@ -595,6 +595,9 @@ function getProjectionUserData(source: IUserData): IUserData {
     const userData = { ...source };
     delete userData.id;
     delete userData.backId;
+    // A projection is a frame-local rendering derivative. It cannot be synced
+    // separately, so it must not inherit the source shape's dirty color/state.
+    userData.syncDirty = false;
     return userData;
 }
 

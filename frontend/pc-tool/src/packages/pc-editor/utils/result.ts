@@ -315,6 +315,16 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.autoCurbOcclusionPointCloudPending = obj.autoCurbOcclusionPointCloudPending === true;
         userData.occluded = obj.occluded === true;
         userData.syncDirty = obj.syncDirty === true;
+        // 2D ground-shape projections are derived camera overlays, not independent
+        // synchronization sources. Legacy rows may contain a copied dirty flag;
+        // never let that flag paint an otherwise-synced curb/wall as unsynced.
+        if (
+            objType === ObjectType.TYPE_2D_GROUND_POLYGON ||
+            objType === ObjectType.TYPE_2D_GROUND_POLYLINE ||
+            objType === ObjectType.TYPE_2D_IRREGULAR_WALL
+        ) {
+            userData.syncDirty = false;
+        }
         userData.reviewedCorrect = obj.reviewedCorrect === true;
         userData.reviewedCorrectVisible =
             (editor as any).bsState?.reviewMode === true && userData.reviewedCorrect;
@@ -576,7 +586,9 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             autoCurbOcclusionPending: userData.autoCurbOcclusionPending === true,
             autoCurbOcclusionPointCloudPending: userData.autoCurbOcclusionPointCloudPending === true,
             occluded: userData.occluded === true,
-            syncDirty: userData.syncDirty === true,
+            // Projections are regenerated from their 3D source and must never
+            // persist a synchronization-dirty state of their own.
+            syncDirty: userData.isProjection ? false : userData.syncDirty === true,
             reviewedCorrect: userData.reviewedCorrect === true,
             manualModified: userData.manualModified === true,
             // resultStatus: userData.resultStatus || '',

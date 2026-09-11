@@ -1418,6 +1418,11 @@ public class TrackSyncUseCase {
             attrs.set("wallHeight", wallHeight);
             attrs.set("showSyncLocationBoundaries", showSyncLocationBoundaries);
             attrs.set("syncSegmentVisibility", syncSegmentVisibility);
+            // A completed propagation is authoritative for every target frame.  In
+            // particular, a target may have been saved as dirty before Ctrl+Y was
+            // pressed; leaving that flag in its copied attributes keeps the timeline
+            // progress cell cyan even though its geometry has just been synchronized.
+            attrs.set("syncDirty", false);
             if (existing == null) {
                 inserts.add(DataAnnotationObject.builder()
                         .datasetId(source.getDatasetId())
@@ -1499,6 +1504,10 @@ public class TrackSyncUseCase {
             attrs.set("motionMode", MOTION_STATIC);
             attrs.set("syncUseZ", getBoolean(sourceAttrs, "syncUseZ", true));
             attrs.set("syncDistance", syncRadius);
+            // Do not inherit a target frame's pre-sync dirty state.  The frontend
+            // uses this value for the TrackLine color, so it must be cleared along
+            // with the synchronized irregular-wall geometry.
+            attrs.set("syncDirty", false);
             if (existing == null) {
                 inserts.add(DataAnnotationObject.builder().datasetId(source.getDatasetId()).dataId(frame.getId())
                         .classId(source.getClassId()).classAttributes(attrs).sourceId(-1L)

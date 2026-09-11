@@ -822,6 +822,9 @@ export default class Editor extends BaseEditor {
             topPoints: THREE.Vector3[];
             frame: IFrame;
         }[] = [];
+        // The sync endpoint is authoritative. Keep these references so a stale local
+        // dirty flag cannot survive after the server confirms the target is clean.
+        const cleanAfterServerRefresh = new Set<Box | SyncableGroundShape>();
         const sourceClass = { classId, classType };
 
         const resolvePrimaryShape = <T extends Box | SyncableGroundShape>(
@@ -939,6 +942,7 @@ export default class Editor extends BaseEditor {
                 updateDatas.data.push(
                     buildSyncedUserDataPatch(freshBox, existingBox, this.bsState.reviewMode),
                 );
+                if (freshBox.syncDirty !== true) cleanAfterServerRefresh.add(existingBox);
             }
 
             if (freshGroundPolyline && !existingGroundPolyline) {
@@ -965,6 +969,9 @@ export default class Editor extends BaseEditor {
                         this.bsState.reviewMode,
                     ),
                 );
+                if (freshGroundPolyline.syncDirty !== true) {
+                    cleanAfterServerRefresh.add(existingGroundPolyline);
+                }
             } else if (
                 !freshGroundPolyline &&
                 existingGroundPolyline &&
@@ -992,6 +999,9 @@ export default class Editor extends BaseEditor {
                         this.bsState.reviewMode,
                     ),
                 );
+                if (freshGroundPolygon.syncDirty !== true) {
+                    cleanAfterServerRefresh.add(existingGroundPolygon);
+                }
             } else if (
                 !freshGroundPolygon &&
                 existingGroundPolygon &&
@@ -1017,6 +1027,9 @@ export default class Editor extends BaseEditor {
                 }
                 updateDatas.objects.push(existingIrregularWall);
                 updateDatas.data.push(buildSyncedUserDataPatch(freshIrregularWall, existingIrregularWall, this.bsState.reviewMode));
+                if (freshIrregularWall.syncDirty !== true) {
+                    cleanAfterServerRefresh.add(existingIrregularWall);
+                }
             } else if (
                 !freshIrregularWall &&
                 existingIrregularWall &&
@@ -1069,6 +1082,12 @@ export default class Editor extends BaseEditor {
                 this.dataManager.loadDataFromManager();
             }
         });
+        if (cleanAfterServerRefresh.size > 0) {
+            cleanAfterServerRefresh.forEach((object) => {
+                (object.userData as IUserData).syncDirty = false;
+            });
+            this.updateObjectRenderInfo(Array.from(cleanAfterServerRefresh));
+        }
         // Sync changes are already persisted by the backend. Refresh commands mark target
         // frames dirty as a side effect; restoring the previous state prevents a later full
         // frame save from deleting server objects missing from a stale local snapshot.
