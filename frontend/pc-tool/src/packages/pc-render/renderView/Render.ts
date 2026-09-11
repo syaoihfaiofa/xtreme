@@ -96,9 +96,16 @@ export default class Render extends THREE.EventDispatcher {
 
     _render() {
         this.dispatchEvent({ type: Event.RENDER_BEFORE });
-        this.renderFrame();
-        this.renderTimer = 0;
-        this.dispatchEvent({ type: Event.RENDER_AFTER });
+        try {
+            this.renderFrame();
+        } catch (error) {
+            // A single malformed annotation must not leave renderTimer set and
+            // permanently freeze this view (including later selection/zoom).
+            console.error(`render view \"${this.name}\" failed`, error);
+        } finally {
+            this.renderTimer = 0;
+            this.dispatchEvent({ type: Event.RENDER_AFTER });
+        }
     }
 
     renderFrame() {

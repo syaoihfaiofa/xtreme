@@ -11,6 +11,7 @@ export default class UpdateGroundPolylinePoints extends CmdBase<
         const { object, points } = this.data;
         if (points.length < 2) throw new Error('GroundPolyline requires at least two points');
         if (!this.undoData) this.undoData = object.points3D.map((point) => point.clone());
+        this.editor.markSyncDirtyForGroundShape(object);
         this.editor.dataManager.setGroundPolygonPoints(object, points);
     }
 

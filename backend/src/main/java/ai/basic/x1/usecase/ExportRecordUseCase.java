@@ -45,6 +45,7 @@ public class ExportRecordUseCase {
             var fileIds = Objects.requireNonNull(exportRecordBOList).stream()
                     .filter(exportRecordBO -> ExportStatusEnum.COMPLETED.equals(exportRecordBO.getStatus()))
                     .map(ExportRecordBO::getFileId)
+                    .filter(Objects::nonNull)
                     .collect(Collectors.toList());
             if (CollectionUtil.isNotEmpty(fileIds)) {
                 var fileBOS = fileUseCase.findByIds(fileIds);

@@ -30,6 +30,7 @@ const en = {
     'sync-max-disappear-gap': 'Max consecutive missing frames',
     'sync-location-gap': 'Location gap threshold',
     'show-sync-location-boundaries': 'Show Location gap markers',
+    'sync-segment-visibility': 'Recalculate segment visibility during sync',
     'sync-use-z': 'Use Z when syncing',
     'sync-yaw-offset': 'Sync yaw offset',
     'sync-x-offset': 'Sync X offset',

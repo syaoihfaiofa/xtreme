@@ -1,7 +1,7 @@
 import { reactive, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useClipboard } from '@vueuse/core';
 import { AttrType, IClassType, Event, utils, IUserData, Const, MotionMode } from 'pc-editor';
-import { AnnotateObject, Box, GroundPolyline, Rect } from 'pc-render';
+import { AnnotateObject, Box, GroundPolygon, GroundPolyline, IrregularWall, Rect } from 'pc-render';
 import { useInjectState } from '../../state';
 import { IState, IInstanceItem, MsgType, IControl } from './type';
 import { useInjectEditor } from '../../state';
@@ -55,6 +55,8 @@ export default function useEditClass() {
         syncMaxDisappearGap: DEFAULT_SYNC_MAX_DISAPPEAR_GAP,
         syncLocationGapMs: DEFAULT_SYNC_LOCATION_GAP_MS,
         showSyncLocationBoundaries: false,
+        syncSegmentVisibility: false,
+        isGroundPolyline: false,
         dynamicRangeSyncEnabled: false,
         dynamicSyncPreviousFrames: DEFAULT_DYNAMIC_SYNC_FRAME_COUNT,
         dynamicSyncNextFrames: DEFAULT_DYNAMIC_SYNC_FRAME_COUNT,
@@ -112,9 +114,21 @@ export default function useEditClass() {
         state.showType = 'msg';
         handleObject(trackIds);
     };
+    const onFrameChange = () => {
+        // Frame loading clears the outgoing selection before mounting the next
+        // frame. Keep an explicitly opened T panel alive and refresh its track
+        // after the new frame has become active.
+        if (!editor.state.config.showClassView) return;
+        if (state.isBatch) {
+            showBatchObject(state.batchTrackIds);
+        } else if (state.trackId) {
+            showObject(state.trackId);
+        }
+    };
 
     onMounted(() => {
         editor.addEventListener(Event.SHOW_CLASS_INFO, onShowClassInfo);
+        editor.addEventListener(Event.FRAME_CHANGE, onFrameChange);
         editor.addEventListener(Event.ANNOTATE_SELECT, onSelect);
         editor.addEventListener(Event.ANNOTATE_REMOVE, syncUpdate);
         editor.addEventListener(Event.ANNOTATE_ADD, syncUpdate);
@@ -123,6 +137,7 @@ export default function useEditClass() {
 
     onBeforeUnmount(() => {
         editor.removeEventListener(Event.SHOW_CLASS_INFO, onShowClassInfo);
+        editor.removeEventListener(Event.FRAME_CHANGE, onFrameChange);
         editor.removeEventListener(Event.ANNOTATE_SELECT, onSelect);
         editor.removeEventListener(Event.ANNOTATE_REMOVE, syncUpdate);
         editor.removeEventListener(Event.ANNOTATE_ADD, syncUpdate);
@@ -146,7 +161,9 @@ export default function useEditClass() {
             state.showType = 'select';
             handleObject(selection[0].userData.trackId);
         } else {
-            if (state.showType === 'select') close();
+            // LoadManager clears selection while switching frames. That is not
+            // an instruction to close a panel the annotator opened with T.
+            if (state.showType === 'select' && !editor.navigatingFrame) close();
         }
     }
 
@@ -187,6 +204,8 @@ export default function useEditClass() {
         state.syncMaxDisappearGap = DEFAULT_SYNC_MAX_DISAPPEAR_GAP;
         state.syncLocationGapMs = DEFAULT_SYNC_LOCATION_GAP_MS;
         state.showSyncLocationBoundaries = false;
+        state.syncSegmentVisibility = false;
+        state.isGroundPolyline = false;
         state.dynamicRangeSyncEnabled = false;
         state.dynamicSyncPreviousFrames = DEFAULT_DYNAMIC_SYNC_FRAME_COUNT;
         state.dynamicSyncNextFrames = DEFAULT_DYNAMIC_SYNC_FRAME_COUNT;
@@ -221,7 +240,13 @@ export default function useEditClass() {
             .filter((e) => trackIdMap[e.userData.trackId]) as AnnotateObject[];
 
         if (objects.length === 0) {
-            close();
+            if (editor.state.config.showClassView) {
+                clear();
+                state.batchTrackIds = trackIds;
+                state.isBatch = true;
+            } else {
+                close();
+            }
             return;
         }
 
@@ -244,6 +269,9 @@ export default function useEditClass() {
         state.syncLocationGapMs = getSyncLocationGapMs(object.userData as IUserData);
         state.showSyncLocationBoundaries =
             (object.userData as IUserData).showSyncLocationBoundaries === true;
+        state.syncSegmentVisibility =
+            (object.userData as IUserData).syncSegmentVisibility === true;
+        state.isGroundPolyline = object instanceof GroundPolyline;
         state.dynamicRangeSyncEnabled =
             (object.userData as IUserData).dynamicRangeSyncEnabled === true;
         state.dynamicSyncPreviousFrames = getDynamicSyncFrameCount(
@@ -287,7 +315,16 @@ export default function useEditClass() {
         let info = getAnnotateByTrackId([...annotate3d, ...annotate2d], trackId);
 
         if (info.annotate3D.length === 0 && info.annotate2D.length === 0) {
-            close();
+            // Keep the explicitly opened panel visible across frames even when
+            // this track has no object in the current frame. Retaining the
+            // track id lets the same panel populate again on a later frame.
+            if (editor.state.config.showClassView) {
+                clear();
+                state.trackId = trackId;
+                state.isBatch = false;
+            } else {
+                close();
+            }
             return;
         }
 
@@ -310,6 +347,8 @@ export default function useEditClass() {
         state.syncMaxDisappearGap = getSyncMaxDisappearGap(userData);
         state.syncLocationGapMs = getSyncLocationGapMs(userData);
         state.showSyncLocationBoundaries = userData.showSyncLocationBoundaries === true;
+        state.syncSegmentVisibility = userData.syncSegmentVisibility === true;
+        state.isGroundPolyline = object instanceof GroundPolyline;
         state.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled === true;
         state.dynamicSyncPreviousFrames = getDynamicSyncFrameCount(
             userData.dynamicSyncPreviousFrames,
@@ -334,7 +373,11 @@ export default function useEditClass() {
         let boxTitle = $$('box-title');
         state.resultInstances = tempObjects.map((e) => {
             let userData = e.userData as Required<IUserData>;
-            let is3D = e instanceof Box;
+            let is3D =
+                e instanceof Box ||
+                e instanceof GroundPolygon ||
+                e instanceof GroundPolyline ||
+                e instanceof IrregularWall;
             let info = $$('cloud-object');
             if (!is3D) {
                 let isRect = e instanceof Rect;
@@ -565,6 +608,7 @@ export default function useEditClass() {
                 syncMaxDisappearGap: state.syncMaxDisappearGap,
                 syncLocationGapMs: state.syncLocationGapMs,
                 showSyncLocationBoundaries: state.showSyncLocationBoundaries,
+                syncSegmentVisibility: state.syncSegmentVisibility,
                 dynamicRangeSyncEnabled: state.dynamicRangeSyncEnabled,
                 dynamicSyncPreviousFrames: state.dynamicSyncPreviousFrames,
                 dynamicSyncNextFrames: state.dynamicSyncNextFrames,
@@ -619,6 +663,12 @@ export default function useEditClass() {
 
     function onShowSyncLocationBoundariesChange(value: boolean): void {
         state.showSyncLocationBoundaries = value !== false;
+        if (!state.trackId || !state.motionMode) return;
+        applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
+    }
+
+    function onSyncSegmentVisibilityChange(value: boolean): void {
+        state.syncSegmentVisibility = value === true;
         if (!state.trackId || !state.motionMode) return;
         applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
     }
@@ -745,6 +795,7 @@ export default function useEditClass() {
                 syncMaxDisappearGap: state.syncMaxDisappearGap,
                 syncLocationGapMs: state.syncLocationGapMs,
                 showSyncLocationBoundaries: state.showSyncLocationBoundaries,
+                syncSegmentVisibility: state.syncSegmentVisibility,
                 dynamicRangeSyncEnabled: state.dynamicRangeSyncEnabled,
                 dynamicSyncPreviousFrames: state.dynamicSyncPreviousFrames,
                 dynamicSyncNextFrames: state.dynamicSyncNextFrames,
@@ -886,6 +937,7 @@ export default function useEditClass() {
         onSyncMaxDisappearGapChange,
         onSyncLocationGapMsChange,
         onShowSyncLocationBoundariesChange,
+        onSyncSegmentVisibilityChange,
         onDynamicRangeSyncEnabledChange,
         onDynamicSyncPreviousFramesChange,
         onDynamicSyncNextFramesChange,
@@ -912,7 +964,12 @@ function getAnnotateByTrackId(annotates: AnnotateObject[], trackId: string) {
         let userData = obj.userData as Required<IUserData>;
         if (userData.trackId !== trackId) return;
 
-        if (obj instanceof Box) {
+        if (
+            obj instanceof Box ||
+            obj instanceof GroundPolygon ||
+            obj instanceof GroundPolyline ||
+            obj instanceof IrregularWall
+        ) {
             annotate3D.push(obj);
         } else {
             annotate2D.push(obj);
@@ -922,8 +979,9 @@ function getAnnotateByTrackId(annotates: AnnotateObject[], trackId: string) {
     return { annotate2D, annotate3D };
 }
 
-function get2DIndex(viewId: string) {
-    return parseInt((viewId.match(/[0-9]{1,5}$/) as any)[0]);
+function get2DIndex(viewId?: string) {
+    const match = viewId?.match(/[0-9]{1,5}$/);
+    return match ? parseInt(match[0]) : 0;
 }
 
 function getControl() {}

@@ -76,6 +76,8 @@ class PointCloud:
             fields.append('intensity')
         elif 'i' in all_fields:
             fields.append('i')
+        elif 'int' in all_fields:
+            fields.append('int')
 
         if extra_fields:
             for f in extra_fields:

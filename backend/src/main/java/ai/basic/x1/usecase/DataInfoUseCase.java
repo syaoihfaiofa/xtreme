@@ -2,6 +2,7 @@ package ai.basic.x1.usecase;
 
 import ai.basic.x1.adapter.api.config.DatasetInitialInfo;
 import ai.basic.x1.adapter.api.context.RequestContextHolder;
+import ai.basic.x1.adapter.dto.DataLabelBackupDTO;
 import ai.basic.x1.adapter.port.dao.*;
 import ai.basic.x1.adapter.port.dao.mybatis.extension.ExtendLambdaQueryWrapper;
 import ai.basic.x1.adapter.port.dao.mybatis.model.*;
@@ -47,6 +48,8 @@ import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
@@ -135,6 +138,9 @@ public class DataInfoUseCase {
 
     @Value("${file.tempPath:/tmp/xtreme1/}")
     private String tempPath;
+
+    @Value("${file.backupPath:/data/xtreme1/backups}")
+    private String backupPath;
 
     @Value("${export.data.version}")
     private String version;
@@ -950,6 +956,38 @@ public class DataInfoUseCase {
                         this::findExportDataIds,
                         this::processData))));
         return serialNumber;
+    }
+
+    /**
+     * Create a ground-truth-only export and persist its ZIP below the configured server backup
+     * root. The requested directory must be relative to that root so this API cannot write to an
+     * arbitrary server path.
+     */
+    public Long backupLabels(DataLabelBackupDTO dto) {
+        var query = new DataInfoQueryBO();
+        query.setDatasetId(dto.getDatasetId());
+        query.setIds(dto.getIds());
+        query.setSelectModelRunIds(Collections.singletonList(GROUND_TRUTH));
+        query.setDataFormat(DataFormatEnum.XTREME1);
+        query.setIncludeSourceData(false);
+        query.setBackupDirectory(resolveBackupDirectory(dto.getDestinationDirectory()));
+        return export(query);
+    }
+
+    private String resolveBackupDirectory(String destinationDirectory) {
+        try {
+            Path root = Paths.get(backupPath).toAbsolutePath().normalize();
+            Path destination = root.resolve(destinationDirectory).normalize();
+            if (!destination.startsWith(root)) {
+                throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+            }
+            return destination.toString();
+        } catch (RuntimeException e) {
+            if (e instanceof UsecaseException) {
+                throw e;
+            }
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
     }
 
 

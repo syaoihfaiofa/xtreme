@@ -31,6 +31,12 @@
                     <div class="img-title">{{ t('business.dataset.lidarBasic') }}</div>
                   </div>
                 </Radio>
+                <Radio :value="datasetTypeEnum.RECONSTRUCTION_FUSION">
+                  <div class="img-tool-form">
+                    <img src="../../../../assets/images/dataset/lidar_fusion.png" alt="" />
+                    <div class="img-title">3D Reconstruction</div>
+                  </div>
+                </Radio>
                 <Radio :value="datasetTypeEnum.IMAGE">
                   <div class="img-tool-form">
                     <img src="../../../../assets/images/dataset/image_type.png" alt="" />

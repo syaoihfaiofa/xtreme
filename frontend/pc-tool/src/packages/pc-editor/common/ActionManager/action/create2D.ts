@@ -6,8 +6,10 @@ import {
     Box2D,
     GroundPolygon,
     GroundPolyline,
+    IrregularWall,
     ProjectedPolygon,
     ProjectedPolyline,
+    ProjectedIrregularWall,
     AnnotateObject,
     utils,
 } from 'pc-render';
@@ -247,7 +249,9 @@ export const projectObject2D = define({
         let addObjects: AnnotateObject[] = [];
         let deleteObjects: AnnotateObject[] = [];
 
-        let annotate3D = editor.pc.getAnnotate3D() as Array<Box | GroundPolygon | GroundPolyline>;
+        let annotate3D = editor.pc.getAnnotate3D() as Array<
+            Box | GroundPolygon | GroundPolyline | IrregularWall
+        >;
         let annotate2D = editor.pc.getAnnotate2D();
         let views = editor.pc.renderViews.filter((e) =>
             e.name.startsWith(`${config.imgViewPrefix}`),
@@ -259,20 +263,28 @@ export const projectObject2D = define({
             selection.length === 1 &&
             (selection[0] instanceof Box ||
                 selection[0] instanceof GroundPolygon ||
-                selection[0] instanceof GroundPolyline)
+                selection[0] instanceof GroundPolyline ||
+                selection[0] instanceof IrregularWall)
         ) {
-            annotate3D = [selection[0] as Box | GroundPolygon | GroundPolyline];
+            annotate3D = [
+                selection[0] as Box | GroundPolygon | GroundPolyline | IrregularWall,
+            ];
         }
 
         let existMapRect = {} as Record<string, Record<string, Rect>>;
         let existMapBox2D = {} as Record<string, Record<string, Box2D>>;
         let existMapParking = {} as Record<string, Record<string, ProjectedPolygon>>;
         let existMapPolyline = {} as Record<string, Record<string, ProjectedPolyline>>;
+        let existMapIrregularWall = {} as Record<
+            string,
+            Record<string, ProjectedIrregularWall>
+        >;
         views.forEach((view) => {
             existMapRect[view.id] = {} as Record<string, Rect>;
             existMapBox2D[view.id] = {} as Record<string, Box2D>;
             existMapParking[view.id] = {} as Record<string, ProjectedPolygon>;
             existMapPolyline[view.id] = {} as Record<string, ProjectedPolyline>;
+            existMapIrregularWall[view.id] = {} as Record<string, ProjectedIrregularWall>;
         });
         annotate2D.forEach((object) => {
             let viewId = object.viewId;
@@ -300,6 +312,7 @@ export const projectObject2D = define({
                 (userData.projectedFromId || userData.trackId)
             ) {
                 existMapParking[viewId][userData.projectedFromId || userData.trackId || ''] = object;
+                if (userData.trackId) existMapParking[viewId][userData.trackId] = object;
             }
             if (
                 object instanceof ProjectedPolyline &&
@@ -307,6 +320,15 @@ export const projectObject2D = define({
                 (userData.projectedFromId || userData.trackId)
             ) {
                 existMapPolyline[viewId][userData.projectedFromId || userData.trackId || ''] = object;
+                if (userData.trackId) existMapPolyline[viewId][userData.trackId] = object;
+            }
+            if (
+                object instanceof ProjectedIrregularWall &&
+                existMapIrregularWall[viewId] &&
+                (userData.projectedFromId || userData.trackId)
+            ) {
+                existMapIrregularWall[viewId][userData.projectedFromId || userData.trackId || ''] = object;
+                if (userData.trackId) existMapIrregularWall[viewId][userData.trackId] = object;
             }
         });
 
@@ -318,13 +340,43 @@ export const projectObject2D = define({
             const projectionKey = object.uuid || trackId;
             views.forEach((view) => {
                 let viewId = view.id;
+                if (object instanceof IrregularWall) {
+                    const projectPoints = (points: THREE.Vector3[]) =>
+                        points.map((point) => {
+                            const projected = view.worldToImg(point.clone());
+                            return new THREE.Vector2(projected.x, projected.y);
+                        });
+                    const bottomPoints = projectPoints(object.bottomPoints);
+                    const topPoints = projectPoints(object.topPoints);
+                    const existing = existMapIrregularWall[viewId][projectionKey] ||
+                        existMapIrregularWall[viewId][trackId];
+                    if (existing && updateFlag) {
+                        existing.setPoints(bottomPoints, topPoints);
+                        existing.userData.projectedFromId = object.uuid;
+                        updateN++;
+                    } else if (!existing && createFlag) {
+                        const projection = new ProjectedIrregularWall(bottomPoints, topPoints);
+                        projection.viewId = viewId;
+                        projection.userData = {
+                            ...getProjectionUserData(userData),
+                            isProjection: true,
+                            projectedFromId: object.uuid,
+                        };
+                        setIdInfo(editor, projection.userData);
+                        projection.uuid = projection.userData.id as string;
+                        projection.color = `#${(object as any).color.getHexString()}`;
+                        addObjects.push(projection);
+                    }
+                    return;
+                }
                 if (object instanceof GroundPolyline) {
                     const points = object.points3D.map((point) => {
                         const projected = view.worldToImg(point.clone());
                         return new THREE.Vector2(projected.x, projected.y);
                     });
                     if (points.length >= 2) {
-                        const existing = existMapPolyline[viewId][projectionKey];
+                        const existing = existMapPolyline[viewId][projectionKey] ||
+                            existMapPolyline[viewId][trackId];
                         if (existing && updateFlag) {
                             existing.points.splice(0, existing.points.length, ...points);
                             existing.userData.projectedFromId = object.uuid;
@@ -348,7 +400,8 @@ export const projectObject2D = define({
                 if (object instanceof GroundPolygon) {
                     const projection = createParkingProjection(view, object);
                     if (projection) {
-                        const existing = existMapParking[viewId][projectionKey];
+                        const existing = existMapParking[viewId][projectionKey] ||
+                            existMapParking[viewId][trackId];
                         if (existing && updateFlag) {
                             existing.setPoints(projection.points);
                             existing.openingDirection.copy(projection.openingDirection);
@@ -360,8 +413,8 @@ export const projectObject2D = define({
                             projection.uuid = projection.userData.id as string;
                             addObjects.push(projection);
                         }
-                    } else if (existMapParking[viewId][projectionKey]) {
-                        deleteObjects.push(existMapParking[viewId][projectionKey]);
+                    } else if (existMapParking[viewId][projectionKey] || existMapParking[viewId][trackId]) {
+                        deleteObjects.push(existMapParking[viewId][projectionKey] || existMapParking[viewId][trackId]);
                     }
                     return;
                 }
@@ -472,6 +525,7 @@ export const projectObject2D = define({
             if (config.limitRect2Image) {
                 validRect(view, target);
             }
+            target.userData.projectedFromId = object.uuid;
 
             editor.pc.render();
         }
@@ -492,6 +546,7 @@ export const projectObject2D = define({
             let info2 = view.getBox2DBox(object);
             target.copyVector2Of4(info2.positionsFront as any, target.positions1);
             target.copyVector2Of4(info2.positionsBack as any, target.positions2);
+            target.userData.projectedFromId = object.uuid;
             // TODO:
             editor.pc.render();
         }
@@ -524,6 +579,7 @@ export const projectObject2D = define({
             userData.modelClass = object.userData.modelClass;
             userData.trackId = object.userData.trackId;
             userData.trackName = object.userData.trackName;
+            userData.projectedFromId = object.uuid;
 
             setIdInfo(editor, userData);
             userData.isProjection = true;

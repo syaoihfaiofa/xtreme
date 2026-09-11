@@ -190,6 +190,39 @@ public class ExportUseCase {
         } else {
             zipFile = ZipUtil.zip(srcPath, zipPath, true);
         }
+
+        // A label backup is intentionally written to the configured server volume instead of
+        // object storage. Mark it complete as soon as the file is durable on that volume.
+        if (query instanceof DataInfoQueryBO
+                && StrUtil.isNotBlank(((DataInfoQueryBO) query).getBackupDirectory())) {
+            try {
+                var backupDirectory = FileUtil.file(((DataInfoQueryBO) query).getBackupDirectory());
+                if (!backupDirectory.exists() && !backupDirectory.mkdirs()) {
+                    throw new IOException("Unable to create backup directory: " + backupDirectory);
+                }
+                if (!backupDirectory.isDirectory()) {
+                    throw new IOException("Backup destination is not a directory: " + backupDirectory);
+                }
+                FileUtil.copy(zipFile, new File(backupDirectory, FileUtil.getName(zipPath)), true);
+                exportRecordUsecase.saveOrUpdate(exportRecordBOBuilder
+                        .status(ExportStatusEnum.COMPLETED)
+                        .generatedNum(dataIds.size())
+                        .totalNum(dataIds.size())
+                        .updatedAt(OffsetDateTime.now())
+                        .build());
+            } catch (Exception e) {
+                logger.error("Write label backup to server directory failed", e);
+                exportRecordUsecase.saveOrUpdate(exportRecordBOBuilder
+                        .status(ExportStatusEnum.FAILED)
+                        .errorMessage(StrUtil.subWithLength(StrUtil.blankToDefault(e.getMessage(), e.getClass().getSimpleName()), 0, 4000))
+                        .updatedAt(OffsetDateTime.now())
+                        .build());
+            } finally {
+                FileUtil.del(zipFile);
+                FileUtil.del(srcPath);
+            }
+            return;
+        }
         var fileBO = FileBO.builder().name(FileUtil.getName(zipPath)).originalName(FileUtil.getName(zipPath)).bucketName(minioProp.getBucketName())
                 .size(zipFile.length()).path(path).type(FileUtil.getMimeType(path)).build();
         try {

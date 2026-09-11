@@ -1,5 +1,6 @@
 package ai.basic.x1.usecase;
 
+import ai.basic.x1.adapter.exception.ApiException;
 import ai.basic.x1.adapter.port.dao.DataAnnotationObjectDAO;
 import ai.basic.x1.adapter.port.dao.DataInfoDAO;
 import ai.basic.x1.adapter.port.dao.DatasetDAO;
@@ -22,7 +23,9 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
+import ai.basic.x1.usecase.exception.UsecaseCode;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -32,6 +35,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -73,6 +77,11 @@ public class TrackSyncUseCase {
     private static final String PENDING_SYNC_QUARTER_TURNS = "pendingSyncQuarterTurns";
     private static final String GROUND_POLYGON = "GROUND_POLYGON";
     private static final String GROUND_POLYLINE = "GROUND_POLYLINE";
+    private static final String IRREGULAR_WALL = "IRREGULAR_WALL";
+    private static final String PROJECTED_GROUND_POLYLINE = "2D_GROUND_POLYLINE";
+    private static final String PROJECTED_IRREGULAR_WALL = "2D_IRREGULAR_WALL";
+    private static final double TRACK_SPLIT_MATCH_TOLERANCE_M = 0.2;
+    private static final double TRACK_SPLIT_MIN_LENGTH_M = 0.01;
 
     @Autowired
     private DataAnnotationObjectDAO dataAnnotationObjectDAO;
@@ -152,6 +161,656 @@ public class TrackSyncUseCase {
                 .map(DataAnnotationObject::getDataId)
                 .distinct()
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Splits every row of a ground-polyline/irregular-wall track at one physical location.
+     * Validation is deliberately completed before the first database write so a divergent
+     * frame or stale 2D projection cannot leave the scene half split.
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public TrackSplitResult splitTrack(TrackSplitRequest request) {
+        if (request == null || request.dataId == null || StrUtil.isBlank(request.trackId)
+                || StrUtil.isBlank(request.objectType) || request.segmentIndex == null
+                || request.t == null) {
+            throw new IllegalArgumentException("dataId, trackId, objectType, segmentIndex and t are required");
+        }
+        if (request.t < 0 || request.t > 1) {
+            throw new IllegalArgumentException("The split ratio must be between zero and one");
+        }
+        if (!GROUND_POLYLINE.equals(request.objectType) && !IRREGULAR_WALL.equals(request.objectType)) {
+            throw new IllegalArgumentException("Only GROUND_POLYLINE and IRREGULAR_WALL can be split");
+        }
+
+        DataInfo sourceFrame = dataInfoDAO.getById(request.dataId);
+        if (sourceFrame == null || sourceFrame.getParentId() == null) {
+            throw new IllegalArgumentException(String.format("Scene frame not found: dataId=%s", request.dataId));
+        }
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sourceFrame.getParentId())
+                .eq(DataInfo::getIsDeleted, false)
+                .orderByAsc(DataInfo::getOrderName));
+        List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        List<DataAnnotationObject> sceneObjects = dataAnnotationObjectDAO.list(
+                Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId, frameIds));
+        List<Long> trackObjectIds = sceneObjects.stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .map(DataAnnotationObject::getId)
+                .collect(Collectors.toList());
+        if (trackObjectIds.isEmpty()) {
+            throw new IllegalArgumentException("The selected track object was not found");
+        }
+        List<DataAnnotationObject> trackObjects = dataAnnotationObjectDAO.list(
+                        Wrappers.lambdaQuery(DataAnnotationObject.class)
+                                .in(DataAnnotationObject::getId, trackObjectIds)
+                                .last("FOR UPDATE"))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .collect(Collectors.toList());
+        DataAnnotationObject source = trackObjects.stream()
+                .filter(object -> request.dataId.equals(object.getDataId()))
+                .filter(object -> request.objectType.equals(object.getClassAttributes().getStr("type")))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("The selected track object was not found"));
+        trackObjects = trackObjects.stream()
+                .filter(object -> sameClassId(object, classIdOf(source)))
+                .collect(Collectors.toList());
+        List<Long> incompatibleFrameIds = trackObjects.stream()
+                .filter(object -> {
+                    String type = object.getClassAttributes().getStr("type");
+                    boolean compatibleProjection =
+                            (GROUND_POLYLINE.equals(request.objectType)
+                                    && PROJECTED_GROUND_POLYLINE.equals(type))
+                            || (IRREGULAR_WALL.equals(request.objectType)
+                                    && PROJECTED_IRREGULAR_WALL.equals(type));
+                    return !request.objectType.equals(type) && !compatibleProjection;
+                })
+                .map(DataAnnotationObject::getDataId)
+                .collect(Collectors.toList());
+        if (!incompatibleFrameIds.isEmpty()) {
+            throwSplitConflict(incompatibleFrameIds);
+        }
+        List<DataAnnotationObject> shapes = trackObjects.stream()
+                .filter(object -> request.objectType.equals(object.getClassAttributes().getStr("type")))
+                .collect(Collectors.toList());
+        if (shapes.isEmpty()) {
+            throw new IllegalArgumentException("The selected track has no splittable objects");
+        }
+        Map<Long, Long> shapeCountsByFrame = shapes.stream().collect(Collectors.groupingBy(
+                DataAnnotationObject::getDataId, Collectors.counting()));
+        List<Long> duplicateFrameIds = shapeCountsByFrame.entrySet().stream()
+                .filter(entry -> entry.getValue() != 1)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+        if (!duplicateFrameIds.isEmpty()) {
+            throwSplitConflict(duplicateFrameIds);
+        }
+
+        Map<Long, Pose> poses = buildPoseByDataId(sourceFrame.getParentId(), frames, frameIds);
+        boolean worldVertical = useWorldVerticalSync(source.getClassAttributes());
+        Pose selectedPose = poses.get(source.getDataId());
+        if (selectedPose == null || !selectedPose.complete) {
+            throwSplitConflict(List.of(source.getDataId()));
+        }
+        String originalTrackName = StrUtil.blankToDefault(
+                source.getClassAttributes().getStr("trackName"), request.trackId);
+        String newTrackName = nextSplitTrackName(originalTrackName, sceneObjects);
+        String newTrackId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        List<DataAnnotationObject> inserts = new ArrayList<>();
+        Map<Long, ShapeSplit> splitByFrame = new HashMap<>();
+        List<Long> failedFrameIds = new ArrayList<>();
+
+        if (GROUND_POLYLINE.equals(request.objectType)) {
+            splitGroundPolylineTrack(request, source, shapes, poses, worldVertical,
+                    newTrackId, newTrackName, updates, inserts, splitByFrame, failedFrameIds);
+        } else {
+            splitIrregularWallTrack(request, source, shapes, poses, worldVertical,
+                    newTrackId, newTrackName, updates, inserts, splitByFrame, failedFrameIds);
+        }
+
+        List<DataAnnotationObject> projections = trackObjects.stream()
+                .filter(object -> PROJECTED_GROUND_POLYLINE.equals(
+                        object.getClassAttributes().getStr("type")))
+                .collect(Collectors.toList());
+        List<DataAnnotationObject> wallProjections = trackObjects.stream()
+                .filter(object -> PROJECTED_IRREGULAR_WALL.equals(
+                        object.getClassAttributes().getStr("type")))
+                .collect(Collectors.toList());
+        if (GROUND_POLYLINE.equals(request.objectType)) {
+            splitProjectedPolylines(projections, splitByFrame, newTrackId, newTrackName,
+                    updates, inserts, failedFrameIds);
+        } else {
+            splitProjectedIrregularWalls(wallProjections, splitByFrame, newTrackId, newTrackName,
+                    updates, inserts, failedFrameIds);
+        }
+        if (!failedFrameIds.isEmpty()) {
+            throwSplitConflict(failedFrameIds);
+        }
+
+        if (!updates.isEmpty()) {
+            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(updates);
+        }
+        if (!inserts.isEmpty()) {
+            dataAnnotationObjectDAO.getBaseMapper().insertBatch(inserts);
+        }
+        List<Long> affected = shapes.stream().map(DataAnnotationObject::getDataId)
+                .distinct().sorted().collect(Collectors.toList());
+        List<DataAnnotationObject> storedInserts = dataAnnotationObjectDAO.list(
+                        Wrappers.lambdaQuery(DataAnnotationObject.class)
+                                .in(DataAnnotationObject::getDataId, affected))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> newTrackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> sameClassId(object, classIdOf(source)))
+                .collect(Collectors.toList());
+        if (storedInserts.size() != inserts.size()) {
+            throw new IllegalStateException("The split objects could not be read back after creation");
+        }
+        List<DataAnnotationObjectBO> changed = new ArrayList<>();
+        changed.addAll(DefaultConverter.convert(updates, DataAnnotationObjectBO.class));
+        changed.addAll(DefaultConverter.convert(storedInserts, DataAnnotationObjectBO.class));
+        int projectionCount = GROUND_POLYLINE.equals(request.objectType)
+                ? projections.size() : wallProjections.size();
+        return new TrackSplitResult(request.trackId, originalTrackName, newTrackId, newTrackName,
+                affected, changed, shapes.size(), shapes.size(), projectionCount, projectionCount);
+    }
+
+    private void splitGroundPolylineTrack(
+            TrackSplitRequest request,
+            DataAnnotationObject source,
+            List<DataAnnotationObject> shapes,
+            Map<Long, Pose> poses,
+            boolean worldVertical,
+            String newTrackId,
+            String newTrackName,
+            List<DataAnnotationObject> updates,
+            List<DataAnnotationObject> inserts,
+            Map<Long, ShapeSplit> splitByFrame,
+            List<Long> failedFrameIds) {
+        JSONArray sourcePoints = source.getClassAttributes().getJSONObject("contour").getJSONArray("points");
+        if (!validSegment(sourcePoints, request.segmentIndex)) {
+            throw new IllegalArgumentException("Invalid source split segment");
+        }
+        JSONObject sourceCutLocal = interpolatePoint(
+                sourcePoints.getJSONObject(request.segmentIndex),
+                sourcePoints.getJSONObject(request.segmentIndex + 1), request.t);
+        if (!validSplitParts(splitPoints(sourcePoints, request.segmentIndex, request.t))) {
+            throw new IllegalArgumentException("The split point is too close to a polyline endpoint");
+        }
+        Pose sourcePose = poses.get(source.getDataId());
+        double[] cutWorld = localToWorld(getDouble(sourceCutLocal, "x"), getDouble(sourceCutLocal, "y"),
+                getDouble(sourceCutLocal, "z"), sourcePose, worldVertical);
+
+        for (DataAnnotationObject shape : shapes) {
+            Pose pose = poses.get(shape.getDataId());
+            if (pose == null || !pose.complete) {
+                failedFrameIds.add(shape.getDataId());
+                continue;
+            }
+            JSONObject attrs = shape.getClassAttributes();
+            JSONArray points = attrs.getJSONObject("contour").getJSONArray("points");
+            JSONArray worldPoints = polylineToWorld(points, pose, worldVertical);
+            SegmentHit hit = closestSegment(worldPoints, cutWorld[0], cutWorld[1]);
+            if (hit == null || hit.distance > TRACK_SPLIT_MATCH_TOLERANCE_M) {
+                failedFrameIds.add(shape.getDataId());
+                continue;
+            }
+            SplitParts parts = splitPoints(points, hit.segmentIndex, hit.t);
+            if (!validSplitParts(parts)) {
+                failedFrameIds.add(shape.getDataId());
+                continue;
+            }
+            String newFrontId = UUID.randomUUID().toString();
+            JSONObject leftAttrs = splitGroundPolylineAttributes(attrs, parts.left,
+                    hit.segmentIndex, hit.t, false, request.trackId, originalTrackName(attrs), null);
+            JSONObject rightAttrs = splitGroundPolylineAttributes(attrs, parts.right,
+                    hit.segmentIndex, hit.t, true, newTrackId, newTrackName, newFrontId);
+            shape.setClassAttributes(leftAttrs);
+            shape.setSourceId(-1L);
+            shape.setSourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW);
+            updates.add(shape);
+            DataAnnotationObject right = cloneForSplit(shape, rightAttrs);
+            inserts.add(right);
+            splitByFrame.put(shape.getDataId(), new ShapeSplit(points.size(), hit.segmentIndex,
+                    hit.t, 0, -1, 0, false, leftAttrs.getStr("frontId"), newFrontId));
+        }
+    }
+
+    private void splitIrregularWallTrack(
+            TrackSplitRequest request,
+            DataAnnotationObject source,
+            List<DataAnnotationObject> shapes,
+            Map<Long, Pose> poses,
+            boolean worldVertical,
+            String newTrackId,
+            String newTrackName,
+            List<DataAnnotationObject> updates,
+            List<DataAnnotationObject> inserts,
+            Map<Long, ShapeSplit> splitByFrame,
+            List<Long> failedFrameIds) {
+        String side = StrUtil.blankToDefault(request.side, "bottom");
+        if (!"bottom".equals(side) && !"top".equals(side)) {
+            throw new IllegalArgumentException("Irregular wall side must be bottom or top");
+        }
+        JSONObject sourceContour = source.getClassAttributes().getJSONObject("contour");
+        JSONArray sourceBottom = sourceContour.getJSONArray("bottomPoints");
+        JSONArray sourceTop = sourceContour.getJSONArray("topPoints");
+        if (sourceBottom == null || sourceBottom.size() < 2 || sourceTop == null || sourceTop.size() < 2) {
+            throw new IllegalArgumentException("Irregular wall split requires complete top and bottom edges");
+        }
+        JSONArray clicked = "top".equals(side) ? sourceTop : sourceBottom;
+        if (!validSegment(clicked, request.segmentIndex)) {
+            throw new IllegalArgumentException("Invalid source wall split segment");
+        }
+        double fraction = fractionAt(clicked, request.segmentIndex, request.t);
+        if ("top".equals(side) && isReverseAligned(sourceBottom, sourceTop)) fraction = 1 - fraction;
+        SplitParts sourceBottomParts = splitAtFraction(sourceBottom, fraction);
+        JSONArray orientedSourceTop = orientedTop(sourceBottom, sourceTop);
+        SplitParts sourceTopParts = splitAtFraction(orientedSourceTop, fraction);
+        if (!validSplitParts(sourceBottomParts) || !validSplitParts(sourceTopParts)) {
+            throw new IllegalArgumentException("The wall split point is too close to an endpoint");
+        }
+        Pose sourcePose = poses.get(source.getDataId());
+        double[] sourceBottomWorld = pointToWorld(sourceBottomParts.cut, sourcePose, worldVertical);
+        double[] sourceTopWorld = pointToWorld(sourceTopParts.cut, sourcePose, worldVertical);
+
+        for (DataAnnotationObject shape : shapes) {
+            Pose pose = poses.get(shape.getDataId());
+            if (pose == null || !pose.complete) {
+                failedFrameIds.add(shape.getDataId());
+                continue;
+            }
+            JSONObject attrs = shape.getClassAttributes();
+            JSONObject contour = attrs.getJSONObject("contour");
+            JSONArray bottom = contour.getJSONArray("bottomPoints");
+            JSONArray top = contour.getJSONArray("topPoints");
+            if (bottom == null || bottom.size() < 2 || top == null || top.size() < 2) {
+                failedFrameIds.add(shape.getDataId());
+                continue;
+            }
+            SplitParts bottomParts = splitAtFraction(bottom, fraction);
+            boolean topReversed = isReverseAligned(bottom, top);
+            JSONArray alignedTop = orientedTop(bottom, top);
+            SplitParts topParts = splitAtFraction(alignedTop, fraction);
+            if (!validSplitParts(bottomParts) || !validSplitParts(topParts)
+                    || worldDistanceXY(pointToWorld(bottomParts.cut, pose, worldVertical), sourceBottomWorld)
+                        > TRACK_SPLIT_MATCH_TOLERANCE_M
+                    || worldDistanceXY(pointToWorld(topParts.cut, pose, worldVertical), sourceTopWorld)
+                        > TRACK_SPLIT_MATCH_TOLERANCE_M) {
+                failedFrameIds.add(shape.getDataId());
+                continue;
+            }
+            String newFrontId = UUID.randomUUID().toString();
+            JSONObject leftAttrs = splitWallAttributes(attrs, bottomParts.left,
+                    topParts.left,
+                    request.trackId, originalTrackName(attrs), null);
+            JSONObject rightAttrs = splitWallAttributes(attrs, bottomParts.right,
+                    topParts.right,
+                    newTrackId, newTrackName, newFrontId);
+            shape.setClassAttributes(leftAttrs);
+            shape.setSourceId(-1L);
+            shape.setSourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW);
+            updates.add(shape);
+            inserts.add(cloneForSplit(shape, rightAttrs));
+            splitByFrame.put(shape.getDataId(), new ShapeSplit(bottom.size(), bottomParts.segmentIndex,
+                    bottomParts.t, top.size(), topParts.segmentIndex, topParts.t, topReversed,
+                    leftAttrs.getStr("frontId"), newFrontId));
+        }
+    }
+
+    private void splitProjectedIrregularWalls(
+            List<DataAnnotationObject> projections,
+            Map<Long, ShapeSplit> splitByFrame,
+            String newTrackId,
+            String newTrackName,
+            List<DataAnnotationObject> updates,
+            List<DataAnnotationObject> inserts,
+            List<Long> failedFrameIds) {
+        for (DataAnnotationObject projection : projections) {
+            ShapeSplit split = splitByFrame.get(projection.getDataId());
+            JSONObject attrs = projection.getClassAttributes();
+            JSONObject contour = attrs.getJSONObject("contour");
+            JSONArray bottom = contour == null ? null : contour.getJSONArray("bottomPoints");
+            JSONArray top = contour == null ? null : contour.getJSONArray("topPoints");
+            JSONObject meta = attrs.getJSONObject("meta");
+            String projectedFromId = StrUtil.blankToDefault(
+                    attrs.getStr("projectedFromId"), meta == null ? null : meta.getStr("projectedFromId"));
+            if (split == null || StrUtil.isBlank(split.originalFrontId)
+                    || !split.originalFrontId.equals(projectedFromId)
+                    || bottom == null || bottom.size() != split.originalPointCount
+                    || top == null || top.size() != split.originalTopPointCount) {
+                failedFrameIds.add(projection.getDataId());
+                continue;
+            }
+            JSONArray alignedTop = split.topReversed ? reversePoints(top) : copyPoints(top);
+            SplitParts bottomParts = splitPoints(bottom, split.segmentIndex, split.t);
+            SplitParts topParts = splitPoints(alignedTop, split.topSegmentIndex, split.topT);
+            if (!validSplitParts(bottomParts) || !validSplitParts(topParts)) {
+                failedFrameIds.add(projection.getDataId());
+                continue;
+            }
+            String newFrontId = UUID.randomUUID().toString();
+            JSONObject leftAttrs = splitWallAttributes(attrs, bottomParts.left, topParts.left,
+                    attrs.getStr("trackId"), originalTrackName(attrs), null);
+            JSONObject rightAttrs = splitWallAttributes(attrs, bottomParts.right, topParts.right,
+                    newTrackId, newTrackName, newFrontId);
+            rightAttrs.set("projectedFromId", split.newFrontId);
+            JSONObject rightMeta = rightAttrs.getJSONObject("meta");
+            if (rightMeta != null) rightMeta.set("projectedFromId", split.newFrontId);
+            projection.setClassAttributes(leftAttrs);
+            projection.setSourceId(-1L);
+            projection.setSourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW);
+            updates.add(projection);
+            inserts.add(cloneForSplit(projection, rightAttrs));
+        }
+    }
+
+    private static JSONArray reversePoints(JSONArray points) {
+        JSONArray result = new JSONArray();
+        for (int index = points.size() - 1; index >= 0; index--) {
+            result.add(copyPoint(points.getJSONObject(index)));
+        }
+        return result;
+    }
+
+    private void splitProjectedPolylines(
+            List<DataAnnotationObject> projections,
+            Map<Long, ShapeSplit> splitByFrame,
+            String newTrackId,
+            String newTrackName,
+            List<DataAnnotationObject> updates,
+            List<DataAnnotationObject> inserts,
+            List<Long> failedFrameIds) {
+        for (DataAnnotationObject projection : projections) {
+            ShapeSplit split = splitByFrame.get(projection.getDataId());
+            JSONObject attrs = projection.getClassAttributes();
+            JSONObject contour = attrs.getJSONObject("contour");
+            JSONArray points = contour == null ? null : contour.getJSONArray("points");
+            JSONObject meta = attrs.getJSONObject("meta");
+            String projectedFromId = StrUtil.blankToDefault(
+                    attrs.getStr("projectedFromId"), meta == null ? null : meta.getStr("projectedFromId"));
+            if (split == null || StrUtil.isBlank(split.originalFrontId)
+                    || !split.originalFrontId.equals(projectedFromId)
+                    || points == null || points.size() != split.originalPointCount) {
+                failedFrameIds.add(projection.getDataId());
+                continue;
+            }
+            SplitParts parts = splitPoints(points, split.segmentIndex, split.t);
+            if (!validSplitParts(parts)) {
+                failedFrameIds.add(projection.getDataId());
+                continue;
+            }
+            String newFrontId = UUID.randomUUID().toString();
+            JSONObject leftAttrs = copyAttributes(attrs);
+            leftAttrs.getJSONObject("contour").set("points", parts.left);
+            markManualSplit(leftAttrs, attrs.getStr("trackId"), originalTrackName(attrs), null);
+            JSONObject rightAttrs = copyAttributes(attrs);
+            rightAttrs.getJSONObject("contour").set("points", parts.right);
+            markManualSplit(rightAttrs, newTrackId, newTrackName, newFrontId);
+            rightAttrs.set("projectedFromId", split.newFrontId);
+            JSONObject rightMeta = rightAttrs.getJSONObject("meta");
+            if (rightMeta != null) rightMeta.set("projectedFromId", split.newFrontId);
+            projection.setClassAttributes(leftAttrs);
+            projection.setSourceId(-1L);
+            projection.setSourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW);
+            updates.add(projection);
+            inserts.add(cloneForSplit(projection, rightAttrs));
+        }
+    }
+
+    private static JSONObject splitGroundPolylineAttributes(JSONObject attrs, JSONArray points,
+                                                             int splitSegment, double splitT, boolean right,
+                                                             String trackId, String trackName,
+                                                             String frontId) {
+        JSONObject result = copyAttributes(attrs);
+        JSONObject contour = result.getJSONObject("contour");
+        contour.set("points", points);
+        for (String key : List.of("segmentVisibilityByView", "segmentForceVisibleByView")) {
+            JSONObject visibility = contour.getJSONObject(key);
+            if (visibility != null) {
+                contour.set(key, sliceVisibility(visibility, splitSegment, splitT, right));
+            }
+        }
+        markManualSplit(result, trackId, trackName, frontId);
+        return result;
+    }
+
+    private static JSONObject splitWallAttributes(JSONObject attrs, JSONArray bottom, JSONArray top,
+                                                   String trackId, String trackName, String frontId) {
+        JSONObject result = copyAttributes(attrs);
+        JSONObject contour = result.getJSONObject("contour");
+        contour.set("bottomPoints", bottom);
+        contour.set("topPoints", top);
+        if (PROJECTED_IRREGULAR_WALL.equals(result.getStr("type"))) {
+            JSONArray points = copyPoints(bottom);
+            points.addAll(copyPoints(top));
+            contour.set("points", points);
+        } else {
+            contour.set("points", copyPoints(bottom));
+        }
+        markManualSplit(result, trackId, trackName, frontId);
+        return result;
+    }
+
+    static JSONObject sliceVisibility(JSONObject visibility, int splitSegment, boolean right) {
+        return sliceVisibility(visibility, splitSegment, 0.5, right);
+    }
+
+    private static JSONObject sliceVisibility(JSONObject visibility, int splitSegment,
+                                               double splitT, boolean right) {
+        JSONObject result = new JSONObject();
+        boolean atStart = splitT <= GEOMETRY_EPSILON;
+        boolean atEnd = splitT >= 1 - GEOMETRY_EPSILON;
+        int rightOffset = atEnd ? splitSegment + 1 : splitSegment;
+        for (String viewKey : visibility.keySet()) {
+            JSONArray source = visibility.getJSONArray(viewKey);
+            JSONArray target = new JSONArray();
+            if (source != null) {
+                for (Object value : source) {
+                    JSONObject entry = value instanceof JSONObject ? (JSONObject) value : JSONUtil.parseObj(value);
+                    Integer storedIndex = entry.getInt("index");
+                    int oldIndex = storedIndex == null ? -1 : storedIndex;
+                    boolean includeLeft = oldIndex < splitSegment || (!atStart && oldIndex == splitSegment);
+                    boolean includeRight = oldIndex > splitSegment || (!atEnd && oldIndex == splitSegment);
+                    if ((!right && includeLeft) || (right && includeRight)) {
+                        JSONObject next = copyAttributes(entry);
+                        next.set("index", right ? oldIndex - rightOffset : oldIndex);
+                        target.add(next);
+                    }
+                }
+            }
+            result.set(viewKey, target);
+        }
+        return result;
+    }
+
+    private static void markManualSplit(JSONObject attrs, String trackId, String trackName, String frontId) {
+        attrs.set("trackId", trackId);
+        attrs.set("trackName", trackName);
+        attrs.set("reviewedCorrect", false);
+        attrs.set("manualModified", true);
+        attrs.set("sourceId", -1L);
+        attrs.set("sourceType", DataAnnotationObjectSourceTypeEnum.DATA_FLOW.name());
+        if (frontId != null) {
+            attrs.set("id", frontId);
+            attrs.set("frontId", frontId);
+            attrs.remove("backId");
+            JSONObject meta = attrs.getJSONObject("meta");
+            if (meta != null) meta.remove("backId");
+        }
+    }
+
+    private static DataAnnotationObject cloneForSplit(DataAnnotationObject source, JSONObject attrs) {
+        return DataAnnotationObject.builder()
+                .datasetId(source.getDatasetId())
+                .dataId(source.getDataId())
+                .classId(source.getClassId())
+                .classAttributes(attrs)
+                .sourceId(-1L)
+                .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW)
+                .createdAt(OffsetDateTime.now())
+                .createdBy(source.getCreatedBy())
+                .build();
+    }
+
+    private static JSONObject copyAttributes(JSONObject attrs) {
+        return JSONUtil.parseObj(JSONUtil.toJsonStr(attrs));
+    }
+
+    private static String originalTrackName(JSONObject attrs) {
+        return StrUtil.blankToDefault(attrs.getStr("trackName"), attrs.getStr("trackId"));
+    }
+
+    private static String nextSplitTrackName(String original, List<DataAnnotationObject> sceneObjects) {
+        Set<String> names = sceneObjects.stream()
+                .map(DataAnnotationObject::getClassAttributes)
+                .filter(ObjectUtil::isNotNull)
+                .map(attrs -> attrs.getStr("trackName"))
+                .filter(StrUtil::isNotBlank)
+                .collect(Collectors.toSet());
+        String base = StrUtil.blankToDefault(original, "track") + "-B";
+        if (!names.contains(base)) return base;
+        for (int suffix = 2; ; suffix++) {
+            String candidate = base + "-" + suffix;
+            if (!names.contains(candidate)) return candidate;
+        }
+    }
+
+    private static boolean validSegment(JSONArray points, int index) {
+        return points != null && index >= 0 && index < points.size() - 1;
+    }
+
+    private static SplitParts splitPoints(JSONArray points, int segmentIndex, double t) {
+        JSONArray left = new JSONArray();
+        JSONArray right = new JSONArray();
+        if (t <= GEOMETRY_EPSILON) {
+            JSONObject cut = copyPoint(points.getJSONObject(segmentIndex));
+            for (int index = 0; index <= segmentIndex; index++) left.add(copyPoint(points.getJSONObject(index)));
+            for (int index = segmentIndex; index < points.size(); index++) right.add(copyPoint(points.getJSONObject(index)));
+            return new SplitParts(left, right, cut, segmentIndex, 0);
+        }
+        if (t >= 1 - GEOMETRY_EPSILON) {
+            JSONObject cut = copyPoint(points.getJSONObject(segmentIndex + 1));
+            for (int index = 0; index <= segmentIndex + 1; index++) left.add(copyPoint(points.getJSONObject(index)));
+            for (int index = segmentIndex + 1; index < points.size(); index++) right.add(copyPoint(points.getJSONObject(index)));
+            return new SplitParts(left, right, cut, segmentIndex, 1);
+        }
+        for (int index = 0; index <= segmentIndex; index++) left.add(copyPoint(points.getJSONObject(index)));
+        JSONObject cut = interpolatePoint(points.getJSONObject(segmentIndex), points.getJSONObject(segmentIndex + 1), t);
+        left.add(copyPoint(cut));
+        right.add(copyPoint(cut));
+        for (int index = segmentIndex + 1; index < points.size(); index++) right.add(copyPoint(points.getJSONObject(index)));
+        return new SplitParts(left, right, cut, segmentIndex, t);
+    }
+
+    static SplitParts splitAtFraction(JSONArray points, double fraction) {
+        if (points == null || points.size() < 2 || fraction <= 0 || fraction >= 1) return null;
+        double total = polylineLength(points);
+        double target = total * fraction;
+        double passed = 0;
+        for (int index = 0; index < points.size() - 1; index++) {
+            double length = pointDistance(points.getJSONObject(index), points.getJSONObject(index + 1));
+            if (passed + length >= target && length > GEOMETRY_EPSILON) {
+                return splitPoints(points, index, (target - passed) / length);
+            }
+            passed += length;
+        }
+        return null;
+    }
+
+    private static double fractionAt(JSONArray points, int segmentIndex, double t) {
+        double total = polylineLength(points);
+        double passed = 0;
+        for (int index = 0; index < segmentIndex; index++) {
+            passed += pointDistance(points.getJSONObject(index), points.getJSONObject(index + 1));
+        }
+        passed += pointDistance(points.getJSONObject(segmentIndex), points.getJSONObject(segmentIndex + 1)) * t;
+        return total <= GEOMETRY_EPSILON ? 0 : passed / total;
+    }
+
+    private static double polylineLength(JSONArray points) {
+        double length = 0;
+        for (int index = 0; points != null && index < points.size() - 1; index++) {
+            length += pointDistance(points.getJSONObject(index), points.getJSONObject(index + 1));
+        }
+        return length;
+    }
+
+    private static double pointDistance(JSONObject first, JSONObject second) {
+        double dx = getDouble(second, "x") - getDouble(first, "x");
+        double dy = getDouble(second, "y") - getDouble(first, "y");
+        double dz = getDouble(second, "z") - getDouble(first, "z");
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    private static boolean validSplitParts(SplitParts parts) {
+        return parts != null && parts.left.size() >= 2 && parts.right.size() >= 2
+                && polylineLength(parts.left) >= TRACK_SPLIT_MIN_LENGTH_M
+                && polylineLength(parts.right) >= TRACK_SPLIT_MIN_LENGTH_M;
+    }
+
+    private static SegmentHit closestSegment(JSONArray points, double x, double y) {
+        SegmentHit best = null;
+        for (int index = 0; points != null && index < points.size() - 1; index++) {
+            JSONObject start = points.getJSONObject(index);
+            JSONObject end = points.getJSONObject(index + 1);
+            double dx = getDouble(end, "x") - getDouble(start, "x");
+            double dy = getDouble(end, "y") - getDouble(start, "y");
+            double lengthSquared = dx * dx + dy * dy;
+            if (lengthSquared <= GEOMETRY_EPSILON) continue;
+            double t = Math.max(0, Math.min(1,
+                    ((x - getDouble(start, "x")) * dx + (y - getDouble(start, "y")) * dy) / lengthSquared));
+            double px = getDouble(start, "x") + dx * t;
+            double py = getDouble(start, "y") + dy * t;
+            double distance = Math.hypot(x - px, y - py);
+            if (best == null || distance < best.distance) best = new SegmentHit(index, t, distance);
+        }
+        return best;
+    }
+
+    private static boolean isReverseAligned(JSONArray bottom, JSONArray top) {
+        if (bottom == null || top == null || bottom.size() < 2 || top.size() < 2) return false;
+        JSONObject bottomStart = bottom.getJSONObject(0);
+        JSONObject bottomEnd = bottom.getJSONObject(bottom.size() - 1);
+        JSONObject topStart = top.getJSONObject(0);
+        JSONObject topEnd = top.getJSONObject(top.size() - 1);
+        return pointDistance(bottomStart, topEnd) + pointDistance(bottomEnd, topStart)
+                < pointDistance(bottomStart, topStart) + pointDistance(bottomEnd, topEnd);
+    }
+
+    static JSONArray orientedTop(JSONArray bottom, JSONArray top) {
+        JSONArray result = new JSONArray();
+        if (top == null) return result;
+        if (isReverseAligned(bottom, top)) {
+            for (int index = top.size() - 1; index >= 0; index--) result.add(copyPoint(top.getJSONObject(index)));
+        } else {
+            result.addAll(copyPoints(top));
+        }
+        return result;
+    }
+
+    private static double[] pointToWorld(JSONObject point, Pose pose, boolean worldVertical) {
+        return localToWorld(getDouble(point, "x"), getDouble(point, "y"), getDouble(point, "z"), pose, worldVertical);
+    }
+
+    private static double worldDistanceXY(double[] first, double[] second) {
+        if (first == null || second == null) return Double.POSITIVE_INFINITY;
+        return Math.hypot(first[0] - second[0], first[1] - second[1]);
+    }
+
+    private static void throwSplitConflict(List<Long> frameIds) {
+        List<Long> failures = frameIds.stream().distinct().sorted().collect(Collectors.toList());
+        Map<String, Object> data = new HashMap<>();
+        data.put("frameIds", failures);
+        throw new ApiException(HttpStatus.CONFLICT, UsecaseCode.PARAM_ERROR,
+                "Track split failed because some frames cannot be mapped", data);
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -302,6 +961,13 @@ public class TrackSyncUseCase {
                         source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
             }
             return SyncResult.empty();
+        }
+        if (isIrregularWall(attrs) && MOTION_STATIC.equals(motionMode)) {
+            requireScenePose(poseByDataId, source.getDataId());
+            double syncRadius = getPositiveDouble(
+                    attrs, "syncDistance", DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M);
+            return syncIrregularWall(
+                    source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
         }
 
         // existing annotation rows across the whole scene, so we can decide insert vs update vs delete
@@ -563,7 +1229,10 @@ public class TrackSyncUseCase {
         Map<Long, DataAnnotationObject> existingByDataId = existingObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> sameClass(object, source))
+                // A track retains its identity when an annotator changes class
+                // (for example car -> parkingspace).  Matching the old target
+                // row by class here would insert a second P annotation instead
+                // of updating that row to the source class.
                 .filter(object -> isGroundPolygon(object.getClassAttributes()))
                 .collect(Collectors.toMap(
                         DataAnnotationObject::getDataId,
@@ -597,16 +1266,25 @@ public class TrackSyncUseCase {
                 targetPoints.add(targetPoint);
             }
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
-            if (distanceToGroundShapeFootprint(targetPoints) > syncRadius) {
+            // The source frame is the user-confirmed parking-slot annotation and
+            // must never be deleted by the propagation radius check.  Only target
+            // frames outside the sync range are omitted/removed.
+            if (
+                    !frame.getId().equals(source.getDataId())
+                            && distanceToGroundShapeFootprint(targetPoints) > syncRadius) {
                 if (existing != null) {
                     deleteIds.add(existing.getId());
                 }
                 continue;
             }
             contour.set("points", targetPoints);
+            attrs.set("classId", source.getClassId());
             attrs.set("type", "GROUND_POLYGON");
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
+            // Keep the target editor's sync settings aligned with the source,
+            // including the user's choice to preserve local Z on later syncs.
+            attrs.set("syncUseZ", getBoolean(sourceAttrs, "syncUseZ", true));
             attrs.set("syncDistance", syncRadius);
             attrs.set("parkingOpeningEdge", "P3_P0");
             if (existing == null) {
@@ -641,10 +1319,14 @@ public class TrackSyncUseCase {
                             source.getDataId(), trackId));
         }
         Pose sourcePose = poseByDataId.get(source.getDataId());
+        // Curb walls and other ground polylines use the same source geometry for every
+        // target frame in this request. Keep its world representation local to this call.
+        JSONArray sourceWorldPoints = polylineToWorld(sourcePoints, sourcePose, syncWorldVertical);
         Map<Long, DataAnnotationObject> existingByDataId = existingObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> sameClass(object, source))
+                // See syncGroundPolygon: class changes must update an existing
+                // ground-shape track rather than fork it into a second row.
                 .filter(object -> isGroundPolyline(object.getClassAttributes()))
                 .collect(Collectors.toMap(
                         DataAnnotationObject::getDataId,
@@ -659,11 +1341,18 @@ public class TrackSyncUseCase {
         double wallHeight = Math.max(0D, getDouble(sourceAttrs, "wallHeight"));
         boolean showSyncLocationBoundaries = getBoolean(
                 sourceAttrs, "showSyncLocationBoundaries", false);
+        boolean syncSegmentVisibility = shouldSyncSegmentVisibility(sourceAttrs);
 
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
         List<Long> deleteIds = new ArrayList<>();
         for (DataInfo frame : frames) {
+            // The source row was saved before entering sync and is the user-approved
+            // truth. Propagation radius rules apply only to target frames; otherwise a
+            // curb drawn farther than its configured radius can delete its own source.
+            if (frame.getId().equals(source.getDataId())) {
+                continue;
+            }
             if (!reachableFrameIds.contains(frame.getId())) {
                 continue;
             }
@@ -690,12 +1379,11 @@ public class TrackSyncUseCase {
                 attrs.set("autoCurbOcclusionPending", true);
             }
             JSONArray existingPoints = null;
-            if (existing != null && existing.getClassAttributes() != null) {
+            if (syncSegmentVisibility && existing != null && existing.getClassAttributes() != null) {
                 JSONObject existingContour = existing.getClassAttributes().getJSONObject("contour");
                 existingPoints = existingContour == null ? null : existingContour.getJSONArray("points");
             }
-            JSONArray projectedPoints = resolveSyncedGroundPolyline(
-                    sourcePoints, sourcePose, existingPoints, targetPose, syncRadius, syncWorldVertical);
+            JSONArray projectedPoints = polylineToLocal(sourceWorldPoints, targetPose, syncWorldVertical);
             PolylineDistanceMask distanceMask = splitGroundPolylineByRadius(
                     projectedPoints, syncRadius);
             if (isGroundPolylineFullyOutside(distanceMask.outsideSegments)) {
@@ -704,16 +1392,16 @@ public class TrackSyncUseCase {
                 }
                 continue;
             }
-            JSONArray visibilityReferencePoints = existingPoints == null
-                    ? projectedPoints
-                    : existingPoints;
             contour.set("points", distanceMask.points);
             if (existing == null) {
                 // The target frame must start with no source-frame visibility state.  Its own
                 // camera-local visibility is calculated once by the editor when opened.
                 contour.remove("segmentVisibilityByView");
                 contour.remove("segmentForceVisibleByView");
-            } else {
+            } else if (syncSegmentVisibility) {
+                JSONArray visibilityReferencePoints = existingPoints == null
+                        ? projectedPoints
+                        : existingPoints;
                 contour.set("segmentVisibilityByView", buildDistanceVisibility(
                         contour.getJSONObject("segmentVisibilityByView"),
                         visibilityReferencePoints,
@@ -721,12 +1409,15 @@ public class TrackSyncUseCase {
                         distanceMask.outsideSegments));
             }
             attrs.set("type", GROUND_POLYLINE);
+            attrs.set("classId", source.getClassId());
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
+            attrs.set("syncUseZ", getBoolean(sourceAttrs, "syncUseZ", true));
             attrs.set("syncDistance", syncRadius);
             attrs.set("syncMaxDisappearGap", maxDisappearGap);
             attrs.set("wallHeight", wallHeight);
             attrs.set("showSyncLocationBoundaries", showSyncLocationBoundaries);
+            attrs.set("syncSegmentVisibility", syncSegmentVisibility);
             if (existing == null) {
                 inserts.add(DataAnnotationObject.builder()
                         .datasetId(source.getDatasetId())
@@ -742,6 +1433,79 @@ public class TrackSyncUseCase {
                 existing.setClassId(source.getClassId());
                 existing.setClassAttributes(attrs);
                 updates.add(existing);
+            }
+        }
+        return applyChanges(inserts, updates, deleteIds);
+    }
+
+    private SyncResult syncIrregularWall(DataAnnotationObjectBO source, String trackId, double syncRadius,
+                                         List<DataInfo> frames, Map<Long, Pose> poseByDataId,
+                                         boolean syncWorldVertical, List<DataAnnotationObject> existingObjects) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        JSONObject sourceContour = sourceAttrs.getJSONObject("contour");
+        JSONArray sourceBottom = sourceContour == null ? null : sourceContour.getJSONArray("bottomPoints");
+        JSONArray sourceTop = sourceContour == null ? null : sourceContour.getJSONArray("topPoints");
+        if (sourceBottom == null || sourceBottom.size() < 2 || (sourceTop != null && sourceTop.size() == 1)) {
+            throw new IllegalArgumentException("Irregular wall requires a bottom polyline and an optional complete top polyline");
+        }
+        Pose sourcePose = poseByDataId.get(source.getDataId());
+        // The source wall and its pose are immutable for this sync request. Convert each
+        // boundary once, then only transform the cached world points into each target frame.
+        // Keeping this cache local to the request means a later edit or pose update always
+        // starts from freshly computed world coordinates.
+        JSONArray sourceBottomWorld = polylineToWorld(sourceBottom, sourcePose, syncWorldVertical);
+        JSONArray sourceTopWorld = sourceTop == null || sourceTop.isEmpty()
+                ? new JSONArray()
+                : polylineToWorld(sourceTop, sourcePose, syncWorldVertical);
+        Map<Long, DataAnnotationObject> existingByDataId = existingObjects.stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                // Ground-shape identity is trackId plus shape type, not class.
+                .filter(object -> isIrregularWall(object.getClassAttributes()))
+                .collect(Collectors.toMap(DataAnnotationObject::getDataId, object -> object, (first, ignored) -> first));
+        List<DataAnnotationObject> inserts = new ArrayList<>();
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        List<Long> deleteIds = new ArrayList<>();
+        for (DataInfo frame : frames) {
+            // As with ground polylines, the source wall is not a propagation target.
+            // It must never be removed merely because it lies outside syncDistance.
+            if (frame.getId().equals(source.getDataId())) {
+                continue;
+            }
+            Pose targetPose = poseByDataId.get(frame.getId());
+            if (targetPose == null || !targetPose.complete) continue;
+            JSONArray bottomPoints = polylineToLocal(sourceBottomWorld, targetPose, syncWorldVertical);
+            if (distanceToGroundShapeFootprint(bottomPoints) > syncRadius) {
+                DataAnnotationObject existing = existingByDataId.get(frame.getId());
+                if (existing != null) deleteIds.add(existing.getId());
+                continue;
+            }
+            JSONArray topPoints = sourceTopWorld.isEmpty()
+                    ? new JSONArray()
+                    : polylineToLocal(sourceTopWorld, targetPose, syncWorldVertical);
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
+                    existing == null ? sourceAttrs : existing.getClassAttributes()));
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (contour == null) { contour = new JSONObject(); attrs.set("contour", contour); }
+            contour.set("bottomPoints", bottomPoints);
+            contour.set("topPoints", topPoints);
+            // Keep a conventional points contour for clients that use the bottom
+            // boundary for generic shape indexing.
+            contour.set("points", bottomPoints);
+            attrs.set("classId", source.getClassId());
+            attrs.set("type", IRREGULAR_WALL);
+            attrs.set("trackId", trackId);
+            attrs.set("motionMode", MOTION_STATIC);
+            attrs.set("syncUseZ", getBoolean(sourceAttrs, "syncUseZ", true));
+            attrs.set("syncDistance", syncRadius);
+            if (existing == null) {
+                inserts.add(DataAnnotationObject.builder().datasetId(source.getDatasetId()).dataId(frame.getId())
+                        .classId(source.getClassId()).classAttributes(attrs).sourceId(-1L)
+                        .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW).createdAt(OffsetDateTime.now())
+                        .createdBy(source.getCreatedBy()).build());
+            } else {
+                existing.setClassId(source.getClassId()); existing.setClassAttributes(attrs); updates.add(existing);
             }
         }
         return applyChanges(inserts, updates, deleteIds);
@@ -1902,7 +2666,7 @@ public class TrackSyncUseCase {
         return classId.equals(objClassId);
     }
 
-    private static boolean sameClass(DataAnnotationObject obj, DataAnnotationObjectBO source) {
+    static boolean sameClass(DataAnnotationObject obj, DataAnnotationObjectBO source) {
         Long sourceClassId = source.getClassId();
         if (sourceClassId == null && source.getClassAttributes() != null) {
             sourceClassId = source.getClassAttributes().getLong("classId");
@@ -1913,7 +2677,12 @@ public class TrackSyncUseCase {
         }
         String sourceType = classTypeOf(source.getClassAttributes());
         String objType = classTypeOf(obj.getClassAttributes());
-        return StrUtil.isNotBlank(sourceType) && sourceType.equals(objType);
+        if (StrUtil.isNotBlank(sourceType) || StrUtil.isNotBlank(objType)) {
+            return StrUtil.isNotBlank(sourceType) && sourceType.equals(objType);
+        }
+        // Unclassified ground shapes are valid sync targets. A missing class on
+        // both rows means they belong to the same unclassified track variant.
+        return sourceClassId == null && objClassId == null;
     }
 
     private static Long classIdOf(DataAnnotationObject obj) {
@@ -1967,7 +2736,8 @@ public class TrackSyncUseCase {
     private static boolean hasSyncableObject(DataAnnotationObject object) {
         return hasSyncableBox(object)
                 || isGroundPolygon(object.getClassAttributes())
-                || isGroundPolyline(object.getClassAttributes());
+                || isGroundPolyline(object.getClassAttributes())
+                || isIrregularWall(object.getClassAttributes());
     }
 
     private static boolean isGroundPolygon(JSONObject attrs) {
@@ -1985,6 +2755,23 @@ public class TrackSyncUseCase {
         }
         JSONObject contour = attrs.getJSONObject("contour");
         return contour != null && contour.getJSONArray("points") != null;
+    }
+
+    /**
+     * Per-track opt-in for the expensive per-view segment visibility remapping performed while
+     * propagating a ground polyline. Missing legacy metadata deliberately means disabled.
+     */
+    static boolean shouldSyncSegmentVisibility(JSONObject attrs) {
+        return getBoolean(attrs, "syncSegmentVisibility", false);
+    }
+
+    private static boolean isIrregularWall(JSONObject attrs) {
+        if (attrs == null || !IRREGULAR_WALL.equals(attrs.getStr("type"))) return false;
+        JSONObject contour = attrs.getJSONObject("contour");
+        JSONArray bottomPoints = contour == null ? null : contour.getJSONArray("bottomPoints");
+        JSONArray topPoints = contour == null ? null : contour.getJSONArray("topPoints");
+        return bottomPoints != null && bottomPoints.size() >= 2
+                && (topPoints == null || topPoints.isEmpty() || topPoints.size() >= 2);
     }
 
     private SyncResult applyChanges(List<DataAnnotationObject> toInsert, List<DataAnnotationObject> toUpdate,
@@ -2022,6 +2809,127 @@ public class TrackSyncUseCase {
             dataAnnotationObjectDAO.removeBatchByIds(toDeleteIds);
         }
         return new SyncResult(affectedDataIds);
+    }
+
+    public static class TrackSplitRequest {
+        private Long dataId;
+        private String trackId;
+        private Long classId;
+        private String objectType;
+        private Integer segmentIndex;
+        private Double t;
+        private String side;
+
+        public Long getDataId() { return dataId; }
+        public void setDataId(Long dataId) { this.dataId = dataId; }
+        public String getTrackId() { return trackId; }
+        public void setTrackId(String trackId) { this.trackId = trackId; }
+        public Long getClassId() { return classId; }
+        public void setClassId(Long classId) { this.classId = classId; }
+        public String getObjectType() { return objectType; }
+        public void setObjectType(String objectType) { this.objectType = objectType; }
+        public Integer getSegmentIndex() { return segmentIndex; }
+        public void setSegmentIndex(Integer segmentIndex) { this.segmentIndex = segmentIndex; }
+        public Double getT() { return t; }
+        public void setT(Double t) { this.t = t; }
+        public String getSide() { return side; }
+        public void setSide(String side) { this.side = side; }
+    }
+
+    public static class TrackSplitResult {
+        private final String originalTrackId;
+        private final String originalTrackName;
+        private final String newTrackId;
+        private final String newTrackName;
+        private final List<Long> affectedDataIds;
+        private final List<DataAnnotationObjectBO> objects;
+        private final int updatedObjectCount;
+        private final int createdObjectCount;
+        private final int updatedProjectionCount;
+        private final int createdProjectionCount;
+
+        TrackSplitResult(String originalTrackId, String originalTrackName,
+                         String newTrackId, String newTrackName,
+                         List<Long> affectedDataIds, List<DataAnnotationObjectBO> objects,
+                         int updatedObjectCount, int createdObjectCount,
+                         int updatedProjectionCount, int createdProjectionCount) {
+            this.originalTrackId = originalTrackId;
+            this.originalTrackName = originalTrackName;
+            this.newTrackId = newTrackId;
+            this.newTrackName = newTrackName;
+            this.affectedDataIds = affectedDataIds;
+            this.objects = objects;
+            this.updatedObjectCount = updatedObjectCount;
+            this.createdObjectCount = createdObjectCount;
+            this.updatedProjectionCount = updatedProjectionCount;
+            this.createdProjectionCount = createdProjectionCount;
+        }
+
+        public String getOriginalTrackId() { return originalTrackId; }
+        public String getOriginalTrackName() { return originalTrackName; }
+        public String getNewTrackId() { return newTrackId; }
+        public String getNewTrackName() { return newTrackName; }
+        public List<Long> getAffectedDataIds() { return affectedDataIds; }
+        public List<DataAnnotationObjectBO> getObjects() { return objects; }
+        public int getUpdatedObjectCount() { return updatedObjectCount; }
+        public int getCreatedObjectCount() { return createdObjectCount; }
+        public int getUpdatedProjectionCount() { return updatedProjectionCount; }
+        public int getCreatedProjectionCount() { return createdProjectionCount; }
+    }
+
+    static class SplitParts {
+        final JSONArray left;
+        final JSONArray right;
+        final JSONObject cut;
+        final int segmentIndex;
+        final double t;
+
+        SplitParts(JSONArray left, JSONArray right, JSONObject cut, int segmentIndex, double t) {
+            this.left = left;
+            this.right = right;
+            this.cut = cut;
+            this.segmentIndex = segmentIndex;
+            this.t = t;
+        }
+    }
+
+    private static class SegmentHit {
+        final int segmentIndex;
+        final double t;
+        final double distance;
+
+        SegmentHit(int segmentIndex, double t, double distance) {
+            this.segmentIndex = segmentIndex;
+            this.t = t;
+            this.distance = distance;
+        }
+    }
+
+    private static class ShapeSplit {
+        final int originalPointCount;
+        final int segmentIndex;
+        final double t;
+        final int originalTopPointCount;
+        final int topSegmentIndex;
+        final double topT;
+        final boolean topReversed;
+        final String originalFrontId;
+        final String newFrontId;
+
+        ShapeSplit(int originalPointCount, int segmentIndex, double t,
+                   int originalTopPointCount, int topSegmentIndex, double topT,
+                   boolean topReversed,
+                   String originalFrontId, String newFrontId) {
+            this.originalPointCount = originalPointCount;
+            this.segmentIndex = segmentIndex;
+            this.t = t;
+            this.originalTopPointCount = originalTopPointCount;
+            this.topSegmentIndex = topSegmentIndex;
+            this.topT = topT;
+            this.topReversed = topReversed;
+            this.originalFrontId = originalFrontId;
+            this.newFrontId = newFrontId;
+        }
     }
 
     public static class SyncResult {

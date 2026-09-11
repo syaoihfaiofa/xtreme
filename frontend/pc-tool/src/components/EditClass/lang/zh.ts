@@ -31,6 +31,7 @@ const zh: ILocale = {
     'sync-max-disappear-gap': '最大连续消失帧数',
     'sync-location-gap': 'Location 断档阈值',
     'show-sync-location-boundaries': '显示 Location 断档线',
+    'sync-segment-visibility': '同步时重算线段可见性',
     'sync-use-z': '同步时使用Z',
     'sync-yaw-offset': '同步Yaw偏移',
     'sync-x-offset': '同步X偏移',

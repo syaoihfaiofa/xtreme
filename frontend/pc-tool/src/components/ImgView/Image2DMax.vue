@@ -55,6 +55,7 @@
         Image2DRenderView,
         Event,
         Rect,
+        Box,
         Box2D,
         Transform2DAction,
         utils,
@@ -203,7 +204,11 @@
         matrix.copy(camera.projectionMatrix);
         matrix.multiply(camera.matrixWorldInverse);
 
-        let objects = view.get3DObject();
+        // Image labels use the cuboid projection helper below. Ground polylines
+        // happen to have a line geometry, while an IrregularWall is a Group with
+        // no `geometry` of its own; passing either shape to isBoxInImage makes a
+        // frame resource load fail while the selected track is being restored.
+        let objects = view.get3DObject().filter((object): object is Box => object instanceof Box);
         // @ts-ignore
         let list = [] as any[];
         let pos = new THREE.Vector3();
@@ -311,6 +316,10 @@
         height: 100%;
         padding: 1px;
         position: absolute;
+        // The main point-cloud P editor uses a z-indexed DOM handle layer.
+        // A maximized image must form a higher stacking layer so those underlying
+        // four handles cannot bleed through it.
+        z-index: 20;
         font-size: 14px;
         color: white;
         background: black;

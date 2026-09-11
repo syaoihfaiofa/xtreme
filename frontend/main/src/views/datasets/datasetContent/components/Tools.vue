@@ -26,6 +26,11 @@
       :filterForm="filterForm"
       @setExportRecord="setExportRecord"
     />
+    <BackupLabelsModal
+      :datasetId="id as unknown as string"
+      :selectedList="props.selectedList"
+      @register="registerBackupLabelsModal"
+    />
     <SplitedModal
       v-if="showSplitedModal"
       @register="registerSplitedModal"
@@ -71,6 +76,9 @@
         </Button>
         <Button class="ml-2" type="default" @click="handleOpenExport" :size="ButtonSize.LG">
           {{ t('common.exportText') }}
+        </Button>
+        <Button class="ml-2" type="default" @click="handleOpenBackupLabels" :size="ButtonSize.LG">
+          {{ t('business.datasetContent.backupLabels') }}
         </Button>
         <template v-if="datasetType === datasetTypeEnum.LIDAR_FUSION && pageType !== PageTypeEnum.frame">
           <Button
@@ -340,6 +348,7 @@
   import UploadModal from './upload/UploadModal.vue';
   import ProgressModal from './upload/ProgressModal.vue';
   import ExportModal from './ExportModal.vue';
+  import BackupLabelsModal from './BackupLabelsModal.vue';
   import SplitedModal from './splitedModal.vue';
 
   import { exportDataRecordCallBack } from '/@/api/business/dataset';
@@ -554,6 +563,7 @@
   /** Export */
   const exportResultList = ref<exportFileRecord[]>([]);
   const [registerExportModal, { openModal: openExportModal }] = useModal();
+  const [registerBackupLabelsModal, { openModal: openBackupLabelsModal }] = useModal();
   const [registerSplitedModal, { openModal: openSplitedModal, closeModal: closeSplitedModal }] =
     useModal();
   let showSplitedModal = ref(false);
@@ -565,6 +575,9 @@
   // Open
   const handleOpenExport = async () => {
     openExportModal();
+  };
+  const handleOpenBackupLabels = () => {
+    openBackupLabelsModal();
   };
   const handleOpenSplited = async () => {
     // showSplitedModal  Destroy the pop-up assembly

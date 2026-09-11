@@ -7,6 +7,7 @@ import {
     Box,
     GroundPolygon,
     GroundPolyline,
+    IrregularWall,
 } from 'pc-render';
 import { Vector2Of4 } from 'pc-render';
 import CmdManager from './common/CmdManager';
@@ -66,6 +67,8 @@ export default class Editor extends THREE.EventDispatcher {
     needUpdateFilter: boolean = true;
     eventSource: string = '';
     private selectedGroundPolylineVertex?: { object: GroundPolyline; index: number };
+    private selectedGroundPolygonVertex?: { object: GroundPolygon; index: number };
+    private selectedIrregularWallVertex?: { object: IrregularWall; side: 'bottom' | 'top'; index: number };
     private copiedAnnotations: AnnotateObject[] = [];
     private lastMainViewPointer?: THREE.Vector2;
     private readonly trackMainViewPointer = (event: PointerEvent): void => {
@@ -162,6 +165,8 @@ export default class Editor extends THREE.EventDispatcher {
         let config = this.state.config;
         this.pc.addEventListener(RenderEvent.SELECT, (data) => {
             this.clearSelectedGroundPolylineVertex();
+            this.clearSelectedGroundPolygonVertex();
+            this.clearSelectedIrregularWallVertex();
             let selection = this.pc.selection;
             let box = selection.find((annotate) => annotate instanceof Box);
             // update translate status
@@ -195,12 +200,44 @@ export default class Editor extends THREE.EventDispatcher {
     }
 
     setSelectedGroundPolylineVertex(object: GroundPolyline, index: number): void {
+        // Vertex selection is global across the main/side views.  Keep only one
+        // concrete vertex target so Delete and keyboard nudging cannot act on a
+        // stale vertex from a previously selected shape type.
+        this.selectedIrregularWallVertex = undefined;
+        this.selectedGroundPolygonVertex = undefined;
         this.selectedGroundPolylineVertex = { object, index };
         this.pc.render();
     }
 
     clearSelectedGroundPolylineVertex(): void {
         this.selectedGroundPolylineVertex = undefined;
+    }
+
+    setSelectedGroundPolygonVertex(object: GroundPolygon, index: number): void {
+        this.selectedGroundPolylineVertex = undefined;
+        this.selectedIrregularWallVertex = undefined;
+        this.selectedGroundPolygonVertex = { object, index };
+        this.pc.render();
+    }
+
+    clearSelectedGroundPolygonVertex(): void {
+        this.selectedGroundPolygonVertex = undefined;
+    }
+
+    getSelectedGroundPolygonVertex(): { object: GroundPolygon; index: number } | undefined {
+        const selected = this.selectedGroundPolygonVertex;
+        if (
+            !selected ||
+            !this.pc.selection.includes(selected.object) ||
+            selected.object.parent !== this.pc.annotate3D ||
+            !selected.object.visible ||
+            selected.index < 0 ||
+            selected.index >= selected.object.points3D.length
+        ) {
+            this.selectedGroundPolygonVertex = undefined;
+            return undefined;
+        }
+        return selected;
     }
 
     getSelectedGroundPolylineVertex(): { object: GroundPolyline; index: number } | undefined {
@@ -215,6 +252,36 @@ export default class Editor extends THREE.EventDispatcher {
             selected.object.isVisibilityBoundaryPoint(selected.index)
         ) {
             this.selectedGroundPolylineVertex = undefined;
+            return undefined;
+        }
+        return selected;
+    }
+
+    setSelectedIrregularWallVertex(object: IrregularWall, side: 'bottom' | 'top', index: number): void {
+        this.selectedGroundPolylineVertex = undefined;
+        this.selectedGroundPolygonVertex = undefined;
+        this.selectedIrregularWallVertex = { object, side, index };
+        this.pc.render();
+    }
+
+    clearSelectedIrregularWallVertex(): void {
+        this.selectedIrregularWallVertex = undefined;
+        this.pc.render();
+    }
+
+    getSelectedIrregularWallVertex(): { object: IrregularWall; side: 'bottom' | 'top'; index: number } | undefined {
+        const selected = this.selectedIrregularWallVertex;
+        const points = selected?.side === 'bottom' ? selected.object.bottomPoints : selected?.object.topPoints;
+        if (
+            !selected ||
+            !this.pc.selection.includes(selected.object) ||
+            selected.object.parent !== this.pc.annotate3D ||
+            !selected.object.visible ||
+            !points ||
+            selected.index < 0 ||
+            selected.index >= points.length
+        ) {
+            this.selectedIrregularWallVertex = undefined;
             return undefined;
         }
         return selected;
@@ -391,8 +458,14 @@ export default class Editor extends THREE.EventDispatcher {
     //     }
     // }
     getCurTrack() {
-        let box = this.pc.selection.find((object) => object instanceof Box);
-        return box ? box.userData.trackId : '';
+        const object = this.pc.selection.find(
+            (candidate) =>
+                candidate instanceof Box ||
+                candidate instanceof GroundPolygon ||
+                candidate instanceof GroundPolyline ||
+                candidate instanceof IrregularWall,
+        );
+        return object ? object.userData.trackId : '';
     }
 
     copySelectedAnnotations(): number {
@@ -400,7 +473,8 @@ export default class Editor extends THREE.EventDispatcher {
             (object): object is AnnotateObject =>
                 object instanceof Box ||
                 object instanceof GroundPolygon ||
-                object instanceof GroundPolyline,
+                object instanceof GroundPolyline ||
+                object instanceof IrregularWall,
         );
         this.copiedAnnotations = selected
             .map((object) => this.cloneAnnotation(object, false))
@@ -439,7 +513,17 @@ export default class Editor extends THREE.EventDispatcher {
     private moveAnnotationsToPointer(objects: AnnotateObject[], target: THREE.Vector3): void {
         const centers = objects.map((object) => {
             if (object instanceof Box) return object.position.clone();
-            return new THREE.Box3().setFromPoints(object.points3D).getCenter(new THREE.Vector3());
+            if (object instanceof IrregularWall) {
+                return new THREE.Box3()
+                    .setFromPoints([...object.bottomPoints, ...object.topPoints])
+                    .getCenter(new THREE.Vector3());
+            }
+            if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+                return new THREE.Box3()
+                    .setFromPoints(object.points3D)
+                    .getCenter(new THREE.Vector3());
+            }
+            return new THREE.Vector3();
         });
         const anchor = centers
             .reduce((sum, center) => sum.add(center), new THREE.Vector3())
@@ -452,6 +536,11 @@ export default class Editor extends THREE.EventDispatcher {
                 object.updateMatrixWorld();
             } else if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
                 object.setPoints(object.points3D.map((point) => point.clone().add(offset)));
+            } else if (object instanceof IrregularWall) {
+                object.setPoints(
+                    object.bottomPoints.map((point) => point.clone().add(offset)),
+                    object.topPoints.map((point) => point.clone().add(offset)),
+                );
             }
         });
     }
@@ -499,6 +588,8 @@ export default class Editor extends THREE.EventDispatcher {
             polyline.setSegmentVisibleByView(source.segmentVisibleByView);
             polyline.setSegmentForceVisibleByView(source.segmentForceVisibleByView);
             clone = polyline;
+        } else if (source instanceof IrregularWall) {
+            clone = utils.createIrregularWall(this, source.bottomPoints, source.topPoints, userData);
         } else {
             return null;
         }
@@ -587,7 +678,7 @@ export default class Editor extends THREE.EventDispatcher {
             if (obj instanceof Box) {
                 // obj.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
                 obj.color.setStyle(displayColor);
-            } else if (obj instanceof GroundPolygon || obj instanceof GroundPolyline) {
+            } else if (obj instanceof GroundPolygon || obj instanceof GroundPolyline || obj instanceof IrregularWall) {
                 obj.setColor(displayColor);
             } else {
                 obj.color = displayColor;
@@ -618,6 +709,24 @@ export default class Editor extends THREE.EventDispatcher {
             changedObjects.push(object);
         });
         if (changedObjects.length > 0) this.updateObjectRenderInfo(changedObjects);
+    }
+
+    markSyncDirtyForGroundShape(object: AnnotateObject): void {
+        if (this.eventSource === 'lidar-fusion-sync') return;
+        if (
+            !(object instanceof GroundPolygon ||
+                object instanceof GroundPolyline ||
+                object instanceof IrregularWall)
+        ) {
+            return;
+        }
+        const userData = object.userData as IUserData;
+        const motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
+        // Ground shapes currently support static propagation only. Do not show an
+        // unsynced state for a mode that cannot be synchronized.
+        if (motionMode !== MotionMode.STATIC || userData.syncDirty === true) return;
+        userData.syncDirty = true;
+        this.updateObjectRenderInfo(object);
     }
 
     // set get

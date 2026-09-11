@@ -42,12 +42,26 @@ function getShaderCode(
     uniform vec3 singleColor;
     uniform float openIntensity;
     uniform float brightness;
+    uniform float rgbEnhance;
+    uniform float rgbEnhanceRadius;
+    uniform float rgbEnhanceContrast;
+    uniform float rgbEnhanceMinBrightness;
+    uniform float rgbLocalContrast;
+    uniform float rgbLocalContrastStrength;
+    uniform float rgbHighlightBoost;
+    uniform float rgbHighlightThreshold;
+    uniform float rgbHighlightStrength;
+    uniform float hideNonGroundRgb;
+    uniform float sideViewContrast;
+    uniform vec3 sideViewContrastCenters[4];
+    uniform float sideViewContrastRadius;
 
     attribute float road;
     uniform float colorRoad;
 
     #ifdef FLAG_COLOR
     attribute vec3 color;
+    attribute float localLuminance;
     #endif
 
     // intensity
@@ -156,6 +170,64 @@ function getShaderCode(
         {
             #ifdef FLAG_COLOR
             vColor = color / 255.0;
+            if(rgbLocalContrast > 0.0){
+                float luminance = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
+                float enhancedLuminance = clamp(
+                    localLuminance + (luminance - localLuminance) * rgbLocalContrastStrength,
+                    0.0,
+                    1.0
+                );
+                vColor *= enhancedLuminance / max(luminance, 0.001);
+            }
+            // The upstream sky/non-ground points encode RGB as the intensity value.
+            // Use that exact encoding rather than a height threshold, so sloped
+            // ground and naturally white lane markings remain visible.
+            #ifdef FLAG_INTENSITY
+            if(
+                hideNonGroundRgb > 0.0 &&
+                // PCD RGB/intensity channels often pass through a float-to-uint8
+                // conversion independently.  Keep a practical tolerance so sky
+                // points encoded as RGB=intensity do not leak through as white.
+                abs(color.r - intensity) < 12.0 &&
+                abs(color.g - intensity) < 12.0 &&
+                abs(color.b - intensity) < 12.0
+            ){
+                vDiscard = 1.0;
+            }
+            #endif
+            // Apply contrast through luminance so neutral lane markings are enhanced
+            // too, while retaining the source image hue for chromatic points.
+            // RGB enhancement is limited to a horizontal range around the LiDAR origin.
+            if(
+                rgbEnhance > 0.0 &&
+                length(position.xy) <= rgbEnhanceRadius
+            ){
+                float luminance = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
+                // Soft contrast preserves the requested strength near the middle
+                // while avoiding hard clipping of dark points to invisible black.
+                float enhancedLuminance = 1.0 / (1.0 + exp(-4.0 * rgbEnhanceContrast * (luminance - 0.5)));
+                vColor *= enhancedLuminance / max(luminance, 0.001);
+                vColor = mix(vec3(rgbEnhanceMinBrightness), vec3(1.0), vColor);
+            }
+            if(rgbHighlightBoost > 0.0){
+                float luminance = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
+                float boost = smoothstep(rgbHighlightThreshold, 1.0, luminance) * rgbHighlightStrength;
+                vColor *= 1.0 + boost;
+            }
+            // Only enabled while editing a selected 3D box in a side view.
+            // Preserve the original hue while expanding local RGB differences.
+            if(sideViewContrast > 0.0){
+                bool inContrastArea = false;
+                for(int i = 0; i < 4; i++){
+                    if(distance(position, sideViewContrastCenters[i]) <= sideViewContrastRadius){
+                        inContrastArea = true;
+                    }
+                }
+                if(inContrastArea){
+                    // Strong local contrast with a dark-gray floor; never clip to black.
+                    vColor = clamp((vColor - 0.5) * 10.00 + 0.5, 0.12, 1.0);
+                }
+            }
             #endif
         } else if(colorMode == 3.0) {
             #ifdef FLAG_V
@@ -287,6 +359,19 @@ export interface IUniformOption {
     colorRoad?: number;
     openIntensity?: 1 | -1;
     brightness?: number;
+    rgbEnhance?: 1 | -1;
+    rgbEnhanceRadius?: number;
+    rgbEnhanceContrast?: number;
+    rgbEnhanceMinBrightness?: number;
+    rgbLocalContrast?: 1 | -1;
+    rgbLocalContrastStrength?: number;
+    rgbHighlightBoost?: 1 | -1;
+    rgbHighlightThreshold?: number;
+    rgbHighlightStrength?: number;
+    hideNonGroundRgb?: 1 | -1;
+    sideViewContrast?: 1 | -1;
+    sideViewContrastCenters?: THREE.Vector3[];
+    sideViewContrastRadius?: number;
     velocityRange?: THREE.Vector2;
     pointVelocity?: THREE.Vector2;
     // intensity
@@ -322,6 +407,21 @@ export default class PointsMaterial extends THREE.RawShaderMaterial {
                 intensityRange: { value: new THREE.Vector2(0, 255) },
                 velocityRange: { value: new THREE.Vector2() },
                 brightness: { value: 1 },
+                rgbEnhance: { value: 1 },
+                rgbEnhanceRadius: { value: 10 },
+                rgbEnhanceContrast: { value: 9 },
+                rgbEnhanceMinBrightness: { value: 0.08 },
+                rgbLocalContrast: { value: 1 },
+                rgbLocalContrastStrength: { value: 1 },
+                rgbHighlightBoost: { value: 1 },
+                rgbHighlightThreshold: { value: 0.12 },
+                rgbHighlightStrength: { value: 3.5 },
+                hideNonGroundRgb: { value: 1 },
+                sideViewContrast: { value: -1 },
+                sideViewContrastCenters: {
+                    value: Array.from({ length: 4 }, () => new THREE.Vector3(1e6, 1e6, 1e6)),
+                },
+                sideViewContrastRadius: { value: 0.6 },
                 // filter
                 hasFilterBox: { value: -1 },
                 boxInfo: {

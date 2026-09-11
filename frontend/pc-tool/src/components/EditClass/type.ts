@@ -53,6 +53,8 @@ export interface IState {
     syncMaxDisappearGap: number;
     syncLocationGapMs: number;
     showSyncLocationBoundaries: boolean;
+    syncSegmentVisibility: boolean;
+    isGroundPolyline: boolean;
     dynamicRangeSyncEnabled: boolean;
     dynamicSyncPreviousFrames: number;
     dynamicSyncNextFrames: number;

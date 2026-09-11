@@ -27,6 +27,7 @@ export default class InsertGroundPolylinePoint extends CmdBase<
             };
         }
         object.insertPointAfter(segmentIndex, point);
+        this.editor.markSyncDirtyForGroundShape(object);
         this.editor.dataManager.setGroundPolygonPoints(object, object.points3D);
     }
 

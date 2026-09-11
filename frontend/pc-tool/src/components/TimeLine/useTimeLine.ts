@@ -742,7 +742,7 @@ export default function useBottom() {
         });
     }
 
-    // A review is a Track-level decision for the 3D cuboid. 2D projection boxes
+    // A review is a Track-level decision for a syncable 3D object. 2D projections
     // share its track id but are not independently reviewed.
     function isReviewTarget(object: any) {
         const userData = object.userData || object;
@@ -751,6 +751,8 @@ export default function useBottom() {
             !!userData.trackId &&
             (objectType === ObjectType.TYPE_3D_BOX ||
                 objectType === ObjectType.TYPE_3D ||
+                objectType === ObjectType.TYPE_GROUND_POLYLINE ||
+                objectType === ObjectType.TYPE_IRREGULAR_WALL ||
                 (!!object.center3D && !!object.size3D))
         );
     }

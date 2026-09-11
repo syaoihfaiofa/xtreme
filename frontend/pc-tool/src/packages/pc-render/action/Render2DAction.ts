@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import Image2DRenderView from '../renderView/Image2DRenderView';
 import { Event } from '../config';
 import Action from './Action';
-import { Object2D, Rect, Box2D, Box, GroundPolygon, GroundPolyline, ProjectedPolygon, ProjectedPolyline } from '../objects';
+import { Object2D, Rect, Box2D, Box, GroundPolygon, GroundPolyline, IrregularWall, ProjectedPolygon, ProjectedPolyline, ProjectedIrregularWall, AnnotateObject } from '../objects';
 import EditGroundPolylineVisibility2DAction from './EditGroundPolylineVisibility2DAction';
 import { renderBox2D, renderRect } from '../utils';
 import {
@@ -214,6 +214,7 @@ export default class Render2DAction extends Action {
             ? source.getSegmentForceVisibleForView(viewKey)
             : undefined;
         if (source && this.renderView.isFisheye()) {
+            this.renderGroundPolylineHeightPlane(source, obj, color, lineWidth);
             this.renderPolylineSegments(
                 source.points3D,
                 (point) => {
@@ -229,6 +230,7 @@ export default class Render2DAction extends Action {
             );
             return;
         }
+        this.renderGroundPolylineHeightPlane(source, obj, color, lineWidth);
         this.renderPolylineSegments(
             obj.points,
             (point) => point.clone(),
@@ -242,20 +244,181 @@ export default class Render2DAction extends Action {
         );
     }
 
+    private renderGroundPolylineHeightPlane(
+        source: GroundPolyline | null,
+        projection: ProjectedPolyline,
+        color: string,
+        lineWidth: number,
+    ): void {
+        if (!source || source.wallHeight <= 0 || projection.points.length < 2) return;
+        const top = source.points3D.map((point) => {
+            const world = point.clone();
+            world.z += source.wallHeight;
+            const image = this.renderView.worldToImg(world);
+            return new THREE.Vector2(image.x, image.y);
+        });
+        if (top.length !== projection.points.length) return;
+        this.renderFlatWallFace(projection.points, top, color);
+        this.renderPolylineSegments(top, (point) => point.clone(), color, lineWidth * 1.5, undefined, undefined, false);
+        if (this.renderView.isFisheye()) {
+            this.renderFisheyeSideEdge(
+                source.points3D[0],
+                source.points3D[0].clone().add(new THREE.Vector3(0, 0, source.wallHeight)),
+                color,
+                lineWidth,
+            );
+            this.renderFisheyeSideEdge(
+                source.points3D.at(-1)!,
+                source.points3D.at(-1)!.clone().add(new THREE.Vector3(0, 0, source.wallHeight)),
+                color,
+                lineWidth,
+            );
+        }
+    }
+
+    renderProjectedIrregularWall(obj: ProjectedIrregularWall, lineWidth: number) {
+        const pointCloud = this.renderView.pointCloud;
+        const source = this.findSourceIrregularWall(obj);
+        const selected =
+            pointCloud.selectionMap[obj.uuid] || (source && pointCloud.selectionMap[source.uuid]);
+        const color = selected ? `#${pointCloud.selectColor.getHexString()}` : obj.color;
+        const renderBoundary = (stored: THREE.Vector2[], world?: THREE.Vector3[]) => {
+            if (source && world && this.renderView.isFisheye()) {
+                this.renderPolylineSegments(
+                    world,
+                    (point) => {
+                        const value = this.renderView.worldToImg(point.clone());
+                        return new THREE.Vector2(value.x, value.y);
+                    },
+                    color,
+                    lineWidth * 2,
+                    undefined,
+                    undefined,
+                    true,
+                    stored,
+                );
+                return;
+            }
+            this.renderPolylineSegments(
+                stored,
+                (point) => point.clone(),
+                color,
+                lineWidth * 2,
+                undefined,
+                undefined,
+                false,
+            );
+        };
+
+        if (obj.bottomPoints.length >= 2 && obj.topPoints.length >= 2) {
+            const topReversed = source
+                ? this.isIrregularWallTopReversed(source.bottomPoints, source.topPoints)
+                : this.isIrregularWallTopReversed(obj.bottomPoints, obj.topPoints);
+            this.renderFlatWallFace(
+                obj.bottomPoints,
+                topReversed ? [...obj.topPoints].reverse() : obj.topPoints,
+                color,
+            );
+            if (source && this.renderView.isFisheye()) {
+                const alignedTop = topReversed ? [...source.topPoints].reverse() : source.topPoints;
+                if (alignedTop.length >= 2) {
+                    this.renderFisheyeSideEdge(source.bottomPoints[0], alignedTop[0], color, lineWidth);
+                    this.renderFisheyeSideEdge(
+                        source.bottomPoints.at(-1)!,
+                        alignedTop.at(-1)!,
+                        color,
+                        lineWidth,
+                    );
+                }
+            }
+        }
+        renderBoundary(obj.bottomPoints, source?.bottomPoints);
+        renderBoundary(obj.topPoints, source?.topPoints);
+    }
+
+    private renderFlatWallFace(bottom: THREE.Vector2[], top: THREE.Vector2[], color: string): void {
+        if (bottom.length < 2 || top.length < 2) return;
+        const { context } = this.renderView.proxy;
+        context.save();
+        context.fillStyle = color;
+        context.globalAlpha = 0.18;
+        context.beginPath();
+        context.moveTo(bottom[0].x, bottom[0].y);
+        bottom.slice(1).forEach((point) => context.lineTo(point.x, point.y));
+        [...top].reverse().forEach((point) => context.lineTo(point.x, point.y));
+        context.closePath();
+        context.fill();
+        context.restore();
+    }
+
+    private renderFisheyeSideEdge(
+        bottom: THREE.Vector3,
+        top: THREE.Vector3,
+        color: string,
+        lineWidth: number,
+    ): void {
+        this.renderPolylineSegments(
+            [bottom, top],
+            (point) => {
+                const image = this.renderView.worldToImg(point.clone());
+                return new THREE.Vector2(image.x, image.y);
+            },
+            color,
+            lineWidth,
+            undefined,
+            undefined,
+            true,
+        );
+    }
+
+    private isIrregularWallTopReversed(
+        bottom: Array<THREE.Vector2 | THREE.Vector3>,
+        top: Array<THREE.Vector2 | THREE.Vector3>,
+    ): boolean {
+        const distance = (
+            first: THREE.Vector2 | THREE.Vector3,
+            second: THREE.Vector2 | THREE.Vector3,
+        ) => Math.hypot(
+            first.x - second.x,
+            first.y - second.y,
+            ('z' in first ? first.z : 0) - ('z' in second ? second.z : 0),
+        );
+        const direct = distance(bottom[0], top[0]) +
+            distance(bottom.at(-1)!, top.at(-1)!);
+        const reversed = distance(bottom[0], top.at(-1)!) +
+            distance(bottom.at(-1)!, top[0]);
+        return reversed < direct;
+    }
+
     private findSourceGroundPolyline(obj: ProjectedPolyline): GroundPolyline | null {
         const sourceId = obj.userData?.projectedFromId as string | undefined;
-        if (!sourceId) {
-            return null;
-        }
-        const source = this.renderView.pointCloud
-            .getAnnotate3D()
-            .find((object) => object instanceof GroundPolyline && object.uuid === sourceId);
+        const trackId = obj.userData?.trackId as string | undefined;
+        const source = (this.renderView.pointCloud
+            .getAnnotate3D() as AnnotateObject[])
+            .find((object) =>
+                object instanceof GroundPolyline &&
+                (object.uuid === sourceId || (!!trackId && object.userData?.trackId === trackId)),
+            );
+        if (source instanceof GroundPolyline) obj.userData.projectedFromId = source.uuid;
         return source instanceof GroundPolyline ? source : null;
+    }
+
+    private findSourceIrregularWall(obj: ProjectedIrregularWall): IrregularWall | null {
+        const sourceId = obj.userData?.projectedFromId as string | undefined;
+        const trackId = obj.userData?.trackId as string | undefined;
+        const source = (this.renderView.pointCloud
+            .getAnnotate3D() as AnnotateObject[])
+            .find((object) =>
+                object instanceof IrregularWall &&
+                (object.uuid === sourceId || (!!trackId && object.userData?.trackId === trackId)),
+            );
+        if (source instanceof IrregularWall) obj.userData.projectedFromId = source.uuid;
+        return source instanceof IrregularWall ? source : null;
     }
 
     private renderPolylineSegments(
         points: THREE.Vector3[] | THREE.Vector2[],
-        project: (point: THREE.Vector3) => THREE.Vector2,
+        project: (point: any) => THREE.Vector2,
         color: string,
         lineWidth: number,
         segmentVisible: boolean[] | undefined,
@@ -268,16 +431,7 @@ export default class Render2DAction extends Action {
             return;
         }
         const { context } = this.renderView.proxy;
-        const flags =
-            segmentVisible && segmentVisible.length === points.length - 1
-                ? segmentVisible
-                : Array.from({ length: points.length - 1 }, () => true);
-        const forceVisibleFlags =
-            segmentForceVisible && segmentForceVisible.length === points.length - 1
-                ? segmentForceVisible
-                : Array.from({ length: points.length - 1 }, () => false);
         const visibleEdges: Array<[THREE.Vector2, THREE.Vector2]> = [];
-        const hiddenEdges: Array<[THREE.Vector2, THREE.Vector2]> = [];
         context.save();
         const cameraViews = uniqueCameraViews(
             this.renderView.pointCloud.renderViews.filter(
@@ -301,8 +455,6 @@ export default class Render2DAction extends Action {
         context.lineCap = 'round';
         context.lineJoin = 'round';
         for (let index = 0; index < points.length - 1; index++) {
-            const manualVisible = flags[index] !== false;
-            const forceVisible = forceVisibleFlags[index] === true;
             let samples: THREE.Vector2[];
             if (points[index] instanceof THREE.Vector3) {
                 const start = points[index] as THREE.Vector3;
@@ -339,11 +491,10 @@ export default class Render2DAction extends Action {
                 ) {
                     continue;
                 }
-                const midpoint = start.clone().lerp(end, 0.5);
-                const visible =
-                    forceVisible ||
-                    (manualVisible && this.renderView.isImagePointAutoVisible(midpoint));
-                (visible ? visibleEdges : hiddenEdges).push([start, end]);
+                // Occlusion is no longer part of the annotation workflow. Draw
+                // every segment with its normal style instead of the former
+                // yellow, enlarged hidden-segment treatment.
+                visibleEdges.push([start, end]);
             }
         }
         const strokeEdges = (
@@ -364,8 +515,6 @@ export default class Render2DAction extends Action {
             context.stroke();
         };
         strokeEdges(visibleEdges, color, lineWidth);
-        strokeEdges(hiddenEdges, HIDDEN_LINE_OUTLINE_COLOR, lineWidth * 4);
-        strokeEdges(hiddenEdges, HIDDEN_LINE_COLOR, lineWidth * 2);
         context.restore();
     }
 
@@ -378,6 +527,10 @@ export default class Render2DAction extends Action {
     onRender() {
         let objects = this.renderView.get2DObject();
         let lineWidth = this.getLineWidth();
+        const visibilityAction = this.renderView.getAction(
+            'edit-ground-polyline-visibility-2d',
+        ) as EditGroundPolylineVisibility2DAction | undefined;
+        const visibilityEditing = visibilityAction?.isEnable() === true;
 
         this.renderView.setContextTransform();
         objects.forEach((obj) => {
@@ -387,18 +540,17 @@ export default class Render2DAction extends Action {
                 } else if (obj instanceof ProjectedPolygon) {
                     this.renderProjectedPolygon(obj, lineWidth);
                 } else if (obj instanceof ProjectedPolyline) {
-                    if (!this.findSourceGroundPolyline(obj)) {
+                    if (!visibilityEditing || !this.findSourceGroundPolyline(obj)) {
                         this.renderProjectedPolyline(obj, lineWidth);
                     }
+                } else if (obj instanceof ProjectedIrregularWall) {
+                    this.renderProjectedIrregularWall(obj, lineWidth);
                 } else {
                     this.renderBox2D(obj as Box2D, lineWidth);
                 }
             }
         });
-        const visibilityAction = this.renderView.getAction(
-            'edit-ground-polyline-visibility-2d',
-        ) as EditGroundPolylineVisibility2DAction | undefined;
-        if (visibilityAction?.isEnable() === true) {
+        if (visibilityEditing) {
             this.renderView.get3DObject().forEach((obj) => {
                 if (obj instanceof GroundPolyline && obj.visible) {
                     this.renderGroundPolylineProjection(obj, lineWidth * 2);

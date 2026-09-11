@@ -20,6 +20,17 @@ export default class ConfigManager {
             pointSize: config.pointSize * 10,
             edgeColor: config.edgeColor,
             pointHeight: new THREE.Vector2().fromArray(config.pointHeight),
+            rgbEnhance: config.rgbEnhance ? 1 : -1,
+            rgbEnhanceRadius: config.rgbEnhanceRadius,
+            rgbEnhanceContrast: config.rgbEnhanceContrast,
+            rgbEnhanceMinBrightness: config.rgbEnhanceMinBrightness,
+            rgbLocalContrast: config.rgbLocalContrast ? 1 : -1,
+            rgbLocalContrastStrength: config.rgbLocalContrastStrength,
+            rgbHighlightBoost: config.rgbHighlightBoost ? 1 : -1,
+            rgbHighlightThreshold: config.rgbHighlightThreshold,
+            rgbHighlightStrength: config.rgbHighlightStrength,
+            hideNonGroundRgb: config.hideNonGroundRgb ? 1 : -1,
+            sideViewContrastRadius: config.sideViewContrastRadius,
         });
     }
     countVisiblePointN = debounce(async () => {

@@ -30,7 +30,7 @@ interface IStartOption {
     startClick?: boolean;
     startMouseDown?: boolean;
     endOnDoubleClick?: boolean;
-    pointSpace?: 'canvas' | 'ground';
+    pointSpace?: 'canvas' | 'ground' | 'point-cloud';
 }
 
 export default class CreateAction extends Action {
@@ -47,7 +47,7 @@ export default class CreateAction extends Action {
     endOnDoubleClick: boolean = false;
     callback: ICallback | undefined | null = null;
     onChange: ICallback | undefined | null = null;
-    pointSpace: 'canvas' | 'ground' = 'canvas';
+    pointSpace: 'canvas' | 'ground' | 'point-cloud' = 'canvas';
     private pendingClick?: { event: MouseEvent; timer: number };
     private readonly worldPoints: THREE.Vector3[] = [];
     private lastPointer: Point | null = null;
@@ -56,7 +56,7 @@ export default class CreateAction extends Action {
     private readonly rightDragThreshold: number = 4;
     private readonly onRender = (): void => {
         if (
-            this.pointSpace === 'ground' &&
+            (this.pointSpace === 'ground' || this.pointSpace === 'point-cloud') &&
             this.canvas.style.display === 'block' &&
             this.lastPointer
         ) {
@@ -149,7 +149,7 @@ export default class CreateAction extends Action {
         this.rightDragStart = null;
         this.rightDragMoved = false;
         this.clearPendingClick();
-        if (this.pointSpace === 'ground') {
+        if (this.pointSpace === 'ground' || this.pointSpace === 'point-cloud') {
             const orbit = this.renderView.getAction('orbit-control') as OrbitControlsAction;
             orbit.useDrawingElement(this.canvas);
         }
@@ -159,7 +159,7 @@ export default class CreateAction extends Action {
 
     end(): void {
         this.clearPendingClick();
-        if (this.pointSpace === 'ground' && this.canvas.style.display === 'block') {
+        if ((this.pointSpace === 'ground' || this.pointSpace === 'point-cloud') && this.canvas.style.display === 'block') {
             const orbit = this.renderView.getAction('orbit-control') as OrbitControlsAction;
             orbit.restoreRenderElement();
         }
@@ -342,7 +342,7 @@ export default class CreateAction extends Action {
     handleCallback(): void {
         if (this.callback) {
             this.callback(
-                this.pointSpace === 'ground'
+                this.pointSpace === 'ground' || this.pointSpace === 'point-cloud'
                     ? this.worldPoints.map((point) => point.clone())
                     : this.points,
             );
@@ -357,7 +357,7 @@ export default class CreateAction extends Action {
 
     onMouseDown(event: MouseEvent): void {
         event.stopPropagation();
-        if (event.button === 2 && this.pointSpace === 'ground') {
+        if (event.button === 2 && (this.pointSpace === 'ground' || this.pointSpace === 'point-cloud')) {
             this.rightDragStart = new THREE.Vector2(event.clientX, event.clientY);
             this.rightDragMoved = false;
         }
@@ -404,7 +404,7 @@ export default class CreateAction extends Action {
         this.addPoint(event);
 
         if (this.onChange) {
-            this.onChange(this.pointSpace === 'ground' ? this.worldPoints : this.points);
+            this.onChange(this.pointSpace === 'ground' || this.pointSpace === 'point-cloud' ? this.worldPoints : this.points);
         }
 
         if (this.getPointCount() >= TypePoints[this.drawType]) {
@@ -433,17 +433,25 @@ export default class CreateAction extends Action {
 
     private addPoint(event: MouseEvent): void {
         const canvasPoint = this.canvasEventPoint(event);
-        if (this.pointSpace === 'ground') {
-            const worldPoint = this.renderView.canvasToWorld(canvasPoint);
-            worldPoint.z = this.renderView.pointCloud.ground.plane.constant;
-            this.worldPoints.push(worldPoint);
+        if (this.pointSpace === 'ground' || this.pointSpace === 'point-cloud') {
+            if (this.pointSpace === 'ground') {
+                const worldPoint = this.renderView.canvasToWorld(canvasPoint);
+                worldPoint.z = this.renderView.pointCloud.ground.plane.constant;
+                this.worldPoints.push(worldPoint);
+                return;
+            }
+            const project = this.renderView.getProjectPos(canvasPoint);
+            this.raycaster.setFromCamera(project, this.renderView.camera);
+            this.raycaster.params.Points = { threshold: 0.25 };
+            const hit = this.raycaster.intersectObject(this.renderView.pointCloud.groupPoints, true)[0];
+            if (hit?.point) this.worldPoints.push(hit.point.clone());
             return;
         }
         this.points.push({ x: canvasPoint.x, y: canvasPoint.y });
     }
 
     private getPreviewPoints(): Point[] {
-        if (this.pointSpace !== 'ground') return this.points;
+        if (this.pointSpace !== 'ground' && this.pointSpace !== 'point-cloud') return this.points;
         return this.worldPoints.map((worldPoint) => {
             const projected = worldPoint.clone().project(this.renderView.camera);
             return {
@@ -454,6 +462,6 @@ export default class CreateAction extends Action {
     }
 
     private getPointCount(): number {
-        return this.pointSpace === 'ground' ? this.worldPoints.length : this.points.length;
+        return this.pointSpace === 'ground' || this.pointSpace === 'point-cloud' ? this.worldPoints.length : this.points.length;
     }
 }

@@ -5,6 +5,7 @@ import {
     Box,
     GroundPolygon,
     GroundPolyline,
+    IrregularWall,
     Points,
     Event,
     utils,
@@ -393,6 +394,81 @@ export const createGroundPolyline = define({
                 },
             );
         });
+    },
+});
+
+export const createIrregularWall = define({
+    valid(editor: Editor) {
+        return !editor.state.config.showSingleImgView && editor.state.modeConfig.actions['createIrregularWall'];
+    },
+    end(editor: Editor) {
+        (this.action as CreateAction | undefined)?.end();
+        editor.state.status = StatusType.Default;
+    },
+    async execute(editor: Editor) {
+        const view = editor.pc.renderViews.find((item) => item instanceof MainRenderView) as MainRenderView;
+        if (!view) return null;
+        const action = view.getAction('create-obj') as CreateAction;
+        this.action = action;
+        editor.state.status = StatusType.Create;
+        const collect = (message: string, pointSpace: 'ground' | 'point-cloud'): Promise<THREE.Vector3[] | null> => new Promise((resolve) => {
+            editor.showMsg('info', message);
+            action.start({ type: 'polyline', startClick: true, endOnDoubleClick: true, pointSpace }, (points: THREE.Vector3[]) => resolve(points.map((point) => point.clone())));
+        });
+
+        const selectedWall = editor.pc.selection.find(
+            (object) => object instanceof IrregularWall && object.topPoints.length === 0,
+        ) as IrregularWall | undefined;
+        if (selectedWall) {
+            const topPoints = await collect('不规则墙：绘制顶边，双击完成', 'point-cloud');
+            if (!topPoints || topPoints.length < 2) {
+                editor.showMsg('warning', '顶部至少需要两个点');
+                return null;
+            }
+            const error = new IrregularWall(selectedWall.bottomPoints, topPoints).validate();
+            if (error) {
+                editor.showMsg('error', `不规则墙创建失败: ${error}`);
+                return null;
+            }
+            editor.cmdManager.execute('update-irregular-wall-points', {
+                object: selectedWall,
+                side: 'top',
+                points: topPoints,
+            });
+            return selectedWall;
+        }
+
+        const bottomPoints = await collect('不规则墙：绘制底边，双击完成；选中后再次按 I 绘制顶边', 'ground');
+        if (!bottomPoints || bottomPoints.length < 2) {
+            editor.showMsg('warning', '底边至少需要两个点');
+            return null;
+        }
+        const classConfig = editor.getClassType(editor.state.currentClass);
+        try {
+            const userData: IUserData = {
+                resultStatus: Const.True_Value,
+                resultType: Const.Dynamic,
+                classType: classConfig?.name,
+                classId: classConfig?.id,
+                motionMode: 'STATIC' as any,
+            };
+            const wall = new IrregularWall(bottomPoints, []);
+            const error = wall.validate();
+            if (error) throw new Error(error);
+            wall.userData = userData;
+            wall.setColor(classConfig?.color || '#00e5ff');
+            setIdInfo(editor, wall.userData);
+            wall.uuid = wall.userData.id as string;
+            editor.cmdManager.withGroup(() => {
+                editor.cmdManager.execute('add-object', wall);
+                editor.cmdManager.execute('select-object', wall);
+            });
+            editor.showMsg('info', '底边已完成；可保留当前线，或选中后按 I 绘制顶边');
+            return wall;
+        } catch (error) {
+            editor.showMsg('error', `不规则墙创建失败: ${error instanceof Error ? error.message : String(error)}`);
+            return null;
+        }
     },
 });
 

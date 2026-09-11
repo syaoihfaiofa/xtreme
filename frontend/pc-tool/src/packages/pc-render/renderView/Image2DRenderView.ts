@@ -3,7 +3,7 @@ import Render from './Render';
 import PointCloud from '../PointCloud';
 import PointsMaterial, { IUniformOption } from '../material/PointsMaterial';
 import * as _ from 'lodash';
-import { Object2D, Box, Rect, Vector2Of4, Box2D, ProjectedPolygon, ProjectedPolyline, AnnotateObject } from '../objects';
+import { Object2D, Box, Rect, Vector2Of4, Box2D, ProjectedPolygon, ProjectedPolyline, ProjectedIrregularWall, AnnotateObject } from '../objects';
 import { ICameraDistortion, ICameraInternal, ICameraModel, IRenderViewConfig } from '../type';
 import {
     createMatrixFromCameraInternal,
@@ -232,6 +232,14 @@ export default class Image2DRenderView extends Render {
         let imgObject = option.imgObject;
 
         this.img = imgObject;
+
+        // Point data intentionally becomes interactive before camera images finish
+        // downloading.  During that interval an image view config is valid but its
+        // imgObject is still null; defer camera/image sizing until the image-load
+        // callback reapplies the resource instead of aborting the entire frame load.
+        if (!imgObject) {
+            return;
+        }
 
         this.imgSize.set(imgObject.naturalWidth, imgObject.naturalHeight);
         this.imgAspectRatio = this.imgSize.x / this.imgSize.y;
@@ -540,7 +548,9 @@ export default class Image2DRenderView extends Render {
             (this.renderRect && obj instanceof Rect) ||
             (this.renderBox2D && obj instanceof Box2D) ||
             (this.renderProjectedGround &&
-                (obj instanceof ProjectedPolygon || obj instanceof ProjectedPolyline));
+                (obj instanceof ProjectedPolygon ||
+                    obj instanceof ProjectedPolyline ||
+                    obj instanceof ProjectedIrregularWall));
         // (this.renderBox && obj instanceof Box);
 
         return obj.visible && flag1 && flag2;
@@ -649,12 +659,15 @@ export default class Image2DRenderView extends Render {
 
         let { groupPoints, selection, selectColor } = this.pointCloud;
         let { renderer } = this.proxy;
-        let selection3Ds = selection.filter((e) => e instanceof THREE.Object3D);
-        let object3Ds = this.get3DObject();
+        // This path renders the cuboid point highlight and assumes Box geometry/material.
+        // Ground polylines and irregular walls are also Object3D instances, but are rendered
+        // in image views through their dedicated projected-shape path instead.
+        let selectedBoxes = selection.filter((e): e is Box => e instanceof Box);
+        let boxes = this.get3DObject().filter((object): object is Box => object instanceof Box);
 
-        if (this.renderBox && this.renderPoints && selection3Ds.length > 0) {
+        if (this.renderBox && this.renderPoints && selectedBoxes.length > 0) {
             let groupPoint = groupPoints.children[0] as THREE.Points;
-            let box = selection[0] as Box;
+            let box = selectedBoxes[0];
             box.updateMatrixWorld();
             if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
 
@@ -686,11 +699,11 @@ export default class Image2DRenderView extends Render {
         }
 
         if (this.renderBox) {
-            object3Ds.forEach((box) => {
-                this.renderBoxData(box as Box);
+            boxes.forEach((box) => {
+                this.renderBoxData(box);
             });
-            selection3Ds.forEach((box) => {
-                this.renderBoxData(box as Box);
+            selectedBoxes.forEach((box) => {
+                this.renderBoxData(box);
             });
         }
     }

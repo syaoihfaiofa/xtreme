@@ -7,8 +7,12 @@ import {
     Rect,
     Box2D,
     Vector2Of4,
+    GroundPolygon,
     ProjectedPolygon,
     ProjectedPolyline,
+    ProjectedIrregularWall,
+    GroundPolyline,
+    IrregularWall,
 } from '../objects';
 import { Event } from '../config';
 import { get } from '../utils/tempVar';
@@ -30,20 +34,47 @@ export default class Edit2DAction extends Action {
         index: number,
         point: THREE.Vector2,
     ) => void;
+    /** Invoked once when an image-plane ground-vertex drag finishes. */
+    onGroundProjectionPointCommit?: (
+        object: ProjectedPolygon | ProjectedPolyline,
+        index: number,
+        point: THREE.Vector2,
+    ) => void;
+    onIrregularWallProjectionPointChange?: (
+        object: ProjectedIrregularWall,
+        side: 'bottom' | 'top',
+        index: number,
+        point: THREE.Vector2,
+    ) => void;
+    // The active P vertex is selected in the 3D point-cloud view.  Image views
+    // use it only for the visual highlight; the 3D shape remains the canonical
+    // owner of the point.
+    getSelectedGroundPolygonVertex?: () => { object: GroundPolygon; index: number } | undefined;
     //
     clearCall: ClearHandler[] = [];
     private readonly vertexHandleLayer: HTMLDivElement;
     private readonly vertexHandles: HTMLDivElement[] = [];
+    private selectedGroundSource?: GroundPolygon | GroundPolyline | IrregularWall;
     private readonly onRender = () => {
+        this.syncSelectedSourcePolygon();
         this.update();
     };
     private readonly onSelect = () => {
         let selection = this.renderView.pointCloud.selection;
-        if (selection.length === 1 && selection[0] instanceof Object2D) {
-            this.object = selection[0];
-        } else {
-            this.object = null;
-        }
+        const projection = selection.find(
+            (item) =>
+                item instanceof ProjectedPolygon ||
+                item instanceof ProjectedPolyline ||
+                item instanceof ProjectedIrregularWall,
+        ) as ProjectedPolygon | ProjectedPolyline | ProjectedIrregularWall | undefined;
+        const source = selection.find(
+            (item) =>
+                item instanceof GroundPolygon ||
+                item instanceof GroundPolyline ||
+                item instanceof IrregularWall,
+        ) as GroundPolygon | GroundPolyline | IrregularWall | undefined;
+        this.selectedGroundSource = source;
+        this.object = projection || (source ? this.getProjectionForSource(source) : null);
     };
 
     constructor(renderView: Image2DRenderView) {
@@ -73,6 +104,9 @@ export default class Edit2DAction extends Action {
         this.initBoxDrop();
         this.renderView.addEventListener(Event.RENDER_AFTER, this.onRender);
         this.renderView.pointCloud.addEventListener(Event.SELECT, this.onSelect);
+        // A maximized image view is created after the P object may already be
+        // selected, so it will not necessarily receive a new SELECT event.
+        this.onSelect();
     }
 
     destroy() {
@@ -84,6 +118,7 @@ export default class Edit2DAction extends Action {
         this.boxTool.destroy();
         this.vertexHandleLayer.remove();
         this.object = null;
+        this.selectedGroundSource = undefined;
     }
 
     initBoxDrop() {
@@ -197,7 +232,8 @@ export default class Edit2DAction extends Action {
         } else {
             if (
                 this.object instanceof ProjectedPolygon ||
-                this.object instanceof ProjectedPolyline
+                this.object instanceof ProjectedPolyline ||
+                this.object instanceof ProjectedIrregularWall
             ) {
                 this.rectTool.hide();
                 this.boxTool.hide();
@@ -253,27 +289,55 @@ export default class Edit2DAction extends Action {
     }
 
     private updateGroundProjectionVertexHandles(): void {
+        const object = this.object;
         if (
-            !(this.object instanceof ProjectedPolygon) &&
-            !(this.object instanceof ProjectedPolyline)
+            !(object instanceof ProjectedPolygon) &&
+            !(object instanceof ProjectedPolyline) &&
+            !(object instanceof ProjectedIrregularWall)
         ) {
             this.vertexHandleLayer.style.display = 'none';
             return;
         }
 
-        const points = this.object.points;
+        const entries: Array<{
+            point: THREE.Vector2;
+            index: number;
+            side?: 'bottom' | 'top';
+        }> = object instanceof ProjectedIrregularWall
+            ? (['bottom', 'top'] as const).flatMap((side) =>
+                  (side === 'bottom' ? object.bottomPoints : object.topPoints).map(
+                      (point, index) => ({ point, side, index }),
+                  ),
+              )
+            : object.points.map((point, index) => ({ point, index }));
         this.vertexHandleLayer.style.display = 'block';
-        this.ensureVertexHandles(points.length);
-        points.forEach((point, index) => {
-            const position = point.clone();
+        this.ensureVertexHandles(entries.length);
+        entries.forEach((entry, handleIndex) => {
+            const position = entry.point.clone();
             this.renderView.imgToDom(position);
-            const handle = this.vertexHandles[index];
-            handle.dataset.index = String(index);
+            const handle = this.vertexHandles[handleIndex];
+            handle.dataset.index = String(entry.index);
+            handle.dataset.side = entry.side || '';
             handle.style.display = 'block';
             handle.style.left = `${position.x}px`;
             handle.style.top = `${position.y}px`;
+            const selectedVertex = this.getSelectedGroundPolygonVertex?.();
+            const isSelectedParkingVertex =
+                object instanceof ProjectedPolygon &&
+                this.selectedGroundSource instanceof GroundPolygon &&
+                selectedVertex?.object === this.selectedGroundSource &&
+                selectedVertex.index === entry.index;
+            handle.style.borderColor = isSelectedParkingVertex
+                ? '#ffffff'
+                : entry.side === 'top'
+                  ? '#ff9f1c'
+                  : '#00e5ff';
+            handle.style.background = isSelectedParkingVertex ? '#ffff00' : '#10252a';
+            handle.style.boxShadow = isSelectedParkingVertex
+                ? '0 0 0 3px rgba(255, 255, 0, 0.55)'
+                : '';
         });
-        this.vertexHandles.slice(points.length).forEach((handle) => {
+        this.vertexHandles.slice(entries.length).forEach((handle) => {
             handle.style.display = 'none';
         });
     }
@@ -286,24 +350,75 @@ export default class Edit2DAction extends Action {
                 'border-radius:50%;background:#10252a;box-sizing:border-box;' +
                 'transform:translate(-50%,-50%);pointer-events:auto;cursor:grab;';
             handle.addEventListener('pointerdown', (event) => {
-                this.startGroundProjectionVertexDrag(event, Number(handle.dataset.index));
+                this.startGroundProjectionVertexDrag(event, handle);
             });
             this.vertexHandleLayer.appendChild(handle);
             this.vertexHandles.push(handle);
         }
     }
 
-    private startGroundProjectionVertexDrag(event: PointerEvent, index: number): void {
+    private syncSelectedSourcePolygon(): void {
+        const selection = this.renderView.pointCloud.selection;
+        const source = selection.find(
+            (item) =>
+                item instanceof GroundPolygon ||
+                item instanceof GroundPolyline ||
+                item instanceof IrregularWall,
+        ) as GroundPolygon | GroundPolyline | IrregularWall | undefined;
+        if (source) {
+            this.selectedGroundSource = source;
+            const selectedProjection = selection.find(
+                (item) =>
+                    item instanceof ProjectedPolygon ||
+                    item instanceof ProjectedPolyline ||
+                    item instanceof ProjectedIrregularWall,
+            ) as ProjectedPolygon | ProjectedPolyline | ProjectedIrregularWall | undefined;
+            this.object = selectedProjection || this.getProjectionForSource(source);
+        } else if (this.selectedGroundSource) {
+            this.selectedGroundSource = undefined;
+            if (!(this.object instanceof Object2D) || !selection.includes(this.object as any)) {
+                this.object = null;
+            }
+        }
+    }
+
+    private getProjectionForSource(
+        source: GroundPolygon | GroundPolyline | IrregularWall,
+    ): ProjectedPolygon | ProjectedPolyline | ProjectedIrregularWall | null {
+        const sourceTrackId = source.userData?.trackId as string | undefined;
+        const projection = this.renderView
+            .get2DObject()
+            .find(
+                (candidate) =>
+                    ((source instanceof GroundPolygon && candidate instanceof ProjectedPolygon) ||
+                        (source instanceof GroundPolyline && candidate instanceof ProjectedPolyline) ||
+                        (source instanceof IrregularWall && candidate instanceof ProjectedIrregularWall)) &&
+                    this.renderView.isRenderable(candidate) &&
+                    (candidate.userData?.projectedFromId === source.uuid ||
+                        (!!sourceTrackId && candidate.userData?.trackId === sourceTrackId)),
+            );
+        return projection instanceof ProjectedPolygon ||
+            projection instanceof ProjectedPolyline ||
+            projection instanceof ProjectedIrregularWall
+            ? projection
+            : null;
+    }
+
+    private startGroundProjectionVertexDrag(event: PointerEvent, handle: HTMLDivElement): void {
         const object = this.object;
         if (
             !(object instanceof ProjectedPolygon) &&
-            !(object instanceof ProjectedPolyline)
+            !(object instanceof ProjectedPolyline) &&
+            !(object instanceof ProjectedIrregularWall)
         ) {
             return;
         }
+        const index = Number(handle.dataset.index);
+        const side = handle.dataset.side as 'bottom' | 'top' | undefined;
 
         event.preventDefault();
         event.stopPropagation();
+        let lastImagePoint: THREE.Vector2 | undefined;
         const onMove = (moveEvent: PointerEvent): void => {
             const rect = this.renderView.container.getBoundingClientRect();
             const point = new THREE.Vector2(
@@ -319,11 +434,27 @@ export default class Edit2DAction extends Action {
             ) {
                 return;
             }
-            this.onGroundProjectionPointChange?.(object, index, point);
+            if (object instanceof ProjectedIrregularWall && side) {
+                this.onIrregularWallProjectionPointChange?.(object, side, index, point);
+            } else {
+                lastImagePoint = point.clone();
+                this.onGroundProjectionPointChange?.(
+                    object as ProjectedPolygon | ProjectedPolyline,
+                    index,
+                    point,
+                );
+            }
         };
         const onUp = (): void => {
             document.removeEventListener('pointermove', onMove);
             document.removeEventListener('pointerup', onUp);
+            if (lastImagePoint && !(object instanceof ProjectedIrregularWall)) {
+                this.onGroundProjectionPointCommit?.(
+                    object as ProjectedPolygon | ProjectedPolyline,
+                    index,
+                    lastImagePoint,
+                );
+            }
         };
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);

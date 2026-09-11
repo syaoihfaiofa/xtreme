@@ -324,8 +324,22 @@ export const takeRecordByDataModel = (params: takeRecordParams) =>
   });
 
 export const exportData = (params: any) =>
-  defHttp.get<null>({
+  defHttp.get<string>({
     url: `${Api.DATA}/export`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const backupLabels = (params: {
+  datasetId: number;
+  ids?: number[];
+  destinationDirectory: string;
+}) =>
+  defHttp.post<string>({
+    url: `${Api.DATA}/backupLabels`,
     params,
     headers: {
       // @ts-ignore

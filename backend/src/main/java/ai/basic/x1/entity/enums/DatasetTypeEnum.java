@@ -21,5 +21,10 @@ public enum DatasetTypeEnum {
     /**
      * TEXT
      */
-    TEXT
+    TEXT,
+    /**
+     * One global reconstructed point cloud with timestamped camera images.
+     * This type has its own upload, annotation tables and editor APIs.
+     */
+    RECONSTRUCTION_FUSION
 }

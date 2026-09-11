@@ -198,6 +198,18 @@
                             @change="onShowSyncLocationBoundariesChange"
                         />
                     </div>
+                    <div
+                        v-if="!state.isBatch && state.isGroundPolyline"
+                        class="sync-distance-row"
+                    >
+                        <span class="sync-distance-label">
+                            {{ $$('sync-segment-visibility') }}
+                        </span>
+                        <a-switch
+                            v-model:checked="state.syncSegmentVisibility"
+                            @change="onSyncSegmentVisibilityChange"
+                        />
+                    </div>
                     <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
                         <span class="sync-distance-label">{{ $$('sync-max-disappear-gap') }}</span>
                         <a-input-number

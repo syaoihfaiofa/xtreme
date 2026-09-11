@@ -22,6 +22,7 @@ import InsertGroundPolylinePoint from './InsertGroundPolylinePoint';
 import UpdateGroundPolylineHeight from './UpdateGroundPolylineHeight';
 import UpdateGroundPolylineSegmentVisibility from './UpdateGroundPolylineSegmentVisibility';
 import UpdateGroundPolylineVisibilityRange from './UpdateGroundPolylineVisibilityRange';
+import UpdateIrregularWallPoints from './UpdateIrregularWallPoints';
 export interface ICmdOption {
     'add-object': IAddObjectOption;
     'delete-object': IDeleteObjectOption;
@@ -58,6 +59,12 @@ export interface ICmdOption {
         byView: Record<string, boolean[]>;
         forceVisibleByView: Record<string, boolean[]>;
     };
+    'update-irregular-wall-points': {
+        object: import('pc-render').IrregularWall;
+        side: import('pc-render').WallSide;
+        points: THREE.Vector3[];
+        beforePoints?: THREE.Vector3[];
+    };
     'update-2d-rect': {
         object: Rect;
         option: { center: THREE.Vector2; size?: THREE.Vector2 };
@@ -91,6 +98,7 @@ const CMD: Record<Name, any> = {
     'update-ground-polyline-height': UpdateGroundPolylineHeight,
     'update-ground-polyline-segment-visibility': UpdateGroundPolylineSegmentVisibility,
     'update-ground-polyline-visibility-range': UpdateGroundPolylineVisibilityRange,
+    'update-irregular-wall-points': UpdateIrregularWallPoints,
     'update-2d-rect': Update2DRect,
     'update-2d-box': Update2DBox,
     'update-object-user-data': UpdateObjectDataBatch,

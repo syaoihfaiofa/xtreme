@@ -3,7 +3,7 @@ import PCDFile from './PCDFile';
 
 type ICallBack = (args?: any) => void;
 type PCDData = 'ascii' | 'binary_compressed' | 'binary';
-type PCDFields = 'x' | 'y' | 'z' | 'i' | 'intensity' | 'rgb' | 'normal_x' | 'normal_y' | 'normal_z';
+type PCDFields = 'x' | 'y' | 'z' | 'i' | 'int' | 'intensity' | 'r' | 'g' | 'b' | 'rgb' | 'normal_x' | 'normal_y' | 'normal_z';
 interface IPCDHeader {
     data: PCDData;
     offset: { [key in PCDFields]: number };
@@ -74,6 +74,11 @@ export function correctXYZ(x: number, y: number, z: number) {
         y: correctNumber(y),
         z: correctNumber(z),
     };
+}
+function toColorChannel(value: number | undefined) {
+    const channel = Number(value) || 0;
+    // Accommodate both common PCD conventions: uint8 [0, 255] and float [0, 1].
+    return Math.max(0, Math.min(255, Math.round(channel > 0 && channel <= 1 ? channel * 255 : channel)));
 }
 class PCDLoader extends Loader {
     littleEndian: boolean;
@@ -435,19 +440,28 @@ class PCDLoader extends Loader {
             z = [],
             intensity = [],
             i = [],
+            int = [],
+            r = [],
+            g = [],
+            b = [],
             rgb = [],
           } = pcdData;
         
           const pointN = x.length;
           const _position = new Float32Array(pointN * 3);
           const _color = new Uint8Array(pointN * 3);
-          const targetI = intensity.length > 0 ? intensity : i.length > 0 ? i : undefined;
-          const hasColor = rgb.length > 0;
+          const targetI = intensity.length > 0 ? intensity : i.length > 0 ? i : int.length > 0 ? int : undefined;
+          const hasSeparateRGB = r.length === pointN && g.length === pointN && b.length === pointN;
+          const hasColor = rgb.length > 0 || hasSeparateRGB;
           for (let i = 0; i < pointN; i++) {
             _position[i * 3] = x[i];
             _position[i * 3 + 1] = y[i];
             _position[i * 3 + 2] = z[i];
-            if (hasColor) {
+            if (hasSeparateRGB) {
+              _color[i * 3] = toColorChannel(r[i]);
+              _color[i * 3 + 1] = toColorChannel(g[i]);
+              _color[i * 3 + 2] = toColorChannel(b[i]);
+            } else if (rgb.length > 0) {
               _color[i * 3] = (rgb[i] >> 16) & 0x0000ff;
               _color[i * 3 + 1] = (rgb[i] >> 8) & 0x0000ff;
               _color[i * 3 + 2] = (rgb[i] >> 0) & 0x0000ff;

@@ -10,7 +10,13 @@ import {
 import { IBSState } from '../type';
 import { getDefault } from '../state';
 import { utils, AttrType, IClassificationAttr, IUserData } from 'pc-editor';
-import { Box, GroundPolygon, GroundPolyline } from 'pc-render';
+import {
+    Box,
+    GroundPolygon,
+    GroundPolyline,
+    IrregularWall,
+    IGroundShapeSplitPick,
+} from 'pc-render';
 import * as THREE from 'three';
 import hotkeys from 'hotkeys-js';
 import * as api from '../api';
@@ -18,6 +24,7 @@ import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
 import { refreshGroundPolylineBevDisplay } from '../packages/pc-editor/utils/groundPolylineVisibility';
 import { IQaIssue, QA_ISSUE_CODE_LABELS, QaIssueCode } from './qaIssue';
+import ParkingPointCloudDensityManager from './ParkingPointCloudDensityManager';
 
 const SYNCABLE_MOTION_MODES: string[] = [
     MotionMode.STATIC,
@@ -27,10 +34,10 @@ const SYNCABLE_MOTION_MODES: string[] = [
 const DEFAULT_SYNC_LOCATION_GAP_MS = 200;
 const DEFAULT_DYNAMIC_SYNC_FRAME_COUNT = 1;
 
-type SyncableGroundShape = GroundPolygon | GroundPolyline;
+type SyncableGroundShape = GroundPolygon | GroundPolyline | IrregularWall;
 
 function isSyncableGroundShape(object: unknown): object is SyncableGroundShape {
-    return object instanceof GroundPolygon || object instanceof GroundPolyline;
+    return object instanceof GroundPolygon || object instanceof GroundPolyline || object instanceof IrregularWall;
 }
 
 function matchesSyncedTrack(
@@ -66,6 +73,7 @@ function buildSyncedUserDataPatch(
         syncMaxDisappearGap: fresh.syncMaxDisappearGap,
         syncLocationGapMs: fresh.syncLocationGapMs,
         showSyncLocationBoundaries: fresh.showSyncLocationBoundaries,
+        syncSegmentVisibility: fresh.syncSegmentVisibility === true,
         dynamicRangeSyncEnabled: fresh.dynamicRangeSyncEnabled,
         dynamicSyncPreviousFrames: fresh.dynamicSyncPreviousFrames,
         dynamicSyncNextFrames: fresh.dynamicSyncNextFrames,
@@ -121,11 +129,18 @@ export default class Editor extends BaseEditor {
     private qaIssueIndex = 0;
     private qaTypeCycleCursor: Record<string, number> = {};
     private reviewStatusUpdating = new Set<string>();
+    // Review navigation used to start at frame zero on every Alt+N press.  Keep a
+    // cursor so a reviewer progresses through a long scene instead of repeatedly
+    // querying the same leading batches.
+    private reviewNavigationCursor?: number;
+    private reviewNavigationRunning = false;
+    parkingDensityManager: ParkingPointCloudDensityManager;
     constructor() {
         super();
 
         this.businessManager = new BusinessManager(this);
         this.dataManager = new DataManager(this);
+        this.parkingDensityManager = new ParkingPointCloudDensityManager(this);
         this.initSyncModeHotkey();
         this.initOcclusionHotkey();
         this.initReviewHotkey();
@@ -171,7 +186,103 @@ export default class Editor extends BaseEditor {
         this.pc.render();
     }
 
+    async splitGroundShapeTrack(pick: IGroundShapeSplitPick): Promise<boolean> {
+        if (this.state.modeConfig.op !== OPType.EXECUTE) return false;
+        const object = pick.object;
+        const trackId = object.userData?.trackId;
+        if (!trackId || !this.pc.selection.includes(object)) {
+            this.showMsg('warning', '请先选中需要截断的 curb、wall 或不规则墙');
+            return false;
+        }
+
+        let frameIds: string[];
+        try {
+            frameIds = await api.getTrackFrameIds(
+                this.state.frames.map((frame) => frame.id),
+                trackId,
+            );
+        } catch (error) {
+            this.handleErr(error as any, '查询 Track 帧范围失败');
+            return false;
+        }
+        if (frameIds.length === 0) {
+            this.showMsg('warning', '当前 Track 没有可截断的帧');
+            return false;
+        }
+
+        try {
+            await this.showConfirm({
+                title: '截断整条 Track',
+                subTitle: `将截断全场景 ${frameIds.length} 帧，生成两个独立 Track。此操作不可撤销，是否继续？`,
+                okText: '确认截断',
+                cancelText: '取消',
+                okDanger: true,
+                centered: true,
+            });
+        } catch (_) {
+            return false;
+        }
+
+        const saved = await this.saveObject(undefined, false, true);
+        if (!saved) {
+            this.showMsg('error', '未保存修改，截断已取消');
+            return false;
+        }
+
+        this.showLoading({ type: 'loading', content: '正在截断整条 Track…' });
+        try {
+            const result = await api.splitTrack({
+                dataId: this.getCurrentFrame().id,
+                trackId,
+                classId: object.userData?.classId || undefined,
+                objectType: pick.objectType,
+                side: pick.side,
+                segmentIndex: pick.segmentIndex,
+                t: pick.t,
+            });
+            const affected = (result.affectedDataIds || []).map((id) => String(id));
+            this.setCurrentTrack(undefined, '');
+            this.dataManager.invalidateFrameObjects(affected);
+            this.trackManager.trackInfo.delete(trackId);
+            this.trackManager.trackInfo.delete(result.newTrackId);
+            this.trackManager.trackFrameIndexMap.delete(trackId);
+            this.trackManager.trackFrameIndexMap.delete(result.newTrackId);
+            await this.loadFrame(this.state.frameIndex, true, true);
+            const newObject = (this.dataManager.getFrameObject(this.getCurrentFrame().id) || []).find(
+                (candidate) =>
+                    candidate.userData?.trackId === result.newTrackId &&
+                    (candidate instanceof GroundPolyline || candidate instanceof IrregularWall),
+            );
+            this.loadManager.updateTrackMap();
+            const affectedSet = new Set(affected);
+            const affectedIndices = this.state.frames
+                .map((frame, index) => (affectedSet.has(String(frame.id)) ? index : -1))
+                .filter((index) => index >= 0);
+            this.trackManager.setTrackFrameIndices(trackId, affectedIndices);
+            this.trackManager.setTrackFrameIndices(result.newTrackId, affectedIndices);
+            if (newObject) this.selectObject(newObject);
+            this.showMsg(
+                'success',
+                `已截断 ${affected.length} 帧，新 Track：${result.newTrackName}`,
+            );
+            return true;
+        } catch (error: any) {
+            const failedFrames = error?.oriError?.response?.data?.data?.frameIds;
+            this.showMsg(
+                'error',
+                Array.isArray(failedFrames) && failedFrames.length > 0
+                    ? `截断失败，无法匹配帧：${failedFrames.join(', ')}`
+                    : error?.message || 'Track 截断失败',
+                8,
+            );
+            return false;
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
     destroy(): void {
+        this.parkingDensityManager?.destroy();
         if (this.syncKeydownHandler) {
             window.removeEventListener('keydown', this.syncKeydownHandler, true);
             this.syncKeydownHandler = undefined;
@@ -310,41 +421,66 @@ export default class Editor extends BaseEditor {
             this.showMsg('warning', '请先开启 Review Mode');
             return;
         }
+        if (this.reviewNavigationRunning) {
+            this.showMsg('info', '正在查找未审阅目标，请稍候');
+            return;
+        }
         const batchSize = 200;
         const frames = this.state.frames;
-        for (let offset = 0; offset < frames.length; offset += batchSize) {
-            const batch = frames.slice(offset, offset + batchSize);
-            let data: any;
-            try {
-                data = await this.businessManager.getFrameObject(batch);
-            } catch (error) {
-                console.warn('find first unreviewed object failed', error);
-                this.showMsg('error', '未审阅目标查询失败');
-                return;
-            }
-            for (const frame of batch) {
-                const candidate = (
-                    utils.objectsMapForFrame(data.objectsMap, frame.id) as any[]
-                ).find((object) => object.trackId && object.reviewedCorrect !== true);
-                if (!candidate) continue;
-                await this.loadFrame(offset + batch.indexOf(frame));
-                const object = (this.dataManager.getFrameObject(frame.id) || []).find((item: any) => {
-                    const userData = item.userData || {};
-                    return (
-                        item instanceof Box &&
-                        userData.trackId === candidate.trackId &&
-                        userData.reviewedCorrect !== true
-                    );
-                });
-                if (object) {
-                    this.selectObject(object);
-                    this.focusObject(object);
-                    this.showMsg('success', `已定位第一个未审阅目标。${REVIEW_NEXT_UNREVIEWED_HOTKEY.toUpperCase()} 可重新定位`, 3);
+        if (frames.length === 0) return;
+        const startIndex =
+            this.reviewNavigationCursor == null
+                ? this.state.frameIndex
+                : this.reviewNavigationCursor % frames.length;
+        this.reviewNavigationRunning = true;
+        try {
+            for (let offset = 0; offset < frames.length; offset += batchSize) {
+                const batch = Array.from(
+                    { length: Math.min(batchSize, frames.length - offset) },
+                    (_, batchIndex) => {
+                        const frameIndex = (startIndex + offset + batchIndex) % frames.length;
+                        return { frame: frames[frameIndex], frameIndex };
+                    },
+                );
+                let data: any;
+                try {
+                    data = await this.businessManager.getFrameObject(batch.map(({ frame }) => frame));
+                } catch (error) {
+                    console.warn('find next unreviewed object failed', error);
+                    this.showMsg('error', '未审阅目标查询失败');
                     return;
                 }
+                for (const { frame, frameIndex } of batch) {
+                    const candidate = (
+                        utils.objectsMapForFrame(data.objectsMap, frame.id) as any[]
+                    ).find((object) => object.trackId && object.reviewedCorrect !== true);
+                    if (!candidate) continue;
+                    await this.loadFrame(frameIndex);
+                    const object = (this.dataManager.getFrameObject(frame.id) || []).find((item: any) => {
+                        const userData = item.userData || {};
+                        return (
+                            (item instanceof Box || isSyncableGroundShape(item)) &&
+                            userData.trackId === candidate.trackId &&
+                            userData.reviewedCorrect !== true
+                        );
+                    });
+                    if (object) {
+                        this.reviewNavigationCursor = (frameIndex + 1) % frames.length;
+                        this.selectObject(object);
+                        // Boxes have a meaningful Object3D position. Ground shapes use
+                        // point arrays and are still selected by Alt+N, without jumping
+                        // the camera to their default origin.
+                        if (object instanceof Box) this.focusObject(object);
+                        this.showMsg('success', `已定位未审阅目标。${REVIEW_NEXT_UNREVIEWED_HOTKEY.toUpperCase()} 下一个`, 3);
+                        return;
+                    }
+                }
             }
+            this.reviewNavigationCursor = 0;
+            this.showMsg('success', '全部目标已审阅');
+        } finally {
+            this.reviewNavigationRunning = false;
         }
-        this.showMsg('success', '全部目标已审阅');
     }
 
     toggleSelectedOcclusion() {
@@ -394,10 +530,12 @@ export default class Editor extends BaseEditor {
     }
 
     async markSelectedTrackReviewedCorrect() {
-        const object = this.pc.selection.find((item) => item instanceof Box) as Box | undefined;
+        const object = this.pc.selection.find(
+            (item) => item instanceof Box || isSyncableGroundShape(item),
+        ) as Box | SyncableGroundShape | undefined;
         const trackId = object?.userData?.trackId;
         if (!object || !trackId) {
-            this.showMsg('warning', '请先选中一个有追踪ID的3D框');
+            this.showMsg('warning', '请先选中一个有追踪ID的3D目标');
             return;
         }
         await this.setTrackReviewedCorrect(trackId, true);
@@ -405,10 +543,12 @@ export default class Editor extends BaseEditor {
     }
 
     async toggleSelectedTrackReviewedCorrect() {
-        const object = this.pc.selection.find((item) => item instanceof Box) as Box | undefined;
+        const object = this.pc.selection.find(
+            (item) => item instanceof Box || isSyncableGroundShape(item),
+        ) as Box | SyncableGroundShape | undefined;
         const trackId = object?.userData?.trackId;
         if (!object || !trackId) {
-            this.showMsg('warning', '请先选中一个有追踪ID的3D框');
+            this.showMsg('warning', '请先选中一个有追踪ID的3D目标');
             return;
         }
         const reviewedCorrect = object.userData?.reviewedCorrect !== true;
@@ -429,6 +569,7 @@ export default class Editor extends BaseEditor {
                     reviewedCorrectVisible: this.bsState.reviewMode && reviewedCorrect,
                 },
             });
+            this.updateObjectRenderInfo(this.trackManager.getObjects(trackId));
             const track = this.trackManager.getTrackObject(trackId);
             if (track) {
                 this.trackManager.updateTrackData(trackId, { reviewedCorrect });
@@ -485,18 +626,17 @@ export default class Editor extends BaseEditor {
     async syncSelectedTrack() {
         if (this.state.modeConfig.op !== OPType.EXECUTE) return;
         let box = this.pc.selection.find(
-            (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline,
-        ) as Box | GroundPolygon | GroundPolyline | undefined;
+            (e) => e instanceof Box || isSyncableGroundShape(e),
+        ) as Box | SyncableGroundShape | undefined;
         if (!box) {
             const currentObjects = this.dataManager.getFrameObject(this.getCurrentFrame().id) || [];
             box = currentObjects.find(
                 (e) =>
-                    (e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline) &&
+                    (e instanceof Box || isSyncableGroundShape(e)) &&
                     this.pc.selection.includes(e),
             ) as
                 | Box
-                | GroundPolygon
-                | GroundPolyline
+                | SyncableGroundShape
                 | undefined;
         }
         if (!box) {
@@ -508,7 +648,7 @@ export default class Editor extends BaseEditor {
             this.showMsg('warning', '该对象没有追踪ID');
             return;
         }
-        const isStaticGroundShape = box instanceof GroundPolygon || box instanceof GroundPolyline;
+        const isStaticGroundShape = isSyncableGroundShape(box);
         let motionMode = isStaticGroundShape
             ? MotionMode.STATIC
             : box.userData?.motionMode || utils.getDefaultMotionMode(box.userData?.classType);
@@ -554,6 +694,7 @@ export default class Editor extends BaseEditor {
                     sourceFrameId,
                     box.userData?.classId,
                     box.userData?.classType,
+                    box,
                 ),
             );
             this.showMsg(
@@ -580,6 +721,7 @@ export default class Editor extends BaseEditor {
         sourceFrameId?: string,
         classId?: string | number,
         classType?: string,
+        sourceObject?: Box | SyncableGroundShape,
     ) {
         if (this.dataManager.isInferenceRunning()) {
             this.showMsg(
@@ -603,7 +745,11 @@ export default class Editor extends BaseEditor {
         if (!framesToSave.some((frame) => String(frame.id) === String(sourceFrame.id))) {
             framesToSave.push(sourceFrame);
         }
-        const saved = await this.saveDirtySyncableObjects(framesToSave);
+        const saved = await this.saveDirtySyncableObjects(
+            framesToSave,
+            sourceFrame,
+            sourceObject,
+        );
         if (!saved) {
             sourceFrame.needSave = sourceFrameNeededSaveBeforeSync;
             return;
@@ -669,6 +815,12 @@ export default class Editor extends BaseEditor {
         let groundPolylineHeightUpdates: {
             object: GroundPolyline;
             wallHeight: number;
+        }[] = [];
+        let irregularWallPointUpdates: {
+            object: IrregularWall;
+            bottomPoints: THREE.Vector3[];
+            topPoints: THREE.Vector3[];
+            frame: IFrame;
         }[] = [];
         const sourceClass = { classId, classType };
 
@@ -737,6 +889,13 @@ export default class Editor extends BaseEditor {
                     object.points.length === 4
                 );
             });
+            const freshIrregularWall = frameObjectsFromServer.find((object) => {
+                const objType = object.objType || object.type;
+                return matchesSyncedTrack(object, trackId, sourceClass) &&
+                    objType === ObjectType.TYPE_IRREGULAR_WALL &&
+                    Array.isArray(object.bottomPoints) && object.bottomPoints.length >= 2 &&
+                    Array.isArray(object.topPoints) && object.topPoints.length !== 1;
+            });
 
             let existingBox = dedupeSyncedShapes(duplicateBoxes, frame);
             let existingGroundPolyline = dedupeSyncedShapes(
@@ -745,6 +904,10 @@ export default class Editor extends BaseEditor {
             );
             let existingGroundPolygon = dedupeSyncedShapes(
                 duplicateGroundShapes.filter((object) => object instanceof GroundPolygon),
+                frame,
+            );
+            let existingIrregularWall = dedupeSyncedShapes(
+                duplicateGroundShapes.filter((object) => object instanceof IrregularWall),
                 frame,
             );
 
@@ -802,7 +965,11 @@ export default class Editor extends BaseEditor {
                         this.bsState.reviewMode,
                     ),
                 );
-            } else if (!freshGroundPolyline && existingGroundPolyline) {
+            } else if (
+                !freshGroundPolyline &&
+                existingGroundPolyline &&
+                String(frame.id) !== sourceFrameKey
+            ) {
                 removeDatas.push({ objects: [existingGroundPolyline], frame });
             }
 
@@ -825,8 +992,37 @@ export default class Editor extends BaseEditor {
                         this.bsState.reviewMode,
                     ),
                 );
-            } else if (!freshGroundPolygon && existingGroundPolygon) {
+            } else if (
+                !freshGroundPolygon &&
+                existingGroundPolygon &&
+                // The source frame has just been saved and is the sync truth.
+                // A delayed/filtered batch response must not remove its local P
+                // annotation during refresh; only target frames may be pruned.
+                String(frame.id) !== sourceFrameKey
+            ) {
                 removeDatas.push({ objects: [existingGroundPolygon], frame });
+            }
+
+            if (freshIrregularWall && !existingIrregularWall) {
+                const annotate = utils.convertObject2Annotate([freshIrregularWall], this)[0];
+                if (annotate) addDatas.push({ objects: [annotate], frame });
+            } else if (freshIrregularWall && existingIrregularWall) {
+                if (String(frame.id) !== sourceFrameKey) {
+                    irregularWallPointUpdates.push({
+                        object: existingIrregularWall,
+                        bottomPoints: toGroundShapePoints(freshIrregularWall.bottomPoints),
+                        topPoints: toGroundShapePoints(freshIrregularWall.topPoints),
+                        frame,
+                    });
+                }
+                updateDatas.objects.push(existingIrregularWall);
+                updateDatas.data.push(buildSyncedUserDataPatch(freshIrregularWall, existingIrregularWall, this.bsState.reviewMode));
+            } else if (
+                !freshIrregularWall &&
+                existingIrregularWall &&
+                String(frame.id) !== sourceFrameKey
+            ) {
+                removeDatas.push({ objects: [existingIrregularWall], frame });
             }
         });
 
@@ -856,6 +1052,9 @@ export default class Editor extends BaseEditor {
                 groundPolylineHeightUpdates.forEach(({ object, wallHeight }) => {
                     object.setWallHeight(wallHeight);
                 });
+                irregularWallPointUpdates.forEach(({ object, bottomPoints, topPoints }) => {
+                    object.setPoints(bottomPoints, topPoints);
+                });
                 if (updateTrans.objects.length > 0)
                     this.cmdManager.execute('update-transform-batch', updateTrans);
                 if (updateDatas.objects.length > 0)
@@ -864,6 +1063,7 @@ export default class Editor extends BaseEditor {
             if (
                 removeDatas.length > 0 ||
                 groundShapePointUpdates.length > 0 ||
+                irregularWallPointUpdates.length > 0 ||
                 addDatas.length > 0
             ) {
                 this.dataManager.loadDataFromManager();
@@ -899,13 +1099,37 @@ export default class Editor extends BaseEditor {
      * This includes every track on the dirty frames, not only the one about to be synced.
      * Derived 2D projections are omitted so a later ordinary save can still write them.
      */
-    private async saveDirtySyncableObjects(frames: IFrame[]): Promise<boolean> {
+    private async saveDirtySyncableObjects(
+        frames: IFrame[],
+        sourceFrame?: IFrame,
+        sourceObject?: Box | SyncableGroundShape,
+    ): Promise<boolean> {
         if (this.bsState.saving) return false;
         const dataInfos = frames
             .map((frame) => {
                 const trackObjects = (this.dataManager.getFrameObject(frame.id) || []).filter(
                     (object) => object instanceof Box || isSyncableGroundShape(object),
-                );
+                ) as Array<Box | SyncableGroundShape>;
+                // The context-menu selection can outlive a frame-cache refresh.  In that case
+                // the object is visible and selected, but is absent from getFrameObject(), so
+                // the old code sent an empty source to /sync/save.  Persist this exact source
+                // object once; this endpoint is partial and never replaces other frame labels.
+                if (
+                    sourceObject &&
+                    sourceFrame &&
+                    String(frame.id) === String(sourceFrame.id)
+                ) {
+                    const sourceIndex = trackObjects.findIndex(
+                        (object) =>
+                            object === sourceObject ||
+                            object.uuid === sourceObject.uuid ||
+                            ((object.userData as IUserData).backId &&
+                                (object.userData as IUserData).backId ===
+                                    (sourceObject.userData as IUserData).backId),
+                    );
+                    if (sourceIndex >= 0) trackObjects[sourceIndex] = sourceObject;
+                    else trackObjects.push(sourceObject);
+                }
                 const objects = utils.convertAnnotate2Object(trackObjects, this).map((object) => {
                     const classConfig = this.getClassType(object.classId || object.classType || '');
                     const objectV2 = utils.translateToObjectV2(object, classConfig);

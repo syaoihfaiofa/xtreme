@@ -60,6 +60,7 @@ export default class ActionManager {
             }
             this.currentAction = null;
             action.end(this.editor);
+            (this.editor as any).parkingDensityManager?.refresh();
             console.log('action end:', name);
         }
 
@@ -88,11 +89,22 @@ export default class ActionManager {
         console.log(`stop action: ${this.currentAction.name}`);
 
         this.currentAction = null;
+        (this.editor as any).parkingDensityManager?.refresh();
     }
 
     handleEsc() {
         if (this.currentAction) {
             this.stopCurrentAction();
+        } else if (this.editor.getSelectedGroundPolylineVertex()) {
+            this.editor.clearSelectedGroundPolylineVertex();
+            this.editor.pc.render();
+        } else if (this.editor.getSelectedGroundPolygonVertex()) {
+            // P annotation: the first Esc leaves vertex-edit mode but keeps the
+            // parking-slot target selected; a following Esc deselects the target.
+            this.editor.clearSelectedGroundPolygonVertex();
+            this.editor.pc.render();
+        } else if (this.editor.getSelectedIrregularWallVertex()) {
+            this.editor.clearSelectedIrregularWallVertex();
         } else if (this.editor.pc.selection.length > 0) {
             // this.editor.cmdManager.execute('select-object');
             this.editor.selectObject();

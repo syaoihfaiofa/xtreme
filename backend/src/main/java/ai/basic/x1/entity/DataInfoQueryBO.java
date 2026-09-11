@@ -103,4 +103,7 @@ public class DataInfoQueryBO extends BaseQueryBO {
      */
     private Long parentId;
 
+    /** Server-side destination for a label backup. Internal use only; never accepted by /data/export. */
+    private String backupDirectory;
+
 }

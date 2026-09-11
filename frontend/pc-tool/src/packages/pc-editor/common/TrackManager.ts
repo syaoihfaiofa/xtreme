@@ -1,5 +1,5 @@
 import { IFrame, IUserData, ITrackCount, Const, IInfo2D, ObjectType, IBSObject } from '../type';
-import { AnnotateObject, Box, GroundPolygon, GroundPolyline, ITransform, Rect, Box2D, Object2D } from 'pc-render';
+import { AnnotateObject, Box, GroundPolygon, GroundPolyline, IrregularWall, ITransform, Rect, Box2D, Object2D } from 'pc-render';
 import Editor from '../Editor';
 import Event from '../config/event';
 import { IUpdateTrackBatchOption, ITransformOption } from './CmdManager/cmd/UpdateTrackDataBatch';
@@ -147,7 +147,8 @@ export default class TrackManager {
                 object.userData?.trackId === trackId &&
                 (object instanceof Box ||
                     object instanceof GroundPolygon ||
-                    object instanceof GroundPolyline),
+                    object instanceof GroundPolyline ||
+                    object instanceof IrregularWall),
         );
         let frameIndices = this.trackFrameIndexMap.get(trackId);
         if (!frameIndices) {

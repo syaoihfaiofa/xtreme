@@ -149,6 +149,7 @@ export enum datasetTypeEnum {
   LIDAR_BASIC = 'LIDAR_BASIC',
   IMAGE = 'IMAGE',
   LIDAR = 'LIDAR',
+  RECONSTRUCTION_FUSION = 'RECONSTRUCTION_FUSION',
   TEXT = 'TEXT',
 }
 

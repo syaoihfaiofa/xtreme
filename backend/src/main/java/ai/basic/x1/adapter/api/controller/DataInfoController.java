@@ -207,6 +207,17 @@ public class DataInfoController extends BaseDatasetController {
                 SceneLocationUploadResultDTO.class);
     }
 
+    /**
+     * Ego poses used by the point-cloud editor to register neighbouring LiDAR frames
+     * into the current frame.  Frames without a successfully imported location sample
+     * are deliberately omitted, so callers can safely skip them.
+     */
+    @GetMapping("scenePoses")
+    public Map<Long, SceneLocationBO> getScenePoses(
+            @NotEmpty(message = "dataIds cannot be null") @RequestParam(required = false) List<Long> dataIds) {
+        return dataInfoUsecase.findPoseByDataIds(dataIds);
+    }
+
     @PostMapping("importSceneResult/{sceneId}")
     public SceneResultImportResultDTO importSceneResult(@PathVariable Long sceneId,
                                                         @RequestParam("file") MultipartFile file,
@@ -233,6 +244,11 @@ public class DataInfoController extends BaseDatasetController {
         var dataInfoQueryBO = DefaultConverter.convert(dataInfoQueryDTO, DataInfoQueryBO.class);
         assert dataInfoQueryBO != null;
         return String.valueOf(dataInfoUsecase.export(dataInfoQueryBO));
+    }
+
+    @PostMapping("backupLabels")
+    public String backupLabels(@Validated @RequestBody DataLabelBackupDTO dto) {
+        return String.valueOf(dataInfoUsecase.backupLabels(dto));
     }
 
     @GetMapping("findExportRecordBySerialNumbers")

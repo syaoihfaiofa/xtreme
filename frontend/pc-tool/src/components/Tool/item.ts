@@ -115,17 +115,32 @@ export const allItems: IItemConfig[] = [
         },
     },
     {
-        action: 'groundPolylineVisibility',
-        label: '遮挡',
-        title: () => '遮挡标注：点击后，在相机图折线上选任意两点，两点之间设为不可见',
+        action: 'createIrregularWall',
+        title: () => '不规则墙标注 (I)',
         getIcon: function () {
-            return 'iconfont icon-yingshe';
+            return 'iconfont icon-polygon1';
         },
-        isDisplay: function () {
-            return true;
+        isDisplay: function (editor: Editor) {
+            const state = editor.state;
+            return state.modeConfig.actions['createIrregularWall'] && !state.config.showSingleImgView;
+        },
+        isActive: function () {
+            return false;
+        },
+    },
+    {
+        action: 'splitGroundShape',
+        label: '截断',
+        title: () => '截断整条 Track：选择对象后，点击线段上的截断位置',
+        getIcon: function () {
+            return 'iconfont icon-jiancha';
+        },
+        isDisplay: function (editor: Editor) {
+            const state = editor.state;
+            return state.modeConfig.actions['deleteObject'] && !state.config.showSingleImgView;
         },
         isActive: function (editor: Editor) {
-            return editor.state.config.groundPolylineVisibilityEdit === true;
+            return editor.state.config.groundShapeSplitEdit;
         },
     },
     {

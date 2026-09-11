@@ -24,12 +24,12 @@ export class ResourceLoader {
         this.generation = dataResource.generation;
         this.handleProgress = this.handleProgress.bind(this);
     }
-    remove() {
+    remove(scheduleNextLoad: boolean = true) {
         this.dataResource.loaders = this.dataResource.loaders.filter(
             (e) => e.data.id !== this.data.id,
         );
 
-        if (this.dataResource.isGenerationCurrent(this.generation)) {
+        if (scheduleNextLoad && this.dataResource.isGenerationCurrent(this.generation)) {
             setTimeout(() => {
                 if (this.dataResource.isGenerationCurrent(this.generation)) {
                     this.dataResource.load();
@@ -43,6 +43,10 @@ export class ResourceLoader {
     cancel() {
         this.controller.abort();
         this.data.loadState = '';
+        // A cancelled prefetch must immediately free its concurrency slot.  Do
+        // not schedule another background load here: activateFrame() has already
+        // selected a newer frame as the only resource that needs priority.
+        this.remove(false);
     }
     load() {
         let promise: Promise<IDataResource> = new Promise(async (resolve, reject) => {
@@ -78,7 +82,7 @@ export class ResourceLoader {
                 let loadedPreview = Boolean(config.previewPointsUrl && config.previewPointsUrl !== config.pointsUrl);
                 let pointsData: any;
                 try {
-                    pointsData = await this.dataResource.loadPoints(
+                    pointsData = await this.dataResource.loadPointsWithRetry(
                         initialUrl,
                         this.handleProgress,
                         this.controller.signal,
@@ -89,7 +93,7 @@ export class ResourceLoader {
                     if (!loadedPreview || this.controller.signal.aborted) throw error;
                     this.dataResource.editor.performanceMonitor.record('preview-load-fallback', this.data.id);
                     loadedPreview = false;
-                    pointsData = await this.dataResource.loadPoints(
+                    pointsData = await this.dataResource.loadPointsWithRetry(
                         config.pointsUrl,
                         this.handleProgress,
                         this.controller.signal,
@@ -342,6 +346,37 @@ export default class DataResource {
         return parsed;
     }
 
+    /**
+     * A frame switch may briefly contend with neighbour prefetches. Retry once for
+     * transient download/worker failures, but do not hide permanent 4xx resource
+     * errors or intentionally aborted requests.
+     */
+    async loadPointsWithRetry(
+        pointsUrl: string,
+        onProgress?: (percent: number) => void,
+        signal?: AbortSignal,
+        frameId: string = 'unknown',
+        layer: 'preview' | 'full' = 'full',
+    ): Promise<any> {
+        try {
+            return await this.loadPoints(pointsUrl, onProgress, signal, frameId, layer);
+        } catch (error) {
+            if (signal?.aborted || !this.isTransientPointLoadError(error)) throw error;
+            this.editor.performanceMonitor.record('point-download-retry', frameId, { layer });
+            await new Promise<void>((resolve) => setTimeout(resolve, 250));
+            if (signal?.aborted) throw error;
+            return this.loadPoints(pointsUrl, onProgress, signal, frameId, layer);
+        }
+    }
+
+    private isTransientPointLoadError(error: unknown): boolean {
+        const message = error instanceof Error ? error.message : String(error);
+        const status = Number(message.match(/point cloud download failed: (\d{3})/)?.[1]);
+        // Missing/expired resources require server-side remediation; retrying them
+        // only slows frame navigation and masks the actionable status code.
+        return !Number.isFinite(status) || status >= 500 || status === 408 || status === 429;
+    }
+
     private parsePoints(buffer: ArrayBuffer): Promise<any> {
         if (!this.worker) return Promise.resolve(this.pointsLoader.parse2(buffer));
         const id = ++this.workerSequence;
@@ -387,6 +422,13 @@ export default class DataResource {
      */
     activateFrame(frame: IFrame) {
         this.clearScheduledFullUpgrade();
+        // Without this, rapid navigation leaves the previous frame's preview
+        // downloads and worker decodes running while a new foreground load starts.
+        // The browser can then fail a perfectly valid request even though MinIO
+        // returned 200. Keep only the target frame's in-flight resource.
+        this.loaders
+            .filter((loader) => String(loader.data.id) !== String(frame.id))
+            .forEach((loader) => loader.cancel());
         this.cancelBackgroundFullLoads(frame.id);
         const resource = this.dataMap[frame.id];
         if (resource) this.scheduleFullUpgrade(frame, resource, this.generation);

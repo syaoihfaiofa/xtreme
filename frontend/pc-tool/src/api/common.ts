@@ -97,6 +97,34 @@ export async function deleteTrack(dataId: string, trackId: string): Promise<void
     await post('/api/annotate/data/track/delete', null, { params: { dataId, trackId } });
 }
 
+export interface ITrackSplitRequest {
+    dataId: string | number;
+    trackId: string;
+    classId?: string | number;
+    objectType: 'GROUND_POLYLINE' | 'IRREGULAR_WALL';
+    segmentIndex: number;
+    t: number;
+    side?: 'bottom' | 'top';
+}
+
+export interface ITrackSplitResult {
+    originalTrackId: string;
+    originalTrackName: string;
+    newTrackId: string;
+    newTrackName: string;
+    affectedDataIds: Array<string | number>;
+    objects: unknown[];
+    updatedObjectCount: number;
+    createdObjectCount: number;
+    updatedProjectionCount: number;
+    createdProjectionCount: number;
+}
+
+export async function splitTrack(request: ITrackSplitRequest): Promise<ITrackSplitResult> {
+    const response = await post<any>('/api/annotate/data/track/split', request);
+    return response?.data || response;
+}
+
 export async function getSyncSegments(
     dataId: string,
     trackId: string,
@@ -434,6 +462,30 @@ export async function getDataFile(dataId: string) {
     });
 
     return { configs, name: data[0]?.name || '' };
+}
+
+export interface IScenePose {
+    dataId: string | number;
+    posX: number;
+    posY: number;
+    posZ: number;
+    yaw: number;
+    roll?: number;
+    pitch?: number;
+}
+
+/** Returns only frames that have an imported location pose. */
+export async function getScenePoses(dataIds: Array<string | number>): Promise<Record<string, IScenePose>> {
+    const ids = dataIds.map((id) => String(id)).filter(Boolean);
+    if (!ids.length) return {};
+    // Spring binds the existing editor API's comma-separated list convention;
+    // axios's default `dataIds[]` serializer is not compatible with this endpoint.
+    const response = await get(`/api/data/scenePoses?${queryStr({ dataIds: ids })}`);
+    const raw = response?.data || response || {};
+    return Object.entries(raw).reduce((result, [id, pose]) => {
+        if (pose) result[String(id)] = pose as IScenePose;
+        return result;
+    }, {} as Record<string, IScenePose>);
 }
 
 export async function getUserInfo() {

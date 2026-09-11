@@ -82,7 +82,9 @@ export enum ObjectType {
     TYPE_GROUND_POLYGON = 'GROUND_POLYGON',
     TYPE_2D_GROUND_POLYGON = '2D_GROUND_POLYGON',
     TYPE_GROUND_POLYLINE = 'GROUND_POLYLINE',
+    TYPE_IRREGULAR_WALL = 'IRREGULAR_WALL',
     TYPE_2D_GROUND_POLYLINE = '2D_GROUND_POLYLINE',
+    TYPE_2D_IRREGULAR_WALL = '2D_IRREGULAR_WALL',
 }
 
 // export interface IModelRun {
@@ -125,10 +127,14 @@ export interface IObjectV2 {
     groupId?: string;
     motionMode?: MotionMode;
     wallHeight?: number;
+    bottomPoints?: THREE.Vector3[];
+    topPoints?: THREE.Vector3[];
     syncDistance?: number;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
     showSyncLocationBoundaries?: boolean;
+    /** Opt-in per-track remapping of ground-polyline segment visibility during sync. */
+    syncSegmentVisibility?: boolean;
     dynamicRangeSyncEnabled?: boolean;
     dynamicSyncPreviousFrames?: number;
     dynamicSyncNextFrames?: number;
@@ -182,6 +188,8 @@ export interface IUserData {
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
     showSyncLocationBoundaries?: boolean;
+    /** Opt-in per-track remapping of ground-polyline segment visibility during sync. */
+    syncSegmentVisibility?: boolean;
     dynamicRangeSyncEnabled?: boolean;
     dynamicSyncPreviousFrames?: number;
     dynamicSyncNextFrames?: number;
@@ -313,6 +321,7 @@ export interface IConfig {
     activeAnnotation: boolean;
     activeTranslate: boolean;
     groundPolylineVisibilityEdit: boolean;
+    groundShapeSplitEdit: boolean;
     activeTrack: boolean;
     circleRadius: number;
     activeHelper2d: IHelper2D[];
@@ -338,6 +347,25 @@ export interface IConfig {
     pointVelocity: [number, number];
     brightness: number; // 强度因子
     openIntensity: boolean;
+    rgbEnhance: boolean;
+    rgbEnhanceRadius: number;
+    rgbEnhanceContrast: number;
+    rgbEnhanceMinBrightness: number;
+    rgbLocalContrast: boolean;
+    rgbLocalContrastStrength: number;
+    rgbHighlightBoost: boolean;
+    rgbHighlightThreshold: number;
+    rgbHighlightStrength: number;
+    hideNonGroundRgb: boolean;
+    sideViewContrastRadius: number;
+    /** RGB-only, display-only parking-slot point cloud density controls. */
+    parkingDensityAvailable: boolean;
+    parkingDensityMotion: boolean;
+    parkingDensityFrameCount: number;
+    parkingDensityStyle: 'rgb' | 'gray' | 'same';
+    parkingDensityOpacity: number;
+    parkingDensityGround: boolean;
+    parkingDensityGroundScale: number;
     // renderProjectRect: boolean;
     renderRect: boolean;
     renderBox: boolean;

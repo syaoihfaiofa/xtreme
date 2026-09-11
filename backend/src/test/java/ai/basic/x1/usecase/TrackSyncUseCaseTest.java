@@ -2,6 +2,7 @@ package ai.basic.x1.usecase;
 
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataAnnotationObject;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
+import ai.basic.x1.entity.DataAnnotationObjectBO;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import org.junit.jupiter.api.Test;
@@ -12,9 +13,84 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TrackSyncUseCaseTest {
+
+    @Test
+    void splitAtFraction_insertsOneSharedCutPoint() {
+        JSONArray points = new JSONArray();
+        points.add(point(0, 0, 0));
+        points.add(point(10, 0, 0));
+        points.add(point(20, 0, 0));
+
+        TrackSyncUseCase.SplitParts split = TrackSyncUseCase.splitAtFraction(points, 0.25);
+
+        assertEquals(2, split.left.size());
+        assertEquals(3, split.right.size());
+        assertPoint(split.left.getJSONObject(1), 5, 0, 0);
+        assertPoint(split.right.getJSONObject(0), 5, 0, 0);
+    }
+
+    @Test
+    void splitAtFraction_reusesAnExistingVertexWithoutDuplicatePoints() {
+        JSONArray points = new JSONArray();
+        points.add(point(0, 0, 0));
+        points.add(point(10, 0, 0));
+        points.add(point(20, 0, 0));
+
+        TrackSyncUseCase.SplitParts split = TrackSyncUseCase.splitAtFraction(points, 0.5);
+
+        assertEquals(2, split.left.size());
+        assertEquals(2, split.right.size());
+        assertPoint(split.left.getJSONObject(1), 10, 0, 0);
+        assertPoint(split.right.getJSONObject(0), 10, 0, 0);
+    }
+
+    @Test
+    void splitAtFraction_rejectsWholePolylineEndpoints() {
+        JSONArray points = new JSONArray();
+        points.add(point(0, 0, 0));
+        points.add(point(10, 0, 0));
+
+        assertNull(TrackSyncUseCase.splitAtFraction(points, 0));
+        assertNull(TrackSyncUseCase.splitAtFraction(points, 1));
+    }
+
+    @Test
+    void orientedTop_reversesOppositeWallEdgeDirection() {
+        JSONArray bottom = new JSONArray();
+        bottom.add(point(0, 0, 0));
+        bottom.add(point(10, 0, 0));
+        JSONArray top = new JSONArray();
+        top.add(point(10, 0, 3));
+        top.add(point(5, 0, 3));
+        top.add(point(0, 0, 3));
+
+        JSONArray oriented = TrackSyncUseCase.orientedTop(bottom, top);
+
+        assertPoint(oriented.getJSONObject(0), 0, 0, 3);
+        assertPoint(oriented.getJSONObject(2), 10, 0, 3);
+    }
+
+    @Test
+    void sliceVisibility_copiesSplitSegmentFlagToBothHalves() {
+        JSONArray entries = new JSONArray();
+        entries.add(new JSONObject().set("index", 0).set("visible", true));
+        entries.add(new JSONObject().set("index", 1).set("visible", false));
+        entries.add(new JSONObject().set("index", 2).set("visible", true));
+        JSONObject visibility = new JSONObject().set("0", entries);
+
+        JSONObject left = TrackSyncUseCase.sliceVisibility(visibility, 1, false);
+        JSONObject right = TrackSyncUseCase.sliceVisibility(visibility, 1, true);
+
+        assertEquals(2, left.getJSONArray("0").size());
+        assertEquals(false, left.getJSONArray("0").getJSONObject(1).getBool("visible"));
+        assertEquals(2, right.getJSONArray("0").size());
+        assertEquals(0, right.getJSONArray("0").getJSONObject(0).getInt("index"));
+        assertEquals(false, right.getJSONArray("0").getJSONObject(0).getBool("visible"));
+    }
 
     @Test
     void syncResult_returnsSortedAffectedFrameIdsAndVersion() {
@@ -57,6 +133,23 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void sameClass_matchesUnclassifiedGroundShapes() {
+        JSONObject attrs = new JSONObject()
+                .set("trackId", "track-1")
+                .set("type", "GROUND_POLYLINE");
+        DataAnnotationObject existing = DataAnnotationObject.builder()
+                .classAttributes(attrs)
+                .build();
+        DataAnnotationObjectBO source = DataAnnotationObjectBO.builder()
+                .classAttributes(new JSONObject()
+                        .set("trackId", "track-1")
+                        .set("type", "GROUND_POLYLINE"))
+                .build();
+
+        assertTrue(TrackSyncUseCase.sameClass(existing, source));
+    }
+
+    @Test
     void fixedSizeSync_appliesPendingCKeyTurnToTargetYaw() {
         JSONObject contour = new JSONObject().set("rotation3D", point(0, 0, Math.PI / 4));
 
@@ -92,6 +185,32 @@ class TrackSyncUseCaseTest {
         assertPoint(targetPoints.getJSONObject(2), 1, 0, 6);
         assertPoint(targetPoints.getJSONObject(3), 2, -3, 1);
         assertPoint(targetPoints.getJSONObject(4), 6, -5, 2);
+    }
+
+    @Test
+    void cachedWorldPolyline_matchesDirectProjectionForEveryTargetPose() {
+        JSONArray sourcePoints = new JSONArray();
+        sourcePoints.add(point(-2, 1, 0));
+        sourcePoints.add(point(3, -4, 2));
+        sourcePoints.add(point(8, 2, 1));
+        TrackSyncUseCase.Pose sourcePose = new TrackSyncUseCase.Pose(
+                12D, -7D, 3D, Math.PI / 3, 0.1, -0.2);
+
+        List<TrackSyncUseCase.Pose> targetPoses = List.of(
+                new TrackSyncUseCase.Pose(12D, -7D, 3D, Math.PI / 3, 0.1, -0.2),
+                new TrackSyncUseCase.Pose(1D, 4D, -2D, -Math.PI / 4, -0.15, 0.25));
+        for (boolean syncWorldVertical : List.of(true, false)) {
+            JSONArray cachedWorldPoints = TrackSyncUseCase.polylineToWorld(
+                    sourcePoints, sourcePose, syncWorldVertical);
+            for (TrackSyncUseCase.Pose targetPose : targetPoses) {
+                JSONArray direct = TrackSyncUseCase.projectGroundPoints(
+                        sourcePoints, sourcePose, targetPose, syncWorldVertical);
+                JSONArray fromCachedWorld = TrackSyncUseCase.polylineToLocal(
+                        cachedWorldPoints, targetPose, syncWorldVertical);
+
+                assertPolylineEquals(direct, fromCachedWorld);
+            }
+        }
     }
 
     @Test
@@ -315,6 +434,15 @@ class TrackSyncUseCaseTest {
         assertVisibility(migrated, "bev", true, false);
     }
 
+    @Test
+    void syncSegmentVisibility_isDisabledUnlessExplicitlyEnabled() {
+        assertFalse(TrackSyncUseCase.shouldSyncSegmentVisibility(new JSONObject()));
+        assertTrue(TrackSyncUseCase.shouldSyncSegmentVisibility(
+                new JSONObject().set("syncSegmentVisibility", true)));
+        assertFalse(TrackSyncUseCase.shouldSyncSegmentVisibility(
+                new JSONObject().set("syncSegmentVisibility", false)));
+    }
+
     private static JSONArray visibilityEntries(boolean... values) {
         JSONArray entries = new JSONArray();
         for (int index = 0; index < values.length; index++) {
@@ -349,5 +477,18 @@ class TrackSyncUseCaseTest {
         assertEquals(x, point.getDouble("x"), 0.000000001);
         assertEquals(y, point.getDouble("y"), 0.000000001);
         assertEquals(z, point.getDouble("z"), 0.000000001);
+    }
+
+    private static void assertPolylineEquals(JSONArray expected, JSONArray actual) {
+        assertEquals(expected.size(), actual.size());
+        for (int index = 0; index < expected.size(); index++) {
+            JSONObject expectedPoint = expected.getJSONObject(index);
+            JSONObject actualPoint = actual.getJSONObject(index);
+            assertPoint(
+                    actualPoint,
+                    expectedPoint.getDouble("x"),
+                    expectedPoint.getDouble("y"),
+                    expectedPoint.getDouble("z"));
+        }
     }
 }

@@ -237,4 +237,9 @@ public class CommonConfig implements WebMvcConfigurer {
         return new LidarSceneFormatExportUseCase();
     }
 
+    @Bean
+    public ReconstructionUseCase reconstructionUseCase() {
+        return new ReconstructionUseCase();
+    }
+
 }

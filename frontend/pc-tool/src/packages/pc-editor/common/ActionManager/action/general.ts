@@ -41,6 +41,47 @@ export const deleteObject = define({
         return editor.pc.selection.length > 0;
     },
     execute(editor: Editor) {
+        // A selected polyline vertex is a more specific target than the selected
+        // annotation.  Handle it first so Delete removes only that vertex; the
+        // whole polyline is deleted only after the vertex selection is cleared.
+        const selectedVertex = editor.getSelectedGroundPolylineVertex();
+        if (selectedVertex) {
+            const { object, index } = selectedVertex;
+            if (object.points3D.length <= 2) {
+                editor.showMsg('warning', '折线至少需要保留两个点；取消点选后可删除整条线');
+                return;
+            }
+            const points = object.points3D.map((point) => point.clone());
+            points.splice(index, 1);
+            editor.cmdManager.execute('update-ground-polyline-points', { object, points });
+            // Do not leave a stale index selected: a second Delete must not
+            // unexpectedly fall through and remove the whole annotation.
+            editor.clearSelectedGroundPolylineVertex();
+            return;
+        }
+
+        const selectedWallVertex = editor.getSelectedIrregularWallVertex();
+        if (selectedWallVertex) {
+            const { object, side, index } = selectedWallVertex;
+            const sourcePoints = side === 'bottom' ? object.bottomPoints : object.topPoints;
+            if (sourcePoints.length <= 2) {
+                editor.showMsg(
+                    'warning',
+                    `${side === 'bottom' ? '底边' : '顶边'}至少需要保留两个点；取消点选后可删除整面墙`,
+                );
+                return;
+            }
+            const points = sourcePoints.map((point) => point.clone());
+            points.splice(index, 1);
+            editor.cmdManager.execute('update-irregular-wall-points', {
+                object,
+                side,
+                points,
+            });
+            editor.clearSelectedIrregularWallVertex();
+            return;
+        }
+
         let object = editor.pc.selection[0];
         editor.cmdManager.execute('delete-object', object);
     },

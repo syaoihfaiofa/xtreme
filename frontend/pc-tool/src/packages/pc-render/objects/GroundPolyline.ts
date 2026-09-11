@@ -150,19 +150,13 @@ export default class GroundPolyline extends THREE.LineSegments {
     }
 
     setBevRenderSegments(segments: readonly IBevRenderSegment[]): void {
-        const visiblePoints: THREE.Vector3[] = [];
-        const hiddenPoints: THREE.Vector3[] = [];
-        segments.forEach((segment) => {
-            const target = segment.visible ? visiblePoints : hiddenPoints;
-            target.push(segment.start.clone(), segment.end.clone());
-        });
-        this.geometry.setFromPoints(visiblePoints);
+        // Visibility/occlusion is retained in data for compatibility, but is
+        // deliberately not visualized: all curb segments use the normal line.
+        const points = segments.flatMap((segment) => [segment.start.clone(), segment.end.clone()]);
+        this.geometry.setFromPoints(points);
         this.geometry.computeBoundingBox();
         this.geometry.computeBoundingSphere();
-        this.hiddenLine.geometry.setFromPoints(hiddenPoints);
-        this.hiddenLine.geometry.computeBoundingBox();
-        this.hiddenLine.geometry.computeBoundingSphere();
-        this.hiddenLine.visible = hiddenPoints.length >= 2;
+        this.hiddenLine.visible = false;
     }
 
     isVisibilityBoundaryPoint(pointIndex: number): boolean {
@@ -360,36 +354,12 @@ export default class GroundPolyline extends THREE.LineSegments {
 
     private rebuildLineGeometry(segmentVisible: boolean[]): void {
         const segmentCount = Math.max(0, this.points3D.length - 1);
-        const flags = this.normalizeSegmentVisible(segmentVisible);
-        const hasHiddenSegments =
-            segmentCount > 0 && flags.length === segmentCount && flags.some((visible) => !visible);
-
-        if (!hasHiddenSegments) {
-            const points = this.points3D.slice(0, -1).flatMap((start, index) => [
-                start.clone(),
-                this.points3D[index + 1].clone(),
-            ]);
-            this.geometry.setFromPoints(points);
-            this.hiddenLine.visible = false;
-            return;
-        }
-
-        const visiblePoints: THREE.Vector3[] = [];
-        const hiddenPoints: THREE.Vector3[] = [];
-        for (let index = 0; index < segmentCount; index++) {
-            const start = this.points3D[index];
-            const end = this.points3D[index + 1];
-            const target = flags[index] ? visiblePoints : hiddenPoints;
-            target.push(start.clone(), end.clone());
-        }
-
-        this.geometry.setFromPoints(visiblePoints);
-        if (hiddenPoints.length >= 2) {
-            this.hiddenLine.geometry.setFromPoints(hiddenPoints);
-            this.hiddenLine.visible = true;
-        } else {
-            this.hiddenLine.visible = false;
-        }
+        const points = this.points3D.slice(0, -1).flatMap((start, index) => [
+            start.clone(),
+            this.points3D[index + 1].clone(),
+        ]);
+        this.geometry.setFromPoints(points);
+        this.hiddenLine.visible = false;
     }
 
     private rebuildWallGeometry(): void {

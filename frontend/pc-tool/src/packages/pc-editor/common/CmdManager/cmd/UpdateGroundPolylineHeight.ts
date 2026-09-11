@@ -34,6 +34,7 @@ export default class UpdateGroundPolylineHeight extends CmdBase<
         const height = Number.isFinite(wallHeight) ? Math.max(0, wallHeight) : 0;
         object.setWallHeight(height);
         object.userData.wallHeight = height;
+        this.editor.markSyncDirtyForGroundShape(object);
         this.editor.dataManager.setGroundPolygonPoints(object, object.points3D);
     }
 }

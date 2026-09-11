@@ -8,6 +8,7 @@ interface IData {
     position?: number[];
     intensity?: number[];
     color?: number[];
+    localLuminance?: number[];
 }
 
 enum Status {
@@ -28,9 +29,12 @@ function createGeometry(data: IData = { position: [], color: [], intensity: [] }
     let colorAttr = new THREE.Uint8BufferAttribute(data.color || [], 3);
     // colorAttr.usage = THREE.DynamicDrawUsage;
 
+    let localLuminanceAttr = new THREE.Float32BufferAttribute(data.localLuminance || [], 1);
+
     geometry.setAttribute('position', positionAttr);
     geometry.setAttribute('intensity', intensityAttr);
     geometry.setAttribute('color', colorAttr);
+    geometry.setAttribute('localLuminance', localLuminanceAttr);
     return geometry;
 }
 
@@ -70,7 +74,7 @@ export default class Points extends THREE.Points implements IPoints {
             const update = (name: string, source: number[] | undefined, ArrayType: any) => {
                 const values = source || [];
                 let attr = geometry.getAttribute(name) as THREE.BufferAttribute;
-                const itemSize = name === 'intensity' ? 1 : 3;
+                const itemSize = name === 'intensity' || name === 'localLuminance' ? 1 : 3;
                 if (!attr || attr.array.length < values.length) {
                     attr = new THREE.BufferAttribute(new ArrayType(oldPosition.array.length), itemSize);
                     geometry.setAttribute(name, attr);
@@ -82,6 +86,7 @@ export default class Points extends THREE.Points implements IPoints {
             update('position', position, Float32Array);
             update('intensity', data.intensity, Float32Array);
             update('color', data.color, Uint8Array);
+            update('localLuminance', data.localLuminance, Float32Array);
             geometry.setDrawRange(0, position.length / 3);
         }
 

@@ -498,7 +498,9 @@ export default class EditGroundPolylineAction extends Action {
         this.handles[index].style.background = '#00e5ff';
         const reference = this.createHeightReference(object, index);
         this.dragMove = (moveEvent: PointerEvent): void => {
-            const point = this.pickPointCloud(moveEvent, reference);
+            // Main-cloud vertex dragging is an XY edit.  Keep the existing height
+            // so nearby cars/walls cannot pull a curb point onto their surface.
+            const point = this.pickPointCloud(moveEvent, reference, false, true);
             if (!point || object.parent !== this.renderView.pointCloud.annotate3D) return;
             object.updateMatrixWorld();
             const points = object.points3D.map((item) => item.clone());
@@ -540,6 +542,7 @@ export default class EditGroundPolylineAction extends Action {
         event: MouseEvent | PointerEvent,
         reference: ISnapHeightReference,
         preferGround = false,
+        lockHeight = false,
     ): THREE.Vector3 | null {
         const rect = this.renderView.renderer.domElement.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) return null;
@@ -549,6 +552,10 @@ export default class EditGroundPolylineAction extends Action {
             -((event.clientY - rect.top) / rect.height) * 2 + 1,
         );
         this.raycaster.setFromCamera(this.pointer, this.renderView.camera);
+        if (lockHeight) {
+            this.estimatePlane.set(new THREE.Vector3(0, 0, 1), -reference.anchorZ);
+            return this.raycaster.ray.intersectPlane(this.estimatePlane, this.estimatedPoint)?.clone() || null;
+        }
         const hits = this.raycaster.intersectObject(
             this.renderView.pointCloud.groupPoints,
             true,

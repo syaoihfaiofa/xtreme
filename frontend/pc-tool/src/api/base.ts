@@ -52,7 +52,14 @@ Service.interceptors.response.use(
         }
     },
     (error) => {
-        return Promise.reject(new BSError(Code.NETWORK_ERROR, 'Network Error'));
+        const response = error?.response?.data;
+        return Promise.reject(
+            new BSError(
+                response?.code || Code.NETWORK_ERROR,
+                response?.message || 'Network Error',
+                error,
+            ),
+        );
     },
 );
 

@@ -21,7 +21,8 @@ export function getPrimaryTrackFrameObject<T extends ITrackFrameObject>(
             objectType === ObjectType.TYPE_3D ||
             objectType === ObjectType.TYPE_3D_BOX ||
             objectType === ObjectType.TYPE_GROUND_POLYGON ||
-            objectType === ObjectType.TYPE_GROUND_POLYLINE
+            objectType === ObjectType.TYPE_GROUND_POLYLINE ||
+            objectType === ObjectType.TYPE_IRREGULAR_WALL
         );
     });
 }

@@ -3,10 +3,12 @@ import {
     Box,
     GroundPolygon,
     GroundPolyline,
+    IrregularWall,
     Rect,
     Box2D,
     ProjectedPolygon,
     ProjectedPolyline,
+    ProjectedIrregularWall,
     AnnotateObject,
 } from 'pc-render';
 import {
@@ -178,6 +180,7 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         syncMaxDisappearGap: object.syncMaxDisappearGap,
         syncLocationGapMs: object.syncLocationGapMs,
         showSyncLocationBoundaries: object.showSyncLocationBoundaries,
+        syncSegmentVisibility: object.syncSegmentVisibility === true,
         dynamicRangeSyncEnabled: object.dynamicRangeSyncEnabled,
         dynamicSyncPreviousFrames: object.dynamicSyncPreviousFrames,
         dynamicSyncNextFrames: object.dynamicSyncNextFrames,
@@ -224,6 +227,14 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
     }
     if (object.objType === ObjectType.TYPE_GROUND_POLYLINE && object.segmentForceVisibleByView) {
         objectV2.contour.segmentForceVisibleByView = object.segmentForceVisibleByView;
+    }
+    if (object.objType === ObjectType.TYPE_IRREGULAR_WALL) {
+        objectV2.contour.bottomPoints = object.bottomPoints || [];
+        objectV2.contour.topPoints = object.topPoints || [];
+    }
+    if (object.objType === ObjectType.TYPE_2D_IRREGULAR_WALL) {
+        objectV2.contour.bottomPoints = object.bottomPoints || [];
+        objectV2.contour.topPoints = object.topPoints || [];
     }
     return objectV2;
 }
@@ -289,6 +300,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.syncMaxDisappearGap = obj.syncMaxDisappearGap;
         userData.syncLocationGapMs = obj.syncLocationGapMs;
         userData.showSyncLocationBoundaries = obj.showSyncLocationBoundaries;
+        userData.syncSegmentVisibility = obj.syncSegmentVisibility === true;
         userData.dynamicRangeSyncEnabled = obj.dynamicRangeSyncEnabled;
         userData.dynamicSyncPreviousFrames = obj.dynamicSyncPreviousFrames;
         userData.dynamicSyncNextFrames = obj.dynamicSyncNextFrames;
@@ -353,6 +365,25 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             if (classConfig) polyline.setColor(getObjectDisplayColor(classConfig.color, userData));
             bindInfo(polyline, obj);
             annotates.push(polyline);
+        } else if (objType === ObjectType.TYPE_IRREGULAR_WALL) {
+            const toPoints = (value: any): THREE.Vector3[] => Array.isArray(value)
+                ? value.map((point: any) => new THREE.Vector3(Number(point.x), Number(point.y), Number(point.z)))
+                : [];
+            const bottomPoints = toPoints(obj.bottomPoints);
+            const topPoints = toPoints(obj.topPoints);
+            if (bottomPoints.length < 2 || topPoints.length === 1 || [...bottomPoints, ...topPoints].some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z))) {
+                console.warn('skip invalid irregular wall', obj);
+                return;
+            }
+            const wall = createUtils.createIrregularWall(editor, bottomPoints, topPoints, userData);
+            const validationError = wall.validate();
+            if (validationError) {
+                console.warn('skip invalid irregular wall', validationError, obj);
+                return;
+            }
+            if (classConfig) wall.setColor(getObjectDisplayColor(classConfig.color, userData));
+            bindInfo(wall, obj);
+            annotates.push(wall);
         } else if (objType === ObjectType.TYPE_3D_BOX || objType === ObjectType.TYPE_3D) {
             if (!obj.center3D || !obj.size3D) {
                 console.warn('skip invalid 3D object without center3D/size3D', obj);
@@ -400,6 +431,32 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             polyline.color = getObjectDisplayColor(classConfig?.color || '#00e5ff', userData);
             bindInfo(polyline, obj);
             annotates.push(polyline);
+        } else if (objType === ObjectType.TYPE_2D_IRREGULAR_WALL) {
+            const toPoints = (value: any): THREE.Vector2[] =>
+                Array.isArray(value)
+                    ? value.map(
+                          (point: any) =>
+                              new THREE.Vector2(Number(point.x), Number(point.y)),
+                      )
+                    : [];
+            const bottomPoints = toPoints(obj.bottomPoints);
+            const topPoints = toPoints(obj.topPoints);
+            if (
+                bottomPoints.length < 2 ||
+                (topPoints.length > 0 && topPoints.length < 2) ||
+                [...bottomPoints, ...topPoints].some(
+                    (point) => !Number.isFinite(point.x) || !Number.isFinite(point.y),
+                )
+            ) {
+                console.warn('skip invalid projected irregular wall', obj);
+                return;
+            }
+            const wall = new ProjectedIrregularWall(bottomPoints, topPoints);
+            wall.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
+            wall.userData = userData;
+            wall.color = getObjectDisplayColor(classConfig?.color || '#00e5ff', userData);
+            bindInfo(wall, obj);
+            annotates.push(wall);
         } else if (objType === ObjectType.TYPE_2D_RECT || objType === ObjectType.TYPE_RECT) {
             if (!Array.isArray(obj.points) || obj.points.length === 0) {
                 console.warn('skip invalid 2D rect without points', obj);
@@ -477,6 +534,8 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             ? []
             : obj instanceof GroundPolygon || obj instanceof GroundPolyline
               ? obj.points3D.map((point) => point.clone())
+              : obj instanceof IrregularWall
+                ? obj.bottomPoints.map((point) => point.clone())
               : get2DPoints(obj as any);
         let classConfig = editor.getClassType(userData);
         updateObjectVersion(obj as any);
@@ -503,6 +562,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             syncMaxDisappearGap: userData.syncMaxDisappearGap,
             syncLocationGapMs: userData.syncLocationGapMs,
             showSyncLocationBoundaries: userData.showSyncLocationBoundaries,
+            syncSegmentVisibility: userData.syncSegmentVisibility === true,
             dynamicRangeSyncEnabled: userData.dynamicRangeSyncEnabled,
             dynamicSyncPreviousFrames: userData.dynamicSyncPreviousFrames,
             dynamicSyncNextFrames: userData.dynamicSyncNextFrames,
@@ -549,6 +609,15 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             info.objType = ObjectType.TYPE_GROUND_POLYLINE;
             info.segmentVisibilityByView = getGroundPolylineSegmentVisibilityExport(obj);
             info.segmentForceVisibleByView = getGroundPolylineForceVisibleExport(obj);
+        } else if (obj instanceof IrregularWall) {
+            info.objType = ObjectType.TYPE_IRREGULAR_WALL;
+            info.bottomPoints = obj.bottomPoints.map((point) => point.clone());
+            info.topPoints = obj.topPoints.map((point) => point.clone());
+        } else if (obj instanceof ProjectedIrregularWall) {
+            info.objType = ObjectType.TYPE_2D_IRREGULAR_WALL;
+            info.bottomPoints = obj.bottomPoints.map((point) => point.clone());
+            info.topPoints = obj.topPoints.map((point) => point.clone());
+            info.viewIndex = parseInt((obj.viewId.match(/[0-9]{1,5}$/) as any)[0]);
         } else {
             info.viewIndex = parseInt((obj.viewId.match(/[0-9]{1,5}$/) as any)[0]);
         }
@@ -565,14 +634,16 @@ function getObjType(annotate: AnnotateObject): ObjectType {
     if (annotate instanceof Box) type = ObjectType.TYPE_3D_BOX;
     else if (annotate instanceof GroundPolygon) type = ObjectType.TYPE_GROUND_POLYGON;
     else if (annotate instanceof GroundPolyline) type = ObjectType.TYPE_GROUND_POLYLINE;
+    else if (annotate instanceof IrregularWall) type = ObjectType.TYPE_IRREGULAR_WALL;
     else if (annotate instanceof ProjectedPolygon) type = ObjectType.TYPE_2D_GROUND_POLYGON;
     else if (annotate instanceof ProjectedPolyline) type = ObjectType.TYPE_2D_GROUND_POLYLINE;
+    else if (annotate instanceof ProjectedIrregularWall) type = ObjectType.TYPE_2D_IRREGULAR_WALL;
     else if (annotate instanceof Rect) type = ObjectType.TYPE_2D_RECT;
     else if (annotate instanceof Box2D) type = ObjectType.TYPE_2D_BOX;
     return type;
 }
 
-export function get2DPoints(object: Rect | Box2D | ProjectedPolygon | ProjectedPolyline) {
+export function get2DPoints(object: Rect | Box2D | ProjectedPolygon | ProjectedPolyline | ProjectedIrregularWall) {
     let points = [] as THREE.Vector2[];
     if (object instanceof Rect) {
         let { size, center } = object;
@@ -587,8 +658,8 @@ export function get2DPoints(object: Rect | Box2D | ProjectedPolygon | ProjectedP
     }
     else if (object instanceof ProjectedPolygon || object instanceof ProjectedPolyline) {
         points = object.points.map((point) => point.clone());
-    } else if (object instanceof ProjectedPolyline) {
-        points = object.points.map((point) => point.clone());
+    } else if (object instanceof ProjectedIrregularWall) {
+        points = [...object.bottomPoints, ...object.topPoints].map((point) => point.clone());
     }
     return points;
 }

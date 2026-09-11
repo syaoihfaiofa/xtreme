@@ -11,7 +11,10 @@ import Edit2DAction from './action/Edit2DAction';
 import Transform2DAction from './action/Transform2DAction';
 import ViewHelperAction from './action/ViewHelperAction';
 import EditGroundPolylineAction from './action/EditGroundPolylineAction';
+import EditGroundPolygonAction from './action/EditGroundPolygonAction';
+import EditIrregularWallAction from './action/EditIrregularWallAction';
 import EditGroundPolylineVisibility2DAction from './action/EditGroundPolylineVisibility2DAction';
+import SplitGroundShapeAction from './action/SplitGroundShapeAction';
 
 import { registryAction } from './action/index';
 
@@ -28,7 +31,10 @@ import { registryAction } from './action/index';
     Transform2DAction,
     ViewHelperAction,
     EditGroundPolylineAction,
+    EditGroundPolygonAction,
+    EditIrregularWallAction,
     EditGroundPolylineVisibility2DAction,
+    SplitGroundShapeAction,
 ].forEach((action) => {
     registryAction(action.actionName, action as any);
 });
@@ -59,7 +65,10 @@ export {
     Transform2DAction,
     ViewHelperAction,
     EditGroundPolylineAction,
+    EditGroundPolygonAction,
+    EditIrregularWallAction,
     EditGroundPolylineVisibility2DAction,
+    SplitGroundShapeAction,
 };
 
 export * from './objects';
@@ -68,5 +77,6 @@ export * from './objects';
 export type { axisType } from './renderView/SideRenderView';
 export type { viewType } from './common/ViewHelper';
 export type { wayToFocus } from './renderView/MainRenderView';
+export type { IGroundShapeSplitPick } from './action/SplitGroundShapeAction';
 export type { IColorRangeItem, IUniformOption } from './material/PointsMaterial';
 export * from './type';

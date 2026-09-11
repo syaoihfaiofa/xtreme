@@ -4,13 +4,16 @@ import {
     Box,
     GroundPolygon,
     GroundPolyline,
+    IrregularWall,
     Rect,
     Box2D,
     ITransform,
     Object2D,
     ProjectedPolygon,
     ProjectedPolyline,
+    ProjectedIrregularWall,
     Image2DRenderView,
+    Event as RenderEvent,
     utils as renderUtils,
 } from 'pc-render';
 import Editor from '../Editor';
@@ -64,11 +67,12 @@ export default class DataManager {
 
     private isTrackDedupeTarget(
         object: AnnotateObject,
-    ): object is Box | GroundPolygon | GroundPolyline {
+    ): object is Box | GroundPolygon | GroundPolyline | IrregularWall {
         return (
             object instanceof Box ||
             object instanceof GroundPolygon ||
-            object instanceof GroundPolyline
+            object instanceof GroundPolyline ||
+            object instanceof IrregularWall
         );
     }
 
@@ -104,9 +108,9 @@ export default class DataManager {
         objects: AnnotateObject[],
         filterMap: ReturnType<DataManager['getActiveFilter']>,
         withoutTaskId: string,
-    ): { annotate2D: Object2D[]; annotate3D: Array<Box | GroundPolygon | GroundPolyline> } {
+    ): { annotate2D: Object2D[]; annotate3D: Array<Box | GroundPolygon | GroundPolyline | IrregularWall> } {
         const annotate2D: Object2D[] = [];
-        const annotate3D: Array<Box | GroundPolygon | GroundPolyline> = [];
+        const annotate3D: Array<Box | GroundPolygon | GroundPolyline | IrregularWall> = [];
         objects.forEach((object) => {
             const userData = object.userData as Required<IUserData>;
             const sourceId = userData.sourceId || withoutTaskId;
@@ -116,7 +120,7 @@ export default class DataManager {
             // parking slots and future LiDAR shapes must survive a frame reload too.
             if (object instanceof THREE.Object3D) {
                 object.parent = this.editor.pc.annotate3D;
-                annotate3D.push(object as Box | GroundPolygon | GroundPolyline);
+                annotate3D.push(object as Box | GroundPolygon | GroundPolyline | IrregularWall);
             } else if (object instanceof Object2D) {
                 annotate2D.push(object);
             }
@@ -358,13 +362,45 @@ export default class DataManager {
         frame?: IFrame,
     ): void {
         object.setPoints(points);
+        // Parking slots, curbs, and walls are static ground shapes. Any local
+        // geometry edit must immediately advertise that it awaits propagation.
+        this.editor.markSyncDirtyForGroundShape(object);
         if (object instanceof GroundPolyline) {
             refreshGroundPolylineBevDisplay(this.editor, object);
         }
         this.updateGroundShapeProjections(object);
+        // One P-annotation vertex is shared by the main cloud, all side views and
+        // its image projections. Re-render every view after the canonical 3D point
+        // has changed so no view keeps a stale handle or projected position.
+        this.editor.pc.dispatchEvent({
+            type: RenderEvent.OBJECT_TRANSFORM,
+            data: { object, option: { pointsChanged: true } },
+        });
+        this.editor.pc.render();
         this.onAnnotatesChange([object], frame, {
             type: 'transform',
             points3D: object.points3D.map((point) => point.clone()),
+        });
+    }
+
+    setIrregularWallPoints(
+        object: IrregularWall,
+        side: 'bottom' | 'top',
+        points: THREE.Vector3[],
+        frame?: IFrame,
+    ): void {
+        object.setSidePoints(side, points);
+        this.editor.markSyncDirtyForGroundShape(object);
+        this.updateIrregularWallProjections(object);
+        this.editor.pc.dispatchEvent({
+            type: RenderEvent.OBJECT_TRANSFORM,
+            data: { object, option: { pointsChanged: true } },
+        });
+        this.editor.pc.render();
+        this.onAnnotatesChange([object], frame, {
+            type: 'transform',
+            bottomPoints: object.bottomPoints.map((point) => point.clone()),
+            topPoints: object.topPoints.map((point) => point.clone()),
         });
     }
 
@@ -372,12 +408,24 @@ export default class DataManager {
         const views = this.editor.pc.renderViews.filter(
             (view) => view instanceof Image2DRenderView,
         ) as Image2DRenderView[];
+        const sourceTrackId = object.userData?.trackId as string | undefined;
         const projections = this.editor.pc
             .getAnnotate2D()
             .filter(
-                (annotate) =>
-                    (annotate instanceof ProjectedPolygon || annotate instanceof ProjectedPolyline) &&
-                    annotate.userData.projectedFromId === object.uuid,
+                (annotate) => {
+                    const isMatchingShape = object instanceof GroundPolygon
+                        ? annotate instanceof ProjectedPolygon
+                        : annotate instanceof ProjectedPolyline;
+                    return isMatchingShape &&
+                    // `projectedFromId` is the primary link.  Older saved P
+                    // annotations can retain a pre-import UUID however, so fall
+                    // back to the persistent track id and repair the link below.
+                    // Without that fallback the main-cloud vertex would move but
+                    // the matching image projection would remain at its old point
+                    // until the next full projection rebuild.
+                    (annotate.userData.projectedFromId === object.uuid ||
+                        (!!sourceTrackId && annotate.userData.trackId === sourceTrackId));
+                },
             ) as Array<ProjectedPolygon | ProjectedPolyline>;
 
         projections.forEach((projection) => {
@@ -394,7 +442,7 @@ export default class DataManager {
                 if (projection.points.length > targetLength) {
                     projection.points.splice(targetLength);
                 }
-            } else if (projection.points.length !== targetLength) {
+            } else if (projection instanceof ProjectedPolygon && projection.points.length !== targetLength) {
                 return;
             }
 
@@ -405,10 +453,56 @@ export default class DataManager {
                 }
             });
             if (projection instanceof ProjectedPolygon) {
+                // Fisheye views draw sampled curved edges.  Refresh those samples
+                // as well as the four handles, otherwise the handles move while
+                // the visible outline appears frozen during a main-cloud drag.
+                projection.edgePoints = view.isFisheye()
+                    ? object.points3D.map((point, index) => {
+                        const next = object.points3D[(index + 1) % object.points3D.length];
+                        return Array.from({ length: 9 }, (_, sampleIndex) => {
+                            const projected = view.worldToImg(
+                                point.clone().lerp(next, sampleIndex / 8),
+                            );
+                            return new THREE.Vector2(projected.x, projected.y);
+                        });
+                    })
+                    : undefined;
                 const rear = projection.points[1].clone().add(projection.points[2]).multiplyScalar(0.5);
                 const opening = projection.points[0].clone().add(projection.points[3]).multiplyScalar(0.5);
                 projection.openingDirection.copy(opening.sub(rear).normalize());
             }
+            projection.userData.projectedFromId = object.uuid;
+        });
+    }
+
+    updateIrregularWallProjections(object: IrregularWall): void {
+        const views = this.editor.pc.renderViews.filter(
+            (view) => view instanceof Image2DRenderView,
+        ) as Image2DRenderView[];
+        const sourceTrackId = object.userData?.trackId as string | undefined;
+        const projections = this.editor.pc
+            .getAnnotate2D()
+            .filter(
+                (annotate): annotate is ProjectedIrregularWall =>
+                    annotate instanceof ProjectedIrregularWall &&
+                    (annotate.userData.projectedFromId === object.uuid ||
+                        (!!sourceTrackId && annotate.userData.trackId === sourceTrackId)),
+            );
+
+        projections.forEach((projection) => {
+            const view = views.find(
+                (item) => item.id === projection.viewId || item.renderId === projection.viewId,
+            );
+            if (!view) return;
+            const project = (points: THREE.Vector3[]) =>
+                points.map((point) => {
+                    const value = view.worldToImg(point.clone());
+                    return new THREE.Vector2(value.x, value.y);
+            });
+            projection.setPoints(project(object.bottomPoints), project(object.topPoints));
+            // Saved annotations may still refer to an import-time UUID.  The
+            // track id is stable, so repair that transient link after finding it.
+            projection.userData.projectedFromId = object.uuid;
         });
     }
 
@@ -494,6 +588,20 @@ export default class DataManager {
 
     markFrameObjectsComplete(frameId: string | number): void {
         this.completeFrameObjectIds.add(this.normalizeFrameId(frameId));
+    }
+
+    /** Drop annotation-only caches so a server-side scene mutation is fetched on next visit. */
+    invalidateFrameObjects(frameIds: Array<string | number>): void {
+        frameIds.forEach((frameId) => {
+            const frameKey = this.normalizeFrameId(frameId);
+            this.dataMap.delete(frameKey);
+            this.hasMap.delete(frameKey);
+            this.completeFrameObjectIds.delete(frameKey);
+            this.deletedObjectIdsByFrame.delete(frameKey);
+            const frame = this.editor.getFrame(String(frameId));
+            if (frame) frame.needSave = false;
+        });
+        this.clearDisplayCache();
     }
 
     loadDataFromManager() {

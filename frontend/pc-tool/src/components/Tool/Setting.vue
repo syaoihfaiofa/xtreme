@@ -141,6 +141,194 @@
                     </a-radio-group>
                 </div>
             </div>
+            <div
+                class="wrap"
+                v-if="config.pointInfo.hasRGB && config.pointColorMode === ColorModeEnum.RGB"
+            >
+                <div class="title3">
+                    车道线 RGB 增强
+                    <a-switch
+                        size="small"
+                        style="margin-top: 5px; float: right"
+                        v-model:checked="config.rgbEnhance"
+                    />
+                </div>
+                <div class="title3" style="padding-top: 8px">
+                    隐藏 RGB=intensity 非地面点
+                    <a-switch
+                        size="small"
+                        style="margin-top: 5px; float: right"
+                        v-model:checked="config.hideNonGroundRgb"
+                    />
+                </div>
+                <div class="title3" style="padding-top: 8px">
+                    地面 RGB 增强半径（以原点）
+                </div>
+                <a-slider
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.rgbEnhanceRadius"
+                    :tip-formatter="formatter"
+                    :min="1"
+                    :max="100"
+                    :step="1"
+                    @change="() => update('rgbEnhanceRadius')"
+                />
+                <div class="title3" style="padding-top: 8px">
+                    地面 RGB 对比度
+                </div>
+                <a-slider
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.rgbEnhanceContrast"
+                    :tip-formatter="formatter"
+                    :min="1"
+                    :max="10"
+                    :step="0.1"
+                    @change="() => update('rgbEnhanceContrast')"
+                />
+                <div class="title3" style="padding-top: 8px">
+                    RGB 增强最低亮度
+                </div>
+                <a-slider
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.rgbEnhanceMinBrightness"
+                    :tip-formatter="formatter"
+                    :min="0.02"
+                    :max="0.3"
+                    :step="0.01"
+                    @change="() => update('rgbEnhanceMinBrightness')"
+                />
+                <div class="title3" style="padding-top: 8px">
+                    地面局部 RGB 对比度
+                    <a-switch
+                        size="small"
+                        style="margin-top: 5px; float: right"
+                        v-model:checked="config.rgbLocalContrast"
+                    />
+                </div>
+                <div v-if="config.rgbLocalContrast" class="title3" style="padding-top: 8px">
+                    局部对比度强度
+                </div>
+                <a-slider
+                    v-if="config.rgbLocalContrast"
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.rgbLocalContrastStrength"
+                    :tip-formatter="formatter"
+                    :min="1"
+                    :max="10"
+                    :step="0.1"
+                    @change="() => update('rgbLocalContrastStrength')"
+                />
+                <div class="title3" style="padding-top: 8px">
+                    RGB 高亮点增强
+                    <a-switch
+                        size="small"
+                        style="margin-top: 5px; float: right"
+                        v-model:checked="config.rgbHighlightBoost"
+                    />
+                </div>
+                <div v-if="config.rgbHighlightBoost" class="title3" style="padding-top: 8px">
+                    高亮亮度阈值
+                </div>
+                <a-slider
+                    v-if="config.rgbHighlightBoost"
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.rgbHighlightThreshold"
+                    :tip-formatter="formatter"
+                    :min="0"
+                    :max="1"
+                    :step="0.01"
+                    @change="() => update('rgbHighlightThreshold')"
+                />
+                <div v-if="config.rgbHighlightBoost" class="title3" style="padding-top: 8px">
+                    高亮增强强度
+                </div>
+                <a-slider
+                    v-if="config.rgbHighlightBoost"
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.rgbHighlightStrength"
+                    :tip-formatter="formatter"
+                    :min="0.01"
+                    :max="10"
+                    :step="0.01"
+                    @change="() => update('rgbHighlightStrength')"
+                />
+                <div class="title3" style="padding-top: 8px">
+                    P 标注三视图对比半径
+                </div>
+                <a-slider
+                    style="width: 200px; margin: 0px; margin-top: 5px"
+                    v-model:value="config.sideViewContrastRadius"
+                    :tip-formatter="formatter"
+                    :min="0.1"
+                    :max="10"
+                    :step="0.1"
+                    @change="() => update('sideViewContrastRadius')"
+                />
+                <div class="parking-density">
+                    <div class="title3" style="padding-top: 12px">
+                        停车位 RGB 点云密集
+                    </div>
+                    <div class="title3" style="padding-top: 6px">
+                        邻帧运动补偿（仅地面点）
+                        <a-switch
+                            size="small"
+                            style="margin-top: 5px; float: right"
+                            v-model:checked="config.parkingDensityMotion"
+                        />
+                    </div>
+                    <div v-if="config.parkingDensityMotion">
+                        <div class="title3" style="padding-top: 6px">
+                            前后帧数
+                            <a-input-number
+                                v-model:value="config.parkingDensityFrameCount"
+                                size="small"
+                                :min="0"
+                                :max="5"
+                                :precision="0"
+                                style="width: 64px; float: right"
+                            />
+                        </div>
+                        <div class="title3" style="padding-top: 8px">邻帧显示方式</div>
+                        <a-radio-group v-model:value="config.parkingDensityStyle" size="small">
+                            <a-radio-button value="rgb">RGB 半透明</a-radio-button>
+                            <a-radio-button value="gray">灰色半透明</a-radio-button>
+                            <a-radio-button value="same">同样显示</a-radio-button>
+                        </a-radio-group>
+                        <div v-if="config.parkingDensityStyle !== 'same'" class="title3" style="padding-top: 8px">
+                            邻帧透明度
+                        </div>
+                        <a-slider
+                            v-if="config.parkingDensityStyle !== 'same'"
+                            style="width: 200px; margin: 0px; margin-top: 5px"
+                            v-model:value="config.parkingDensityOpacity"
+                            :min="0.1"
+                            :max="1"
+                            :step="0.05"
+                            :tip-formatter="formatter"
+                        />
+                    </div>
+                    <div class="title3" style="padding-top: 9px">
+                        当前帧地面视觉增密
+                        <a-switch
+                            size="small"
+                            style="margin-top: 5px; float: right"
+                            v-model:checked="config.parkingDensityGround"
+                        />
+                    </div>
+                    <div v-if="config.parkingDensityGround" class="title3" style="padding-top: 8px">
+                        地面点大小倍数（主点云与三视图同步）
+                    </div>
+                    <a-slider
+                        v-if="config.parkingDensityGround"
+                        style="width: 200px; margin: 0px; margin-top: 5px"
+                        v-model:value="config.parkingDensityGroundScale"
+                        :min="1"
+                        :max="4"
+                        :step="0.1"
+                        :tip-formatter="formatter"
+                    />
+                </div>
+            </div>
             <ColorSlider />
             <div class="wrap" v-if="config.pointInfo.hasIntensity">
                 <div class="title3"
@@ -335,6 +523,39 @@
             case 'brightness':
                 options.brightness = config.brightness;
                 break;
+            case 'rgbEnhance':
+                options.rgbEnhance = config.rgbEnhance ? 1 : -1;
+                break;
+            case 'rgbEnhanceRadius':
+                options.rgbEnhanceRadius = config.rgbEnhanceRadius;
+                break;
+            case 'rgbEnhanceContrast':
+                options.rgbEnhanceContrast = config.rgbEnhanceContrast;
+                break;
+            case 'rgbEnhanceMinBrightness':
+                options.rgbEnhanceMinBrightness = config.rgbEnhanceMinBrightness;
+                break;
+            case 'rgbLocalContrast':
+                options.rgbLocalContrast = config.rgbLocalContrast ? 1 : -1;
+                break;
+            case 'rgbLocalContrastStrength':
+                options.rgbLocalContrastStrength = config.rgbLocalContrastStrength;
+                break;
+            case 'rgbHighlightBoost':
+                options.rgbHighlightBoost = config.rgbHighlightBoost ? 1 : -1;
+                break;
+            case 'rgbHighlightThreshold':
+                options.rgbHighlightThreshold = config.rgbHighlightThreshold;
+                break;
+            case 'rgbHighlightStrength':
+                options.rgbHighlightStrength = config.rgbHighlightStrength;
+                break;
+            case 'hideNonGroundRgb':
+                options.hideNonGroundRgb = config.hideNonGroundRgb ? 1 : -1;
+                break;
+            case 'sideViewContrastRadius':
+                options.sideViewContrastRadius = config.sideViewContrastRadius;
+                break;
             case 'intensityRange':
                 options.intensityRange = new THREE.Vector2(
                     config.pointIntensity[0],
@@ -364,7 +585,33 @@
         () => config.pointColorMode,
         () => {
             update('colorType');
+            editor.parkingDensityManager?.refresh();
         },
+    );
+
+    const refreshParkingDensity = _.debounce(() => editor.parkingDensityManager?.refresh(), 120);
+    watch(
+        () => [
+            config.parkingDensityMotion,
+            config.parkingDensityFrameCount,
+            config.parkingDensityStyle,
+            config.parkingDensityOpacity,
+            config.parkingDensityGround,
+            config.parkingDensityGroundScale,
+            config.pointSize,
+            config.brightness,
+            config.rgbEnhance,
+            config.rgbEnhanceRadius,
+            config.rgbEnhanceContrast,
+            config.rgbEnhanceMinBrightness,
+            config.rgbLocalContrast,
+            config.rgbLocalContrastStrength,
+            config.rgbHighlightBoost,
+            config.rgbHighlightThreshold,
+            config.rgbHighlightStrength,
+            config.hideNonGroundRgb,
+        ],
+        () => refreshParkingDensity(),
     );
 
     watch(
@@ -380,6 +627,35 @@
             update('intensity');
         },
     );
+
+    watch(
+        () => config.rgbEnhance,
+        () => {
+            update('rgbEnhance');
+        },
+    );
+
+    watch(
+        () => config.rgbHighlightBoost,
+        () => {
+            update('rgbHighlightBoost');
+        },
+    );
+
+    watch(
+        () => config.rgbLocalContrast,
+        () => {
+            update('rgbLocalContrast');
+        },
+    );
+
+    watch(
+        () => config.hideNonGroundRgb,
+        () => {
+            update('hideNonGroundRgb');
+        },
+    );
+
 
     watch(
         () => [

@@ -18,9 +18,12 @@ import {
     Box,
     GroundPolygon,
     GroundPolyline,
+    IrregularWall,
     ProjectedPolygon,
     ProjectedPolyline,
+    ProjectedIrregularWall,
     EditGroundPolylineAction,
+    EditIrregularWallAction,
     EditGroundPolylineVisibility2DAction,
 } from 'pc-render';
 import {
@@ -67,11 +70,38 @@ function hackSideView(editor: Editor, view: SideRenderView) {
         editor.setSelectedGroundPolylineVertex(object, index);
     };
     view.getSelectedGroundPolylineVertex = () => editor.getSelectedGroundPolylineVertex();
+    view.onGroundPolygonVertexSelect = (object: GroundPolygon, index: number) => {
+        editor.setSelectedGroundPolygonVertex(object, index);
+    };
+    view.getSelectedGroundPolygonVertex = () => editor.getSelectedGroundPolygonVertex();
     view.onGroundPolygonPointsChange = (object: GroundPolygon, points: THREE.Vector3[]) => {
         editor.cmdManager.execute('update-ground-polygon-points', { object, points });
     };
     view.onGroundPolylinePointsChange = (object: GroundPolyline, points: THREE.Vector3[]) => {
         editor.cmdManager.execute('update-ground-polyline-points', { object, points });
+    };
+    view.onIrregularWallPointsChange = (
+        object: IrregularWall,
+        side: 'bottom' | 'top',
+        points: THREE.Vector3[],
+        beforePoints?: THREE.Vector3[],
+    ) => {
+        editor.cmdManager.execute('update-irregular-wall-points', { object, side, points, beforePoints });
+    };
+    view.onIrregularWallVertexSelect = (object, side, index) => {
+        editor.setSelectedIrregularWallVertex(object, side, index);
+    };
+    view.getSelectedIrregularWallVertex = () => editor.getSelectedIrregularWallVertex();
+    view.onIrregularWallSegmentInsert = (
+        object: IrregularWall,
+        side: 'bottom' | 'top',
+        segmentIndex: number,
+        point: THREE.Vector3,
+    ) => {
+        const points = (side === 'bottom' ? object.bottomPoints : object.topPoints).map((item) => item.clone());
+        points.splice(segmentIndex + 1, 0, point);
+        editor.cmdManager.execute('update-irregular-wall-points', { object, side, points });
+        editor.setSelectedIrregularWallVertex(object, side, segmentIndex + 1);
     };
     let action = view.getAction('resize-translate') as ResizeTransAction;
     // let updateChange = action.updateChange;
@@ -88,6 +118,24 @@ function hackSideView(editor: Editor, view: SideRenderView) {
 }
 
 function hackMainView(editor: Editor, view: MainRenderView) {
+    const editIrregularWallAction = view.getAction('edit-irregular-wall') as EditIrregularWallAction;
+    if (editIrregularWallAction) {
+        editIrregularWallAction.onPointsChange = (object, side, points, beforePoints) => {
+            editor.cmdManager.execute('update-irregular-wall-points', { object, side, points, beforePoints });
+        };
+        editIrregularWallAction.onSegmentInsert = (object, side, segmentIndex, point) => {
+            const points = (side === 'bottom' ? object.bottomPoints : object.topPoints).map((item) => item.clone());
+            points.splice(segmentIndex + 1, 0, point);
+            editor.cmdManager.execute('update-irregular-wall-points', { object, side, points });
+            editor.setSelectedIrregularWallVertex(object, side, segmentIndex + 1);
+        };
+        editIrregularWallAction.onVertexSelect = (object, side, index) => {
+            editor.setSelectedIrregularWallVertex(object, side, index);
+        };
+        editIrregularWallAction.getSelectedVertex = () =>
+            editor.getSelectedIrregularWallVertex();
+        editIrregularWallAction.onExtendHint = (message) => editor.showMsg('info', message, 4);
+    }
     let action = view.getAction('transform-control') as TransformControlsAction;
     if (action) {
         action.updatePosition = _.throttle((position: THREE.Vector3) => {
@@ -136,6 +184,27 @@ function hackMainView(editor: Editor, view: MainRenderView) {
         editGroundPolylineAction.onExtendHint = (message: string): void => {
             editor.showMsg('info', message, 4);
         };
+    }
+
+    const editGroundPolygonAction = view.getAction('edit-ground-polygon') as {
+        onGroundPolygonPointsChange?: (object: GroundPolygon, points: THREE.Vector3[]) => void;
+        onGroundPolygonVertexSelect?: (object: GroundPolygon, index: number) => void;
+    };
+    if (editGroundPolygonAction) {
+        editGroundPolygonAction.onGroundPolygonVertexSelect = (
+            object: GroundPolygon,
+            index: number,
+        ): void => {
+            editor.setSelectedGroundPolygonVertex(object, index);
+        };
+        editGroundPolygonAction.onGroundPolygonPointsChange = (
+            object: GroundPolygon,
+            points: THREE.Vector3[],
+        ): void => {
+            editor.cmdManager.execute('update-ground-polygon-points', { object, points });
+        };
+        editGroundPolygonAction.getSelectedGroundPolygonVertex = () =>
+            editor.getSelectedGroundPolygonVertex();
     }
 
     // let selectAction = view.getAction('select') as SelectAction;
@@ -221,25 +290,44 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
 
     let editAction = view.getAction('edit-2d') as Edit2DAction;
     if (editAction) {
+        editAction.getSelectedGroundPolygonVertex = () =>
+            editor.getSelectedGroundPolygonVertex();
         editAction.onGroundProjectionPointChange = (
             projection: ProjectedPolygon | ProjectedPolyline,
             index: number,
             imagePoint: THREE.Vector2,
+        ) => updateGroundProjectionPoint(editor, view, projection, index, imagePoint, false);
+        editAction.onGroundProjectionPointCommit = (
+            projection: ProjectedPolygon | ProjectedPolyline,
+            index: number,
+            imagePoint: THREE.Vector2,
+        ) => updateGroundProjectionPoint(editor, view, projection, index, imagePoint, true);
+        editAction.onIrregularWallProjectionPointChange = (
+            projection: ProjectedIrregularWall,
+            side: 'bottom' | 'top',
+            index: number,
+            imagePoint: THREE.Vector2,
         ) => {
             const sourceId = projection.userData.projectedFromId;
-            const source = editor.pc.getAnnotate3D().find((object) => object.uuid === sourceId);
-            if (!(source instanceof GroundPolygon) && !(source instanceof GroundPolyline)) return;
-            const worldPoint = view.imgToWorldOnPlane(imagePoint, source.points3D[index].z);
+            const trackId = projection.userData.trackId;
+            const source = (editor.pc
+                .getAnnotate3D() as AnnotateObject[])
+                .find((object) => object.uuid === sourceId || (!!trackId && object.userData?.trackId === trackId));
+            if (!(source instanceof IrregularWall)) return;
+            projection.userData.projectedFromId = source.uuid;
+            const sourcePoints = side === 'bottom' ? source.bottomPoints : source.topPoints;
+            if (!sourcePoints[index]) return;
+            source.updateMatrixWorld(true);
+            const vertexHeight = source.localToWorld(sourcePoints[index].clone()).z;
+            const worldPoint = view.imgToWorldOnPlane(imagePoint, vertexHeight);
             if (!worldPoint) return;
-            const points = source.points3D.map((point) => point.clone());
-            points[index].copy(worldPoint);
-            if (source instanceof GroundPolygon && !GroundPolygon.isValidPoints(points)) return;
-            editor.cmdManager.execute(
-                source instanceof GroundPolygon
-                    ? 'update-ground-polygon-points'
-                    : 'update-ground-polyline-points',
-                { object: source, points },
-            );
+            const points = sourcePoints.map((point) => point.clone());
+            points[index].copy(source.worldToLocal(worldPoint));
+            editor.cmdManager.execute('update-irregular-wall-points', {
+                object: source,
+                side,
+                points,
+            });
         };
         editAction.updateRectData = (center: THREE.Vector2, size?: THREE.Vector2) => {
             let object = editAction.object as Rect;
@@ -280,7 +368,8 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
                     (e instanceof Rect ||
                         e instanceof Box2D ||
                         e instanceof ProjectedPolygon ||
-                        e instanceof ProjectedPolyline)
+                        e instanceof ProjectedPolyline ||
+                        e instanceof ProjectedIrregularWall)
                 );
             }) as Object2D[];
         } else {
@@ -293,21 +382,111 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         let { config } = editor.state;
         let currentTrack = editor.getCurTrack();
 
-        let objects = get3DObject.call(view);
+        let objects = get3DObject.call(view) as AnnotateObject[];
         if (config.filter2DByTrack && currentTrack) {
             return objects.filter((e) => {
                 return (
                     e.userData.trackId === currentTrack &&
                     (e instanceof Box ||
                         e instanceof GroundPolygon ||
-                        e instanceof GroundPolyline)
+                        e instanceof GroundPolyline ||
+                        e instanceof IrregularWall)
                 );
-            }) as Box[];
+            }) as any;
         } else {
-            return objects;
+            return objects as any;
         }
     };
 }
+
+function updateGroundProjectionPoint(
+    editor: Editor,
+    view: Image2DRenderView,
+    projection: ProjectedPolygon | ProjectedPolyline,
+    index: number,
+    imagePoint: THREE.Vector2,
+    snapToPointCloud: boolean,
+): void {
+    const sourceId = projection.userData.projectedFromId;
+    const trackId = projection.userData.trackId;
+    const source = (editor.pc.getAnnotate3D() as AnnotateObject[]).find(
+        (object) => object.uuid === sourceId || (!!trackId && object.userData?.trackId === trackId),
+    );
+    if (!(source instanceof GroundPolygon) && !(source instanceof GroundPolyline)) return;
+    if (!source.points3D[index]) return;
+
+    projection.userData.projectedFromId = source.uuid;
+    source.updateMatrixWorld(true);
+    const vertexHeight = source.localToWorld(source.points3D[index].clone()).z;
+    const planePoint = view.imgToWorldOnPlane(imagePoint, vertexHeight);
+    if (!planePoint) return;
+
+    // Dragging remains smooth because this is false during pointer moves.  On
+    // release, use the nearest height-continuous raw return as the final point.
+    const worldPoint = snapToPointCloud
+        ? snapToCurrentGroundPoint(editor, view, imagePoint, planePoint)
+        : planePoint;
+    const points = source.points3D.map((point) => point.clone());
+    points[index].copy(source.worldToLocal(worldPoint.clone()));
+    if (source instanceof GroundPolygon && !GroundPolygon.isValidPoints(points)) return;
+    if (source instanceof GroundPolygon) {
+        editor.cmdManager.execute('update-ground-polygon-points', { object: source, points });
+    } else {
+        editor.cmdManager.execute('update-ground-polyline-points', { object: source, points });
+    }
+}
+
+/**
+ * Returns a raw point near both the dragged image pixel and the estimated ground
+ * position. The visual density overlay is intentionally excluded: only
+ * groupPoints holds the current frame's real LiDAR returns.
+ */
+function snapToCurrentGroundPoint(
+    editor: Editor,
+    view: Image2DRenderView,
+    imagePoint: THREE.Vector2,
+    candidate: THREE.Vector3,
+): THREE.Vector3 {
+    const maxHorizontalDistance = 0.75;
+    const maxHeightDifference = 0.4;
+    const maxImageError = 18;
+    const maxHorizontalDistanceSq = maxHorizontalDistance * maxHorizontalDistance;
+    const maxImageErrorSq = maxImageError * maxImageError;
+    let bestPoint: THREE.Vector3 | undefined;
+    let bestScore = Infinity;
+    const worldPoint = new THREE.Vector3();
+
+    editor.pc.groupPoints.updateMatrixWorld(true);
+    editor.pc.groupPoints.children.forEach((child) => {
+        if (!(child instanceof THREE.Points)) return;
+        const position = (child.geometry as THREE.BufferGeometry).getAttribute('position');
+        if (!position) return;
+        child.updateMatrixWorld(true);
+        for (let index = 0; index < position.count; index++) {
+            worldPoint.fromBufferAttribute(position, index).applyMatrix4(child.matrixWorld);
+            const dx = worldPoint.x - candidate.x;
+            const dy = worldPoint.y - candidate.y;
+            const horizontalDistanceSq = dx * dx + dy * dy;
+            const heightDifference = Math.abs(worldPoint.z - candidate.z);
+            if (horizontalDistanceSq > maxHorizontalDistanceSq || heightDifference > maxHeightDifference) continue;
+            const reprojected = view.worldToImg(worldPoint.clone());
+            const imageDx = reprojected.x - imagePoint.x;
+            const imageDy = reprojected.y - imagePoint.y;
+            const imageErrorSq = imageDx * imageDx + imageDy * imageDy;
+            if (!Number.isFinite(imageErrorSq) || imageErrorSq > maxImageErrorSq) continue;
+            // The selected raw point must first stay on the image ray.  BEV
+            // distance and height only break ties between points that project
+            // near the cursor, avoiding a visually noticeable snap sideways.
+            const score = imageErrorSq + horizontalDistanceSq * 16 + heightDifference * heightDifference * 4;
+            if (score < bestScore) {
+                bestScore = score;
+                bestPoint = worldPoint.clone();
+            }
+        }
+    });
+    return bestPoint || candidate;
+}
+
 function validRect(
     center: THREE.Vector2,
     size: THREE.Vector2,

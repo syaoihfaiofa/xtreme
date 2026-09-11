@@ -1160,7 +1160,9 @@ public class UploadDataUseCase {
                         chunkManifestPreSignUrlBO, chunkUploads)))
                 .type(1)
                 .renderParam(buildRenderParam())
-                .convertParam(ConvertParam.builder().extraFields(List.of("rgb")).build()).build();
+                // Preserve both the traditional packed `rgb` field and independent
+                // r/g/b channels when generating the binary and preview PCD assets.
+                .convertParam(ConvertParam.builder().extraFields(List.of("rgb", "r", "g", "b")).build()).build();
         ApiResult<List<PointCloudCRRespDTO>> apiResult = null;
 
         StopWatch stopWatch = new StopWatch();

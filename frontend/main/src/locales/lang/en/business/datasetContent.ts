@@ -35,6 +35,21 @@ export default {
   terminate: 'Terminate',
   terminateUploadPlaceholder: 'Are you sure you want to terminate upload process?',
   terminateExportPlaceholder: 'Are you sure you want to terminate the export process？',
+  backupLabels: 'Back up labels',
+  backupLabelsTitle: 'Back up labels',
+  startBackup: 'Start backup',
+  backupRange: 'Backup range',
+  allData: 'All data',
+  selectedData: 'Selected data',
+  backupFolder: 'Backup folder',
+  serverBackupDirectory: 'Server directory',
+  serverBackupDirectoryPlaceholder: 'For example: labels/2026-09',
+  serverBackupDirectoryHint:
+    'Relative to the configured server backup root /data/xtreme1/backups. Paths outside that root are not allowed.',
+  serverBackupDirectoryRequired: 'Enter a server backup directory',
+  backupLabelsHint: 'The backup contains annotation results only; source point clouds and images are excluded.',
+  serverBackupSuccess: 'Labels backed up on the server: {path}',
+  backupLabelsFailed: 'Label backup failed',
 
   process: {
     uploading: 'Uploading: ',

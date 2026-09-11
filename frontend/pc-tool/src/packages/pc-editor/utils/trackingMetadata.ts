@@ -12,6 +12,7 @@ const TRACKING_METADATA_KEYS: readonly (keyof IUserData)[] = [
     'syncMaxDisappearGap',
     'syncLocationGapMs',
     'showSyncLocationBoundaries',
+    'syncSegmentVisibility',
     'dynamicRangeSyncEnabled',
     'dynamicSyncPreviousFrames',
     'dynamicSyncNextFrames',

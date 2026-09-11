@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import Box from '../objects/Box';
+import GroundPolygon from '../objects/GroundPolygon';
+import IrregularWall from '../objects/IrregularWall';
 // import { Event } from '../config';
 import Render from './Render';
 import PointCloud from '../PointCloud';
@@ -16,6 +18,9 @@ const defaultActions = [
     'create-obj',
     'view-helper',
     'edit-ground-polyline',
+    'edit-ground-polygon',
+    'edit-irregular-wall',
+    'split-ground-shape',
 ];
 export type wayToFocus = 'zTop' | 'auto';
 
@@ -198,55 +203,89 @@ export default class MainRenderView extends Render {
 
         this.renderer.clear(true, true, true);
 
+        // Retain the selected parking footprint positions for a future local display
+        // aid. The contrast effect is currently disabled because it obscures details.
+        const parkingPolygon = selection.find((item) => item instanceof GroundPolygon) as
+            | GroundPolygon
+            | undefined;
+        const groupPoint = groupPoints.children[0] as THREE.Points | undefined;
+        const pointMaterial = groupPoint?.material as PointsMaterial | undefined;
+        let restoreParkingContrast: (() => void) | undefined;
+        if (parkingPolygon && pointMaterial) {
+            const oldSideViewContrast = pointMaterial.getUniforms('sideViewContrast');
+            const oldSideViewContrastCenters = pointMaterial.getUniforms('sideViewContrastCenters');
+            parkingPolygon.updateMatrixWorld();
+            const contrastCenters = Array.from({ length: 4 }, (_, index) => {
+                const point = parkingPolygon.points3D[index];
+                return point
+                    ? point.clone().applyMatrix4(parkingPolygon.matrixWorld)
+                    : new THREE.Vector3(1e6, 1e6, 1e6);
+            });
+            pointMaterial.setUniforms({
+                sideViewContrast: -1,
+                sideViewContrastCenters: contrastCenters,
+            });
+            restoreParkingContrast = () => {
+                pointMaterial.setUniforms({
+                    sideViewContrast: oldSideViewContrast,
+                    sideViewContrastCenters: oldSideViewContrastCenters,
+                });
+            };
+        }
+
         let object3d = selection.find((item) => item instanceof Box);
 
-        if (object3d && object3d.visible) {
-            // render points
-            let groupPoint = groupPoints.children[0] as THREE.Points;
-            let box = object3d as Box;
-            box.updateMatrixWorld();
-            // if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
+        try {
+            if (object3d && object3d.visible) {
+                // render points
+                let groupPoint = groupPoints.children[0] as THREE.Points;
+                let box = object3d as Box;
+                box.updateMatrixWorld();
+                // if (!box.geometry.boundingBox) box.geometry.computeBoundingBox();
 
-            let bbox = box.geometry.boundingBox as THREE.Box3;
-            let material = groupPoint.material as PointsMaterial;
+                let bbox = box.geometry.boundingBox as THREE.Box3;
+                let material = groupPoint.material as PointsMaterial;
 
-            let oldHasFilterBox = material.getUniforms('hasFilterBox');
-            let oldType = material.getUniforms('boxInfo').type;
-            material.setUniforms({
-                hasFilterBox: 1,
-                boxInfo: {
-                    type: 0,
-                    min: bbox.min,
-                    max: bbox.max,
-                    color: this.getSelectedBoxColor(box),
-                    matrix: this.boxInvertMatrix.copy(box.matrixWorld).invert(),
-                },
-            });
+                let oldHasFilterBox = material.getUniforms('hasFilterBox');
+                let oldType = material.getUniforms('boxInfo').type;
+                material.setUniforms({
+                    hasFilterBox: 1,
+                    boxInfo: {
+                        type: 0,
+                        min: bbox.min,
+                        max: bbox.max,
+                        color: this.getSelectedBoxColor(box),
+                        matrix: this.boxInvertMatrix.copy(box.matrixWorld).invert(),
+                    },
+                });
 
-            annotate3D.visible = false;
-            this.renderer.render(scene, this.camera);
+                annotate3D.visible = false;
+                this.renderer.render(scene, this.camera);
 
-            material.setUniforms({ hasFilterBox: oldHasFilterBox, boxInfo: { type: oldType } });
+                material.setUniforms({ hasFilterBox: oldHasFilterBox, boxInfo: { type: oldType } });
 
-            annotate3D.visible = true;
-            annotate3D.children.forEach((box) => {
-                if (box === object3d) return;
-                this.renderBox(box as Box);
-            });
+                annotate3D.visible = true;
+                annotate3D.children.forEach((box) => {
+                    if (box === object3d) return;
+                    this.renderBox(box as Box);
+                });
 
-            // render select
-            // let select = selection[0];
-            this.renderBox(box, this.getSelectedBoxColor(box));
-        } else {
-            annotate3D.visible = false;
-            this.renderer.render(scene, this.camera);
-            annotate3D.visible = true;
-            annotate3D.children.forEach((box) => {
-                this.renderBox(
-                    box as Box,
-                    selectionMap[box.uuid] ? this.getSelectedBoxColor(box as Box) : undefined,
-                );
-            });
+                // render select
+                // let select = selection[0];
+                this.renderBox(box, this.getSelectedBoxColor(box));
+            } else {
+                annotate3D.visible = false;
+                this.renderer.render(scene, this.camera);
+                annotate3D.visible = true;
+                annotate3D.children.forEach((box) => {
+                    this.renderBox(
+                        box as Box,
+                        selectionMap[box.uuid] ? this.getSelectedBoxColor(box as Box) : undefined,
+                    );
+                });
+            }
+        } finally {
+            restoreParkingContrast?.();
         }
     }
 
@@ -260,7 +299,14 @@ export default class MainRenderView extends Render {
             : this.selectColor;
     }
 
-    renderBox(box: Box, color?: THREE.Color) {
+    renderBox(box: Box | IrregularWall, color?: THREE.Color) {
+        // MainRenderView renders annotations one by one while the shared annotation
+        // group is hidden. IrregularWall is a Group (bottom/top lines + mesh), not a
+        // single Line/Box material, so it must be rendered as a complete object.
+        if (box instanceof IrregularWall) {
+            this.renderer.render(box, this.camera);
+            return;
+        }
         let boxMaterial = box.material as THREE.LineBasicMaterial;
 
         if (box.dashed) {

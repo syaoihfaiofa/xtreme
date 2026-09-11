@@ -10,6 +10,7 @@ public enum ObjectTypeEnum {
     POLYLINE("POLYLINE"),
 
     POLYGON("POLYGON"),
+    TWO_D_IRREGULAR_WALL("2D_IRREGULAR_WALL"),
     THREE_D_SEGMENT_POINTS("3D_SEGMENT_POINTS");
 
     private String value;

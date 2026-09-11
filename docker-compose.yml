@@ -74,7 +74,8 @@ services:
     # pull_policy: always
     ports:
       - 8290:8080
-    # volumes:
+    volumes:
+      - ./data/backups:/data/xtreme1/backups
     # Using customized application.yml to override default configs.
     #   - /host/path/to/customized/application.yml:/app/config/application.yml
     healthcheck:

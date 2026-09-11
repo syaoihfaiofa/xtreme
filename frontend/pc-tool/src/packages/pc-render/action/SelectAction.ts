@@ -1,10 +1,19 @@
 import * as THREE from 'three';
 import MainRenderView from '../renderView/MainRenderView';
 import Image2DRenderView from '../renderView/Image2DRenderView';
-import { Rect, Box2D, Object2D, AnnotateObject } from '../objects';
+import {
+    Rect,
+    Box2D,
+    Object2D,
+    AnnotateObject,
+    ProjectedPolygon,
+    ProjectedPolyline,
+    ProjectedIrregularWall,
+} from '../objects';
 import Box from '../objects/Box';
 import GroundPolygon from '../objects/GroundPolygon';
 import GroundPolyline from '../objects/GroundPolyline';
+import IrregularWall from '../objects/IrregularWall';
 import { Event } from '../config';
 import Action from './Action';
 import { get } from '../utils/tempVar';
@@ -161,7 +170,124 @@ export default class SelectAction extends Action {
     }
 
     selectObject(object?: AnnotateObject) {
+        // A projected ground shape is only the image representation. Keep its
+        // canonical 3D source selected as well so the main/side views retain the
+        // active target and toolbar actions such as Reproject operate on it.
+        if (
+            this.renderView instanceof Image2DRenderView &&
+            (object instanceof Rect || object instanceof Box2D)
+        ) {
+            const source = this.resolveProjectedBoxSource(object);
+            if (source) {
+                object.userData.projectedFromId = source.uuid;
+                this.renderView.pointCloud.selectObject([source, object]);
+                return;
+            }
+        }
+        if (
+            this.renderView instanceof Image2DRenderView &&
+            (object instanceof ProjectedPolygon ||
+                object instanceof ProjectedPolyline ||
+                object instanceof ProjectedIrregularWall)
+        ) {
+            const source = this.resolveProjectedGroundSource(object);
+            if (source) {
+                // Older annotations may not have persisted their source link.
+                // Repair it once a unique source has been identified, so later
+                // edits/reprojection use the direct, deterministic relationship.
+                object.userData.projectedFromId = source.uuid;
+                this.renderView.pointCloud.selectObject([source, object]);
+                return;
+            }
+        }
         this.renderView.pointCloud.selectObject(object);
+    }
+
+    private resolveProjectedBoxSource(projection: Rect | Box2D): Box | undefined {
+        const sourceId = projection.userData?.projectedFromId;
+        const trackId = projection.userData?.trackId;
+        const connectId = projection.connectId;
+        const sources = this.renderView.pointCloud
+            .getAnnotate3D()
+            .filter((candidate): candidate is Box => candidate instanceof Box);
+        const linked = sources.find(
+            (candidate) =>
+                candidate.uuid === sourceId ||
+                (!!trackId && candidate.userData?.trackId === trackId) ||
+                (connectId !== undefined && candidate.id === connectId),
+        );
+        if (linked) return linked;
+        if (sources.length === 1) return sources[0];
+
+        // Historical 2D box projections did not persist a source id. Reproject
+        // each 3D box through this exact camera and accept only a close, unique
+        // geometric match; this works for every class, including untracked ones.
+        const scored = sources
+            .map((candidate) => ({ candidate, error: this.getBoxProjectionError(projection, candidate) }))
+            .filter((item) => Number.isFinite(item.error))
+            .sort((left, right) => left.error - right.error);
+        if (!scored.length || scored[0].error > 24) return undefined;
+        if (scored.length > 1 && scored[1].error - scored[0].error < 4) return undefined;
+        return scored[0].candidate;
+    }
+
+    private getBoxProjectionError(projection: Rect | Box2D, box: Box): number {
+        const view = this.renderView as Image2DRenderView;
+        if (projection instanceof Rect) {
+            const expected = view.getBoxRect(box);
+            return expected.center.distanceTo(projection.center) +
+                expected.size.distanceTo(projection.size) * 0.5;
+        }
+        const expected = view.getBox2DBox(box);
+        const direct = expected.positionsFront.reduce(
+            (sum, point, index) => sum + point.distanceTo(projection.positions1[index]) +
+                expected.positionsBack[index].distanceTo(projection.positions2[index]),
+            0,
+        ) / 8;
+        const swapped = expected.positionsFront.reduce(
+            (sum, point, index) => sum + point.distanceTo(projection.positions2[index]) +
+                expected.positionsBack[index].distanceTo(projection.positions1[index]),
+            0,
+        ) / 8;
+        return Math.min(direct, swapped);
+    }
+
+    private resolveProjectedGroundSource(
+        projection: ProjectedPolygon | ProjectedPolyline | ProjectedIrregularWall,
+    ): GroundPolygon | GroundPolyline | IrregularWall | undefined {
+        const sourceId = projection.userData?.projectedFromId;
+        const trackId = projection.userData?.trackId;
+        const sources = this.renderView.pointCloud.getAnnotate3D().filter(
+            (candidate): candidate is GroundPolygon | GroundPolyline | IrregularWall =>
+                (projection instanceof ProjectedPolygon && candidate instanceof GroundPolygon) ||
+                (projection instanceof ProjectedPolyline && candidate instanceof GroundPolyline) ||
+                (projection instanceof ProjectedIrregularWall && candidate instanceof IrregularWall),
+        );
+        const linked = sources.find(
+            (candidate) =>
+                candidate.uuid === sourceId ||
+                (!!trackId && candidate.userData?.trackId === trackId),
+        );
+        if (linked) return linked;
+
+        // A few older data sets have neither linking field.  Use the actual
+        // image geometry only when it identifies one unambiguous source.  This
+        // keeps an unrelated projected line from selecting a nearby 3D wall.
+        const projectionPoints = projection instanceof ProjectedIrregularWall
+            ? [...projection.bottomPoints, ...projection.topPoints]
+            : projection.points;
+        const geometricallyMatching = sources.filter((candidate) => {
+            const sourcePoints = candidate instanceof IrregularWall
+                ? [...candidate.bottomPoints, ...candidate.topPoints]
+                : candidate.points3D;
+            if (sourcePoints.length !== projectionPoints.length || sourcePoints.length === 0) return false;
+            const totalDistance = sourcePoints.reduce((total, point, index) => {
+                const imagePoint = this.renderView.worldToImg(point.clone());
+                return total + imagePoint.distanceTo(projectionPoints[index]);
+            }, 0);
+            return totalDistance / sourcePoints.length <= 12;
+        });
+        return geometricallyMatching.length === 1 ? geometricallyMatching[0] : undefined;
     }
 
     private resolveAnnotateRoot(object: THREE.Object3D): AnnotateObject | undefined {
@@ -170,7 +296,8 @@ export default class SelectAction extends Action {
             if (
                 current instanceof Box ||
                 current instanceof GroundPolygon ||
-                current instanceof GroundPolyline
+                current instanceof GroundPolyline ||
+                current instanceof IrregularWall
             ) {
                 return current;
             }

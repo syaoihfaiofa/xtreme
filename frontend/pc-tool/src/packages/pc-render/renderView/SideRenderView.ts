@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import Box from '../objects/Box';
 import GroundPolygon from '../objects/GroundPolygon';
 import GroundPolyline from '../objects/GroundPolyline';
+import IrregularWall from '../objects/IrregularWall';
+import ProjectedPolygon from '../objects/projectedPolygon';
+import ProjectedPolyline from '../objects/projectedPolyline';
+import ProjectedIrregularWall from '../objects/projectedIrregularWall';
+import { Rect, Box2D } from '../objects';
 import Render from './Render';
 import PointCloud from '../PointCloud';
 import { Event } from '../config';
@@ -51,7 +56,7 @@ export default class SideRenderView extends Render {
     renderer: THREE.WebGLRenderer;
     camera: THREE.OrthographicCamera;
     cameraHelper?: THREE.CameraHelper;
-    object: Box | GroundPolygon | GroundPolyline | null;
+    object: Box | GroundPolygon | GroundPolyline | IrregularWall | null;
     projectRect: THREE.Box3;
     axis: axisType;
     alignAxis: THREE.Vector3;
@@ -64,7 +69,22 @@ export default class SideRenderView extends Render {
     zoom: number = 1;
     cameraOffset: THREE.Vector3 = new THREE.Vector3();
     onGroundPolygonPointsChange?: (object: GroundPolygon, points: THREE.Vector3[]) => void;
+    onGroundPolygonVertexSelect?: (object: GroundPolygon, index: number) => void;
     onGroundPolylinePointsChange?: (object: GroundPolyline, points: THREE.Vector3[]) => void;
+    onIrregularWallPointsChange?: (
+        object: IrregularWall,
+        side: 'bottom' | 'top',
+        points: THREE.Vector3[],
+        beforePoints?: THREE.Vector3[],
+    ) => void;
+    onIrregularWallVertexSelect?: (object: IrregularWall, side: 'bottom' | 'top', index: number) => void;
+    onIrregularWallSegmentInsert?: (
+        object: IrregularWall,
+        side: 'bottom' | 'top',
+        segmentIndex: number,
+        point: THREE.Vector3,
+    ) => void;
+    getSelectedIrregularWallVertex?: () => { object: IrregularWall; side: 'bottom' | 'top'; index: number } | undefined;
     onGroundPolylineVertexSelect?: (object: GroundPolyline, index: number) => void;
     onGroundPolylineSegmentInsert?: (
         object: GroundPolyline,
@@ -73,6 +93,7 @@ export default class SideRenderView extends Render {
     ) => void;
     onGroundPolylineHeightChange?: (object: GroundPolyline, wallHeight: number) => void;
     getSelectedGroundPolylineVertex?: () => { object: GroundPolyline; index: number } | undefined;
+    getSelectedGroundPolygonVertex?: () => { object: GroundPolygon; index: number } | undefined;
     private readonly vertexHandleLayer: HTMLDivElement;
     private readonly vertexHandles: HTMLDivElement[] = [];
     private readonly segmentHandles: HTMLDivElement[] = [];
@@ -85,7 +106,23 @@ export default class SideRenderView extends Render {
             toneMapped: false,
         }),
     );
+    private readonly irregularWallBottomEditLine = new THREE.Line(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false, toneMapped: false }),
+    );
+    private readonly irregularWallTopEditLine = new THREE.Line(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: 0xff9f1c, depthTest: false, toneMapped: false }),
+    );
+    private readonly irregularWallConnectorEditLine = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.65, toneMapped: false }),
+    );
     private readonly onSelect = () => {
+        // A pointer can be released outside this view while changing selection in
+        // another panel. Never let that stale drag retain the previous wall as the
+        // active side-view target.
+        this.clearHeightDrag();
         const object = this.resolveSideTarget();
         if (object) {
             this.enableFit = true;
@@ -107,6 +144,15 @@ export default class SideRenderView extends Render {
             this.needFit &&
             this.enableFit
         ) {
+            // Editing a wall boundary changes its geometry, not its transform.
+            // Keep the current side-view scale while it is being dragged; fitting
+            // every pointer move hides the visible height change and can leave the
+            // view targeting stale bounds.
+            if ((transform as any)?.pointsChanged) {
+                this.updateProjectRect();
+                this.render();
+                return;
+            }
             // Z/X rotates only the box. Keep the current orthographic range so its
             // behavior matches mouse rotation instead of visibly zooming every step,
             // while still re-aligning every side-view camera to the rotated object.
@@ -230,8 +276,11 @@ export default class SideRenderView extends Render {
         object.updateMatrixWorld();
 
         let bbox: THREE.Box3;
-        if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
-            bbox = new THREE.Box3().setFromPoints(object.points3D);
+        if (object instanceof GroundPolygon || object instanceof GroundPolyline || object instanceof IrregularWall) {
+            const points = object instanceof IrregularWall
+                ? [...object.bottomPoints, ...object.topPoints]
+                : object.points3D;
+            bbox = new THREE.Box3().setFromPoints(points);
         } else {
             if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
             bbox = object.geometry.boundingBox as THREE.Box3;
@@ -246,29 +295,70 @@ export default class SideRenderView extends Render {
         // return ;
     }
 
-    private resolveSideTarget(): Box | GroundPolygon | GroundPolyline | null {
+    private resolveSideTarget(): Box | GroundPolygon | GroundPolyline | IrregularWall | null {
         const target = this.pointCloud.selection.find(
             (annotate) =>
-                (annotate instanceof Box || annotate instanceof GroundPolygon || annotate instanceof GroundPolyline) &&
+                (annotate instanceof Box || annotate instanceof GroundPolygon || annotate instanceof GroundPolyline || annotate instanceof IrregularWall) &&
                 annotate.parent === this.pointCloud.annotate3D,
         );
-        return target instanceof Box || target instanceof GroundPolygon || target instanceof GroundPolyline
-            ? target
-            : null;
+        if (
+            target instanceof Box ||
+            target instanceof GroundPolygon ||
+            target instanceof GroundPolyline ||
+            target instanceof IrregularWall
+        ) {
+            return target;
+        }
+
+        // Image clicks select a 2D projection.  Side views still need its 3D
+        // source in order to draw the height/orthographic projection, even if
+        // an old annotation has not yet restored that source into selection.
+        const projection = this.pointCloud.selection.find(
+            (annotate) =>
+                annotate instanceof Rect ||
+                annotate instanceof Box2D ||
+                annotate instanceof ProjectedPolygon ||
+                annotate instanceof ProjectedPolyline ||
+                annotate instanceof ProjectedIrregularWall,
+        );
+        if (!projection) return null;
+
+        const candidates = this.pointCloud.getAnnotate3D().filter((annotate) =>
+            ((projection instanceof Rect || projection instanceof Box2D) && annotate instanceof Box) ||
+            (projection instanceof ProjectedPolygon && annotate instanceof GroundPolygon) ||
+            (projection instanceof ProjectedPolyline && annotate instanceof GroundPolyline) ||
+            (projection instanceof ProjectedIrregularWall && annotate instanceof IrregularWall),
+        ) as Array<Box | GroundPolygon | GroundPolyline | IrregularWall>;
+        const sourceId = projection.userData?.projectedFromId;
+        const trackId = projection.userData?.trackId;
+        const connectId = projection instanceof Rect || projection instanceof Box2D
+            ? projection.connectId
+            : undefined;
+        const source = candidates.find(
+            (annotate) =>
+                annotate.uuid === sourceId ||
+                (!!trackId && annotate.userData?.trackId === trackId) ||
+                (connectId !== undefined && annotate.id === connectId),
+        ) || (candidates.length === 1 ? candidates[0] : undefined);
+        if (source) projection.userData.projectedFromId = source.uuid;
+        return source || null;
     }
 
-    fitObject(object?: Box | GroundPolygon | GroundPolyline) {
+    fitObject(object?: Box | GroundPolygon | GroundPolyline | IrregularWall) {
         // console.log('fitObject');
         if (object) this.object = object;
 
-        object = this.object as Box | GroundPolygon | GroundPolyline;
+        object = this.object as Box | GroundPolygon | GroundPolyline | IrregularWall;
         if (!object) return;
 
         object.updateMatrixWorld();
 
         let temp = new THREE.Vector3();
-        if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
-            const worldPoints = object.points3D.map((point) =>
+        if (object instanceof GroundPolygon || object instanceof GroundPolyline || object instanceof IrregularWall) {
+            const shapePoints = object instanceof IrregularWall
+                ? [...object.bottomPoints, ...object.topPoints]
+                : object.points3D;
+            const worldPoints = shapePoints.map((point) =>
                 point.clone().applyMatrix4(object.matrixWorld),
             );
             const center = new THREE.Box3().setFromPoints(worldPoints).getCenter(temp);
@@ -343,7 +433,7 @@ export default class SideRenderView extends Render {
         // Ground shapes have zero thickness, so keep a large far plane for them.
         // 3D boxes follow upstream xtreme1: clip along the view axis by box thickness.
         this.camera.far =
-            this.object instanceof GroundPolygon || this.object instanceof GroundPolyline
+            this.object instanceof GroundPolygon || this.object instanceof GroundPolyline || this.object instanceof IrregularWall
                 ? 200
                 : projectRect.max.z - projectRect.min.z;
         this.camera.updateProjectionMatrix();
@@ -356,13 +446,26 @@ export default class SideRenderView extends Render {
 
     focusSelectedGroundPolylineVertex(): void {
         const selected = this.getSelectedGroundPolylineVertex?.();
-        if (!selected || selected.object !== this.object) return;
-        const point = selected.object.points3D[selected.index];
+        const selectedGroundPolygonVertex = this.getSelectedGroundPolygonVertex?.();
+        const selectedIrregularWallVertex = this.getSelectedIrregularWallVertex?.();
+        const selectedWallPoints = selectedIrregularWallVertex?.side === 'bottom'
+            ? selectedIrregularWallVertex.object.bottomPoints
+            : selectedIrregularWallVertex?.object.topPoints;
+        const selectedWallPoint = selectedIrregularWallVertex && selectedWallPoints
+            ? selectedWallPoints[selectedIrregularWallVertex.index]
+            : undefined;
+        const object = selected?.object || selectedGroundPolygonVertex?.object || selectedIrregularWallVertex?.object;
+        if (!object || object !== this.object) return;
+        const point = selected?.object === object
+            ? selected.object.points3D[selected.index]
+            : selectedGroundPolygonVertex?.object === object
+              ? selectedGroundPolygonVertex.object.points3D[selectedGroundPolygonVertex.index]
+            : selectedWallPoint;
         if (!point) return;
 
-        selected.object.updateMatrixWorld();
+        object.updateMatrixWorld();
         this.camera.updateMatrixWorld();
-        const projected = point.clone().applyMatrix4(selected.object.matrixWorld).project(this.camera);
+        const projected = point.clone().applyMatrix4(object.matrixWorld).project(this.camera);
         const halfWidth = (this.camera.right - this.camera.left) / 2;
         const halfHeight = (this.camera.top - this.camera.bottom) / 2;
         const right = new THREE.Vector3(1, 0, 0).transformDirection(this.camera.matrixWorld);
@@ -402,20 +505,48 @@ export default class SideRenderView extends Render {
         const hasObject3D = this.resolveSideTarget();
 
         if (selection.length > 0 && hasObject3D) {
-            if (hasObject3D instanceof GroundPolygon || hasObject3D instanceof GroundPolyline) {
+            if (hasObject3D instanceof GroundPolygon || hasObject3D instanceof GroundPolyline || hasObject3D instanceof IrregularWall) {
                 const groupPoint = groupPoints.children[0] as THREE.Points;
                 const material = groupPoint.material as PointsMaterial;
                 const oldDepthTest = material.depthTest;
                 const oldHasFilterBox = material.getUniforms('hasFilterBox');
                 const oldType = material.getUniforms('boxInfo').type;
+                const oldSideViewContrast = material.getUniforms('sideViewContrast');
+                const oldSideViewContrastCenters = material.getUniforms('sideViewContrastCenters');
+                const oldHideNonGroundRgb = material.getUniforms('hideNonGroundRgb');
+                hasObject3D.updateMatrixWorld();
+                // P annotations always use all four vertices as contrast centres.
+                // Selecting a vertex only controls its editing highlight; it must not
+                // collapse the visual enhancement back to a single small area.
+                const contrastCenters = Array.from({ length: 4 }, (_, index) => {
+                    // Only P annotations have the four-point local-contrast mode.
+                    // Irregular walls store bottom/top point arrays instead.
+                    const point = hasObject3D instanceof GroundPolygon
+                        ? hasObject3D.points3D[index]
+                        : undefined;
+                    return point
+                        ? point.clone().applyMatrix4(hasObject3D.matrixWorld)
+                        : new THREE.Vector3(1e6, 1e6, 1e6);
+                });
 
                 material.depthTest = false;
-                material.setUniforms({ hasFilterBox: -1 });
+                material.setUniforms({
+                    hasFilterBox: -1,
+                    sideViewContrast: -1,
+                    sideViewContrastCenters: contrastCenters,
+                    // Keep all context points in side views; the RGB non-ground
+                    // filter is a main-cloud viewing aid and would blank wall views.
+                    hideNonGroundRgb: -1,
+                });
                 try {
                     this.renderer.render(groupPoint, this.camera);
+                    this.renderParkingDensityOverlay();
                 } finally {
                     material.setUniforms({
                         hasFilterBox: oldHasFilterBox,
+                        sideViewContrast: oldSideViewContrast,
+                        sideViewContrastCenters: oldSideViewContrastCenters,
+                        hideNonGroundRgb: oldHideNonGroundRgb,
                         boxInfo: { type: oldType },
                     });
                     material.depthTest = oldDepthTest;
@@ -434,6 +565,8 @@ export default class SideRenderView extends Render {
                         this.renderer.render(hasObject3D.wallMesh, this.camera);
                         this.renderer.render(hasObject3D.topLine, this.camera);
                     }
+                } else if (hasObject3D instanceof IrregularWall) {
+                    this.renderIrregularWallEditLines(hasObject3D);
                 } else {
                     this.renderer.render(hasObject3D, this.camera);
                 }
@@ -454,14 +587,21 @@ export default class SideRenderView extends Render {
             let oldHasFilterBox = material.getUniforms('hasFilterBox');
             let oldType = material.getUniforms('boxInfo').type;
             let oldHasOcclusionClip = material.getUniforms('hasOcclusionClip');
+            const oldSideViewContrast = material.getUniforms('sideViewContrast');
+            const oldHideNonGroundRgb = material.getUniforms('hideNonGroundRgb');
             const occlusionAxis = new THREE.Vector3();
             const axisValue = this.axis.replace('-', '') as 'x' | 'y' | 'z';
             occlusionAxis[axisValue] = 1;
 
             material.depthTest = false;
             material.setUniforms({
-                hasFilterBox: 1,
+                // The selected box is rendered as an outline below. Keep point colors
+                // untouched here so the local red/green color-transition display can
+                // classify points on both sides of the annotation boundary.
+                hasFilterBox: -1,
                 hasOcclusionClip: 1,
+                sideViewContrast: -1,
+                hideNonGroundRgb: -1,
                 occlusionAxis,
                 occlusionDirection: this.axis.startsWith('-') ? -1 : 1,
                 boxInfo: {
@@ -474,10 +614,13 @@ export default class SideRenderView extends Render {
             });
             try {
                 this.renderer.render(groupPoint, this.camera);
+                this.renderParkingDensityOverlay();
             } finally {
                 material.setUniforms({
                     hasFilterBox: oldHasFilterBox,
                     hasOcclusionClip: oldHasOcclusionClip,
+                    sideViewContrast: oldSideViewContrast,
+                    hideNonGroundRgb: oldHideNonGroundRgb,
                     boxInfo: { type: oldType },
                 });
                 material.depthTest = oldDepthTest;
@@ -489,14 +632,95 @@ export default class SideRenderView extends Render {
                     this.renderer.render(object, this.camera);
                 }
             });
+            // Image-originated selection can resolve the correct 3D box for
+            // this side view before the legacy 2D projection has a persisted
+            // source id. In that case the global selection still contains only
+            // the 2D object, so render the resolved target explicitly.
+            if (!selection.includes(box)) {
+                this.renderer.render(box, this.camera);
+            }
         } else {
             this.renderer.render(groupPoints, this.camera);
+            this.renderParkingDensityOverlay();
         }
 
         this.updateProjectRect();
         this.updateGroundPolygonVertexHandles();
         // console.log('renderFrame');
         // this.updateDom();
+    }
+
+    /**
+     * The RGB density layer is intentionally scene-owned so it never affects
+     * point-cloud loading/picking.  Side views render the base point group
+     * directly, therefore draw that display-only scene child explicitly too.
+     */
+    private renderParkingDensityOverlay(): void {
+        const overlay = this.pointCloud.scene.getObjectByName('parking-rgb-neighbour-points');
+        if (!overlay?.visible || overlay.children.length === 0) return;
+
+        const materials: Array<{ material: THREE.PointsMaterial; depthTest: boolean; size: number }> = [];
+        const worldPerPixel = (this.camera.top - this.camera.bottom)
+            / Math.max(this.height * this.renderer.getPixelRatio(), 1);
+        overlay.traverse((child) => {
+            if (!(child instanceof THREE.Points)) return;
+            const material = child.material as THREE.PointsMaterial;
+            materials.push({ material, depthTest: material.depthTest, size: material.size });
+            // The base cloud is rendered without depth testing in orthographic
+            // side views; do the same for neighbours so they are not hidden by
+            // the current frame's road surface.
+            material.depthTest = false;
+            if (this.axis === 'z') {
+                // THREE.PointsMaterial does not attenuate point size for an
+                // orthographic camera. Convert the shared world-space ground
+                // point size to this view's current screen scale.
+                material.size /= worldPerPixel;
+            }
+        });
+        try {
+            this.renderer.render(overlay, this.camera);
+        } finally {
+            materials.forEach(({ material, depthTest, size }) => {
+                material.depthTest = depthTest;
+                material.size = size;
+            });
+        }
+    }
+
+    private renderIrregularWallEditLines(wall: IrregularWall): void {
+        wall.updateWorldMatrix(true, true);
+        // Preserve the translucent wall face in side views; the independent lines
+        // below are only used to make both boundaries reliable during editing.
+        this.renderer.render(wall.wallMesh, this.camera);
+        const renderLine = (line: THREE.Line | THREE.LineSegments, points: THREE.Vector3[]): void => {
+            line.geometry.setFromPoints(points);
+            line.geometry.computeBoundingSphere();
+            line.matrixAutoUpdate = false;
+            line.matrix.copy(wall.matrixWorld);
+            line.updateMatrixWorld(true);
+            this.renderer.render(line, this.camera);
+        };
+
+        renderLine(this.irregularWallBottomEditLine, wall.bottomPoints);
+        if (wall.topPoints.length >= 2) {
+            renderLine(this.irregularWallTopEditLine, wall.topPoints);
+            const directDistance =
+                wall.bottomPoints[0].distanceToSquared(wall.topPoints[0]) +
+                wall.bottomPoints.at(-1)!.distanceToSquared(wall.topPoints.at(-1)!);
+            const reversedDistance =
+                wall.bottomPoints[0].distanceToSquared(wall.topPoints.at(-1)!) +
+                wall.bottomPoints.at(-1)!.distanceToSquared(wall.topPoints[0]);
+            const topStart = reversedDistance < directDistance
+                ? wall.topPoints.at(-1)!
+                : wall.topPoints[0];
+            const topEnd = reversedDistance < directDistance
+                ? wall.topPoints[0]
+                : wall.topPoints.at(-1)!;
+            renderLine(this.irregularWallConnectorEditLine, [
+                wall.bottomPoints[0], topStart,
+                wall.bottomPoints.at(-1)!, topEnd,
+            ]);
+        }
     }
 
     destroy(): void {
@@ -512,6 +736,12 @@ export default class SideRenderView extends Render {
         this.renderer.domElement.remove();
         this.groundPolylineEditLine.geometry.dispose();
         (this.groundPolylineEditLine.material as THREE.Material).dispose();
+        this.irregularWallBottomEditLine.geometry.dispose();
+        (this.irregularWallBottomEditLine.material as THREE.Material).dispose();
+        this.irregularWallTopEditLine.geometry.dispose();
+        (this.irregularWallTopEditLine.material as THREE.Material).dispose();
+        this.irregularWallConnectorEditLine.geometry.dispose();
+        (this.irregularWallConnectorEditLine.material as THREE.Material).dispose();
         this.vertexHandleLayer.remove();
         this.segmentHandles.splice(0);
         this.object = null;
@@ -550,7 +780,11 @@ export default class SideRenderView extends Render {
             handle.textContent = '+';
             handle.title = 'Insert point into this segment';
             handle.addEventListener('pointerdown', (event) => {
-                this.insertGroundPolylineSegmentPoint(event, Number(handle.dataset.index));
+                this.insertGroundShapeSegmentPoint(
+                    event,
+                    Number(handle.dataset.index),
+                    handle.dataset.side as 'bottom' | 'top' | undefined,
+                );
             });
             this.vertexHandleLayer.appendChild(handle);
             this.segmentHandles.push(handle);
@@ -562,22 +796,33 @@ export default class SideRenderView extends Render {
 
     private updateGroundPolygonVertexHandles(): void {
         const object = this.resolveSideTarget();
-        if (!(object instanceof GroundPolygon) && !(object instanceof GroundPolyline)) {
+        if (!(object instanceof GroundPolygon) && !(object instanceof GroundPolyline) && !(object instanceof IrregularWall)) {
             this.vertexHandleLayer.style.display = 'none';
             return;
         }
 
         object.updateMatrixWorld();
+        this.object = object;
         this.camera.updateMatrixWorld();
         this.vertexHandleLayer.style.display = 'block';
-        this.ensureVertexHandles(object.points3D.length);
-        this.ensureSegmentHandles(
-            object instanceof GroundPolyline ? object.points3D.length - 1 : 0,
-        );
-        object.points3D.forEach((point, index) => {
+        const editablePoints = object instanceof IrregularWall
+            ? [...object.bottomPoints, ...object.topPoints]
+            : object.points3D;
+        this.ensureVertexHandles(editablePoints.length);
+        const segmentCount = object instanceof GroundPolyline
+            ? object.points3D.length - 1
+            : object instanceof IrregularWall
+                ? object.bottomPoints.length + object.topPoints.length - 2
+                : 0;
+        this.ensureSegmentHandles(segmentCount);
+        editablePoints.forEach((point, index) => {
             const canvasPoint = this.cameraToCanvas(point.clone().applyMatrix4(object.matrixWorld));
             const handle = this.vertexHandles[index];
             handle.dataset.index = String(index);
+            handle.dataset.side = object instanceof IrregularWall
+                ? index < object.bottomPoints.length ? 'bottom' : 'top'
+                : '';
+            handle.dataset.sideIndex = String(object instanceof IrregularWall && index >= object.bottomPoints.length ? index - object.bottomPoints.length : index);
             handle.style.display =
                 object instanceof GroundPolyline && object.isVisibilityBoundaryPoint(index)
                     ? 'none'
@@ -585,12 +830,32 @@ export default class SideRenderView extends Render {
             handle.style.left = `${canvasPoint.x}px`;
             handle.style.top = `${canvasPoint.y}px`;
             const selectedVertex = this.getSelectedGroundPolylineVertex?.();
-            handle.style.background =
-                selectedVertex?.object === object && selectedVertex.index === index
+            const selectedGroundPolygonVertex = this.getSelectedGroundPolygonVertex?.();
+            const selectedIrregularWallVertex = this.getSelectedIrregularWallVertex?.();
+            const isSelectedGroundPolygonVertex =
+                object instanceof GroundPolygon &&
+                selectedGroundPolygonVertex?.object === object &&
+                selectedGroundPolygonVertex.index === index;
+            const isSelectedIrregularWallVertex =
+                object instanceof IrregularWall &&
+                selectedIrregularWallVertex?.object === object &&
+                selectedIrregularWallVertex.side === handle.dataset.side &&
+                selectedIrregularWallVertex.index === Number(handle.dataset.sideIndex);
+            handle.style.background = object instanceof IrregularWall
+                ? isSelectedIrregularWallVertex ? '#ffff00' : handle.dataset.side === 'bottom' ? '#00e5ff' : '#ff9f1c'
+                : isSelectedGroundPolygonVertex
+                    ? '#ffff00'
+                : selectedVertex?.object === object && selectedVertex.index === index
                     ? '#00e5ff'
                     : '#10252a';
+            handle.style.borderColor =
+                isSelectedIrregularWallVertex || isSelectedGroundPolygonVertex ? '#ffffff' : '';
+            handle.style.boxShadow =
+                isSelectedIrregularWallVertex || isSelectedGroundPolygonVertex
+                    ? '0 0 0 3px rgba(255, 255, 0, 0.55)'
+                    : '';
         });
-        this.vertexHandles.slice(object.points3D.length).forEach((handle) => {
+        this.vertexHandles.slice(editablePoints.length).forEach((handle) => {
             handle.style.display = 'none';
         });
         if (object instanceof GroundPolyline) {
@@ -617,8 +882,26 @@ export default class SideRenderView extends Render {
                 handle.style.left = `${(start.x + end.x) / 2}px`;
                 handle.style.top = `${(start.y + end.y) / 2}px`;
             }
+        } else if (object instanceof IrregularWall) {
+            const segments: Array<{ side: 'bottom' | 'top'; index: number; start: THREE.Vector3; end: THREE.Vector3 }> = [];
+            (['bottom', 'top'] as const).forEach((side) => {
+                const points = side === 'bottom' ? object.bottomPoints : object.topPoints;
+                points.slice(0, -1).forEach((start, index) => segments.push({ side, index, start, end: points[index + 1] }));
+            });
+            segments.forEach((segment, handleIndex) => {
+                const start = this.cameraToCanvas(segment.start.clone().applyMatrix4(object.matrixWorld));
+                const end = this.cameraToCanvas(segment.end.clone().applyMatrix4(object.matrixWorld));
+                const handle = this.segmentHandles[handleIndex];
+                handle.dataset.index = String(segment.index);
+                handle.dataset.side = segment.side;
+                handle.textContent = '+';
+                handle.title = 'Insert point into this segment';
+                handle.style.display = Math.hypot(end.x - start.x, end.y - start.y) >= MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX ? 'block' : 'none';
+                handle.style.left = `${(start.x + end.x) / 2}px`;
+                handle.style.top = `${(start.y + end.y) / 2}px`;
+            });
         }
-        this.segmentHandles.slice(object instanceof GroundPolyline ? object.points3D.length - 1 : 0).forEach(
+        this.segmentHandles.slice(segmentCount).forEach(
             (handle) => {
                 handle.style.display = 'none';
             },
@@ -627,10 +910,7 @@ export default class SideRenderView extends Render {
 
     private startGroundPolygonVertexDrag(event: PointerEvent, index: number): void {
         const object = this.object;
-        if (
-            !(object instanceof GroundPolygon) &&
-            !(object instanceof GroundPolyline)
-        ) {
+        if (!(object instanceof GroundPolygon) && !(object instanceof GroundPolyline) && !(object instanceof IrregularWall)) {
             return;
         }
         if (object instanceof GroundPolyline && object.isVisibilityBoundaryPoint(index)) {
@@ -641,30 +921,54 @@ export default class SideRenderView extends Render {
         event.stopPropagation();
         if (object instanceof GroundPolyline) {
             this.onGroundPolylineVertexSelect?.(object, index);
+        } else if (object instanceof GroundPolygon) {
+            this.onGroundPolygonVertexSelect?.(object, index);
+        } else if (object instanceof IrregularWall) {
+            const selectedSide = this.vertexHandles[index]?.dataset.side as 'bottom' | 'top';
+            const selectedIndex = Number(this.vertexHandles[index]?.dataset.sideIndex);
+            if (selectedSide && Number.isInteger(selectedIndex)) {
+                this.onIrregularWallVertexSelect?.(object, selectedSide, selectedIndex);
+            }
         }
         this.updateGroundPolygonVertexHandles();
         this.enableFit = false;
         const start = new THREE.Vector2(event.clientX, event.clientY);
-        const points = object.points3D.map((point) => point.clone());
+        const side = object instanceof IrregularWall ? (this.vertexHandles[index]?.dataset.side as 'bottom' | 'top') : undefined;
+        const sideIndex = object instanceof IrregularWall ? Number(this.vertexHandles[index]?.dataset.sideIndex) : index;
+        const points = object instanceof IrregularWall
+            ? (side === 'top' ? object.topPoints : object.bottomPoints).map((point) => point.clone())
+            : object.points3D.map((point) => point.clone());
+        let latestPoints = points.map((point) => point.clone());
         const right = new THREE.Vector3(1, 0, 0).transformDirection(this.camera.matrixWorld);
         const up = new THREE.Vector3(0, 1, 0).transformDirection(this.camera.matrixWorld);
         const worldPerPixelX = (this.camera.right - this.camera.left) / this.width;
         const worldPerPixelY = (this.camera.top - this.camera.bottom) / this.height;
 
         const onMove = (moveEvent: PointerEvent): void => {
+            if (object instanceof IrregularWall && (!side || !Number.isInteger(sideIndex))) return;
             const candidate = points.map((point) => point.clone());
-            candidate[index]
+            candidate[object instanceof IrregularWall ? sideIndex : index]
                 .addScaledVector(right, (moveEvent.clientX - start.x) * worldPerPixelX)
                 .addScaledVector(up, (start.y - moveEvent.clientY) * worldPerPixelY);
             if (object instanceof GroundPolygon) {
                 if (!GroundPolygon.isValidPoints(candidate)) return;
                 this.onGroundPolygonPointsChange?.(object, candidate);
+            } else if (object instanceof IrregularWall) {
+                latestPoints = candidate;
+                // Preview directly while dragging; committing a command for every
+                // pointer event makes long point-cloud walls visibly laggy.
+                object.setSidePoints(side, candidate);
+                this.pointCloud.dispatchEvent({ type: Event.OBJECT_TRANSFORM, data: { object, option: { pointsChanged: true } } });
+                this.pointCloud.render();
             } else {
                 this.onGroundPolylinePointsChange?.(object, candidate);
             }
         };
         const onUp = (): void => {
             this.enableFit = true;
+            if (object instanceof IrregularWall && side) {
+                this.onIrregularWallPointsChange?.(object, side, latestPoints, points);
+            }
             document.removeEventListener('pointermove', onMove);
             document.removeEventListener('pointerup', onUp);
         };
@@ -673,8 +977,21 @@ export default class SideRenderView extends Render {
         document.addEventListener('pointerup', onUp);
     }
 
-    private insertGroundPolylineSegmentPoint(event: PointerEvent, segmentIndex: number): void {
+    private insertGroundShapeSegmentPoint(event: PointerEvent, segmentIndex: number, side?: 'bottom' | 'top'): void {
         const object = this.object;
+        if (object instanceof IrregularWall && side) {
+            const points = side === 'bottom' ? object.bottomPoints : object.topPoints;
+            if (segmentIndex < 0 || segmentIndex >= points.length - 1) return;
+            event.preventDefault();
+            event.stopPropagation();
+            this.onIrregularWallSegmentInsert?.(
+                object,
+                side,
+                segmentIndex,
+                points[segmentIndex].clone().lerp(points[segmentIndex + 1], 0.5),
+            );
+            return;
+        }
         if (
             !(object instanceof GroundPolyline) ||
             segmentIndex < 0 ||
@@ -693,39 +1010,54 @@ export default class SideRenderView extends Render {
     private readonly onHeightPointerDown = (event: PointerEvent): void => {
         if (!event.shiftKey) return;
         const object = this.resolveSideTarget();
-        if (!(object instanceof GroundPolyline)) return;
+        if (!(object instanceof GroundPolyline) && !(object instanceof IrregularWall)) return;
         object.updateMatrixWorld();
         const rect = this.renderer.domElement.getBoundingClientRect();
         const pointer = new THREE.Vector2(event.clientX - rect.left, event.clientY - rect.top);
         let midpoint: THREE.Vector3 | null = null;
+        let irregularWallSide: 'bottom' | 'top' | undefined;
         let nearestDistance = 18;
-        for (let index = 0; index < object.points3D.length - 1; index++) {
-            if (object.isVisibilityBoundaryPoint(index) || object.isVisibilityBoundaryPoint(index + 1)) continue;
-            const segmentStarts = [object.points3D[index]];
-            const segmentEnds = [object.points3D[index + 1]];
-            // Once a wall has height, its top outline is the most natural handle for
-            // subsequent adjustments.  Treat it exactly like the ground segment.
-            if (object.wallHeight > 0) {
-                const heightOffset = new THREE.Vector3(0, 0, object.wallHeight);
-                segmentStarts.push(object.points3D[index].clone().add(heightOffset));
-                segmentEnds.push(object.points3D[index + 1].clone().add(heightOffset));
-            }
-            segmentStarts.forEach((segmentStart, lineIndex) => {
+        const findNearestSegment = (
+            points: THREE.Vector3[],
+            side?: 'bottom' | 'top',
+            heightOffset?: THREE.Vector3,
+        ): void => {
+            for (let index = 0; index < points.length - 1; index++) {
+                if (
+                    object instanceof GroundPolyline &&
+                    (object.isVisibilityBoundaryPoint(index) || object.isVisibilityBoundaryPoint(index + 1))
+                ) {
+                    continue;
+                }
+                const segmentStart = points[index].clone().add(heightOffset || new THREE.Vector3());
+                const segmentEnd = points[index + 1].clone().add(heightOffset || new THREE.Vector3());
                 const start = this.cameraToCanvas(
                     segmentStart.clone().applyMatrix4(object.matrixWorld),
                 );
                 const end = this.cameraToCanvas(
-                    segmentEnds[lineIndex].clone().applyMatrix4(object.matrixWorld),
+                    segmentEnd.clone().applyMatrix4(object.matrixWorld),
                 );
                 const distance = distanceToScreenSegment(pointer, start, end);
                 if (distance < nearestDistance) {
                     nearestDistance = distance;
                     midpoint = segmentStart
                         .clone()
-                        .lerp(segmentEnds[lineIndex], 0.5)
+                        .lerp(segmentEnd, 0.5)
                         .applyMatrix4(object.matrixWorld);
+                    irregularWallSide = side;
                 }
-            });
+            }
+        };
+        if (object instanceof IrregularWall) {
+            findNearestSegment(object.bottomPoints, 'bottom');
+            findNearestSegment(object.topPoints, 'top');
+        } else {
+            findNearestSegment(object.points3D);
+            // Once a wall has height, its top outline is the most natural handle for
+            // subsequent adjustments. Treat it exactly like the ground segment.
+            if (object.wallHeight > 0) {
+                findNearestSegment(object.points3D, undefined, new THREE.Vector3(0, 0, object.wallHeight));
+            }
         }
         if (!midpoint) return;
         const base = this.cameraToCanvas(midpoint.clone());
@@ -734,16 +1066,69 @@ export default class SideRenderView extends Render {
         event.preventDefault();
         event.stopPropagation();
         this.clearHeightDrag();
-        const startHeight = object.wallHeight;
+        if (object instanceof IrregularWall && event.shiftKey) {
+            // Shift means “set wall height”: keep the ground boundary fixed and
+            // derive a uniform top boundary from it, matching the main-view
+            // height gesture instead of translating whichever edge was clicked.
+            const bottomPoints = object.bottomPoints.map((point) => point.clone());
+            const beforeTopPoints = object.topPoints.map((point) => point.clone());
+            const startHeight = beforeTopPoints.length > 0
+                ? beforeTopPoints[0].z - bottomPoints[0].z
+                : 0;
+            const startPointer = new THREE.Vector2(event.clientX, event.clientY);
+            this.heightDragMove = (moveEvent: PointerEvent): void => {
+                const delta = new THREE.Vector2(moveEvent.clientX, moveEvent.clientY).sub(startPointer);
+                const height = Math.max(0, startHeight + delta.dot(up) / up.lengthSq());
+                object.setSidePoints(
+                    'top',
+                    bottomPoints.map((point) => point.clone().add(new THREE.Vector3(0, 0, height))),
+                );
+                this.pointCloud.dispatchEvent({ type: Event.OBJECT_TRANSFORM, data: { object, option: { pointsChanged: true } } });
+                this.pointCloud.render();
+            };
+            this.heightDragUp = (): void => {
+                this.onIrregularWallPointsChange?.(
+                    object,
+                    'top',
+                    object.topPoints.map((point) => point.clone()),
+                    beforeTopPoints,
+                );
+                this.clearHeightDrag();
+            };
+            document.addEventListener('pointermove', this.heightDragMove);
+            document.addEventListener('pointerup', this.heightDragUp);
+            return;
+        }
+        const startHeight = object instanceof GroundPolyline ? object.wallHeight : 0;
+        const startPoints = object instanceof IrregularWall && irregularWallSide
+            ? (irregularWallSide === 'top' ? object.topPoints : object.bottomPoints).map((point) => point.clone())
+            : [];
         const startPointer = new THREE.Vector2(event.clientX, event.clientY);
         this.heightDragMove = (moveEvent: PointerEvent): void => {
             const delta = new THREE.Vector2(moveEvent.clientX, moveEvent.clientY).sub(startPointer);
-            this.onGroundPolylineHeightChange?.(
-                object,
-                Math.max(0, startHeight + delta.dot(up) / up.lengthSq()),
-            );
+            const heightDelta = delta.dot(up) / up.lengthSq();
+            if (object instanceof IrregularWall && irregularWallSide) {
+                object.setSidePoints(
+                    irregularWallSide,
+                    startPoints.map((point) => point.clone().add(new THREE.Vector3(0, 0, heightDelta))),
+                );
+                this.pointCloud.dispatchEvent({ type: Event.OBJECT_TRANSFORM, data: { object, option: { pointsChanged: true } } });
+                this.pointCloud.render();
+            } else if (object instanceof GroundPolyline) {
+                this.onGroundPolylineHeightChange?.(
+                    object,
+                    Math.max(0, startHeight + heightDelta),
+                );
+            }
         };
-        this.heightDragUp = (): void => this.clearHeightDrag();
+        this.heightDragUp = (): void => {
+            if (object instanceof IrregularWall && irregularWallSide) {
+                const latestPoints = (irregularWallSide === 'top' ? object.topPoints : object.bottomPoints)
+                    .map((point) => point.clone());
+                this.onIrregularWallPointsChange?.(object, irregularWallSide, latestPoints, startPoints);
+            }
+            this.clearHeightDrag();
+        };
         document.addEventListener('pointermove', this.heightDragMove);
         document.addEventListener('pointerup', this.heightDragUp);
     };

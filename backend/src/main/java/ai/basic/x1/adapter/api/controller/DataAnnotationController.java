@@ -131,6 +131,12 @@ public class DataAnnotationController {
         return trackSyncUseCase.deleteByDataIdAndTrackId(dataId, trackId);
     }
 
+    @PostMapping("track/split")
+    public TrackSyncUseCase.TrackSplitResult splitTrack(
+            @RequestBody TrackSyncUseCase.TrackSplitRequest request) {
+        return trackSyncUseCase.splitTrack(request);
+    }
+
     @GetMapping("sync/segments")
     public Map<Long, Integer> syncSegments(@RequestParam Long dataId, @RequestParam String trackId) {
         return trackSyncUseCase.findPoseSegments(dataId, trackId);

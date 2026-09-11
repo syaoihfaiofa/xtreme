@@ -11,6 +11,7 @@ const hotkeyConfig: IHotkeyConfig[] = [
     { key: 'f', action: 'createObjectWith3' },
     { key: 'p', action: 'createParkingSlot' },
     { key: 'l', action: 'createGroundPolyline' },
+    { key: 'i', action: 'createIrregularWall' },
     // mac or window
     { key: isMac ? 'backspace' : 'del', action: 'deleteObject' },
     { key: isMac ? '⌘+z' : 'ctrl+z', action: 'undo' },

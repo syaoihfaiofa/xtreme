@@ -2,7 +2,16 @@ import { reactive, toRefs, watch } from 'vue';
 import { useInjectEditor } from '../../state';
 import { allItems } from './item';
 import { IActionName } from 'pc-editor';
-import { Image2DRenderView, CreateAction, Box, GroundPolygon, GroundPolyline, Object2D } from 'pc-render';
+import {
+    Image2DRenderView,
+    CreateAction,
+    Box,
+    GroundPolygon,
+    GroundPolyline,
+    IrregularWall,
+    Object2D,
+    SplitGroundShapeAction,
+} from 'pc-render';
 import { IModelResult, IModel } from 'pc-editor';
 import * as api from '../../api';
 import * as locale from './lang';
@@ -13,6 +22,7 @@ let createActions: IActionName[] = [
     'createObjectWith3',
     'createParkingSlot',
     'createGroundPolyline',
+    'createIrregularWall',
     'pickObject',
 ];
 
@@ -34,6 +44,9 @@ export default function useTool() {
     });
     function onTool(name: string) {
         let config = editor.state.config;
+        if (name !== 'splitGroundShape' && config.groundShapeSplitEdit) {
+            stopGroundShapeSplit();
+        }
         switch (name) {
             case 'create2DBox':
                 stopOtherCreateAction('create2DBox');
@@ -48,13 +61,21 @@ export default function useTool() {
             case 'createParkingSlot':
                 stopOtherCreateAction('createParkingSlot');
                 editor.actionManager.execute('createParkingSlot');
+                editor.parkingDensityManager?.refresh();
                 break;
             case 'createGroundPolyline':
                 stopOtherCreateAction('createGroundPolyline');
                 editor.actionManager.execute('createGroundPolyline');
                 break;
+            case 'createIrregularWall':
+                stopOtherCreateAction('createIrregularWall');
+                editor.actionManager.execute('createIrregularWall');
+                break;
             case 'groundPolylineVisibility':
                 startGroundPolylineVisibility();
+                break;
+            case 'splitGroundShape':
+                startGroundShapeSplit();
                 break;
             case 'createRect':
                 stopOtherCreateAction('create2DRect');
@@ -86,6 +107,7 @@ export default function useTool() {
     }
 
     function startGroundPolylineVisibility(): void {
+        stopGroundShapeSplit();
         stopOtherCreateAction('groundPolylineVisibility');
         const config = editor.state.config;
         config.groundPolylineVisibilityEdit = !config.groundPolylineVisibilityEdit;
@@ -103,13 +125,67 @@ export default function useTool() {
         });
         if (config.groundPolylineVisibilityEdit) {
             editor.showMsg(
-                'info',
+                'warning',
                 '请在相机图的折线上依次点击两个点，两点之间将设为不可见',
                 5,
             );
         } else {
-            editor.showMsg('info', '已退出遮挡标注', 2);
+            editor.showMsg('success', '已退出遮挡标注', 2);
         }
+        editor.pc.render();
+    }
+
+    function startGroundShapeSplit(): void {
+        const view = editor.viewManager.getMainView();
+        const action = view?.getAction('split-ground-shape') as SplitGroundShapeAction | undefined;
+        const selected = editor.pc.selection.find(
+            (object) => object instanceof GroundPolyline || object instanceof IrregularWall,
+        );
+        if (!action || !selected) {
+            editor.showMsg('warning', '请先选中需要截断的 curb、wall 或不规则墙');
+            return;
+        }
+        if (!selected.userData?.trackId) {
+            editor.showMsg('warning', '该对象没有 Track ID，无法执行整条 Track 截断');
+            return;
+        }
+        if (
+            selected instanceof IrregularWall &&
+            (selected.bottomPoints.length < 2 || selected.topPoints.length < 2)
+        ) {
+            editor.showMsg('warning', '不规则墙需要完整的顶边和底边后才能截断');
+            return;
+        }
+        if (editor.state.config.groundPolylineVisibilityEdit) {
+            startGroundPolylineVisibility();
+        }
+        const enabled = !editor.state.config.groundShapeSplitEdit;
+        editor.state.config.groundShapeSplitEdit = enabled;
+        action.onMiss = () => editor.showMsg('warning', '请点击选中对象的线段', 2);
+        action.onCancel = () => {
+            editor.state.config.groundShapeSplitEdit = false;
+            editor.pc.render();
+        };
+        action.onPick = async (pick) => {
+            stopGroundShapeSplit();
+            await editor.splitGroundShapeTrack(pick);
+        };
+        action.toggle(enabled);
+        editor.showMsg(
+            'warning',
+            enabled ? '截断模式：在线段任意位置点击，Esc 退出' : '已退出截断模式',
+            3,
+        );
+        editor.pc.render();
+    }
+
+    function stopGroundShapeSplit(): void {
+        if (!editor.state.config.groundShapeSplitEdit) return;
+        editor.state.config.groundShapeSplitEdit = false;
+        const action = editor.viewManager
+            .getMainView()
+            ?.getAction('split-ground-shape') as SplitGroundShapeAction | undefined;
+        action?.toggle(false);
         editor.pc.render();
     }
 
@@ -140,7 +216,7 @@ export default function useTool() {
 
         if (selection.length > 0) {
             let object3D = selection.filter(
-                (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline,
+                (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline || e instanceof IrregularWall,
             );
             if (object3D.length === 0) {
                 editor.showMsg('warning', 'Please Select a 3D Result');
@@ -162,7 +238,7 @@ export default function useTool() {
     function reProject() {
         let selection = editor.pc.selection;
         let object3D = selection.filter(
-            (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline,
+            (e) => e instanceof Box || e instanceof GroundPolygon || e instanceof GroundPolyline || e instanceof IrregularWall,
         );
         if (object3D.length === 0) {
             editor.showMsg('warning', 'Please Select a 3D Result');

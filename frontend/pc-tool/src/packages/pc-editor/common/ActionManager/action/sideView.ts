@@ -1,4 +1,4 @@
-import { Box, GroundPolygon, GroundPolyline } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline, IrregularWall } from 'pc-render';
 import Editor from '../../../Editor';
 import { MotionMode } from '../../../type';
 import { getDefaultMotionMode } from '../../../utils';
@@ -83,8 +83,8 @@ export const rotationZRight90 = define({
         return !!getSelectedObject(editor);
     },
     execute(editor: Editor) {
-        const object = getSelectedObject(editor) as Box | GroundPolygon | GroundPolyline;
-        if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
+        const object = getSelectedObject(editor) as Box | GroundPolygon | GroundPolyline | IrregularWall;
+        if (object instanceof GroundPolygon || object instanceof GroundPolyline || object instanceof IrregularWall) {
             rotate(editor, -Math.PI / 2);
             return;
         }
@@ -113,13 +113,14 @@ export const rotationZRight90 = define({
     },
 });
 
-function getSelectedObject(editor: Editor): Box | GroundPolygon | GroundPolyline | undefined {
+function getSelectedObject(editor: Editor): Box | GroundPolygon | GroundPolyline | IrregularWall | undefined {
     return editor.pc.selection.find(
         (annotate) =>
             annotate instanceof Box ||
             annotate instanceof GroundPolygon ||
-            annotate instanceof GroundPolyline,
-    ) as Box | GroundPolygon | GroundPolyline | undefined;
+            annotate instanceof GroundPolyline ||
+            annotate instanceof IrregularWall,
+    ) as Box | GroundPolygon | GroundPolyline | IrregularWall | undefined;
 }
 
 function translate(editor: Editor, offset: THREE.Vector3): void {
@@ -127,7 +128,9 @@ function translate(editor: Editor, offset: THREE.Vector3): void {
     if (!object) return;
     if (object instanceof GroundPolygon || object instanceof GroundPolyline) {
         const selectedVertex =
-            object instanceof GroundPolyline ? editor.getSelectedGroundPolylineVertex() : undefined;
+            object instanceof GroundPolygon
+                ? editor.getSelectedGroundPolygonVertex()
+                : editor.getSelectedGroundPolylineVertex();
         const points = object.points3D.map((point) => point.clone());
         if (selectedVertex?.object === object) {
             points[selectedVertex.index].add(offset);
@@ -141,6 +144,21 @@ function translate(editor: Editor, offset: THREE.Vector3): void {
             points,
             },
         );
+        return;
+    }
+    if (object instanceof IrregularWall) {
+        const selectedVertex = editor.getSelectedIrregularWallVertex();
+        const bottomPoints = object.bottomPoints.map((point) => point.clone());
+        const topPoints = object.topPoints.map((point) => point.clone());
+        if (selectedVertex?.object === object) {
+            const points = selectedVertex.side === 'bottom' ? bottomPoints : topPoints;
+            points[selectedVertex.index]?.add(offset);
+            updateIrregularWallPoints(editor, object, bottomPoints, topPoints);
+        } else {
+            bottomPoints.forEach((point) => point.add(offset));
+            topPoints.forEach((point) => point.add(offset));
+            updateIrregularWallPoints(editor, object, bottomPoints, topPoints);
+        }
         return;
     }
 
@@ -166,9 +184,46 @@ function rotate(editor: Editor, angle: number): void {
         );
         return;
     }
+    if (object instanceof IrregularWall) {
+        const points = [...object.bottomPoints, ...object.topPoints];
+        if (points.length < 2) return;
+        const center = points
+            .reduce((sum, point) => sum.add(point), new THREE.Vector3())
+            .multiplyScalar(1 / points.length);
+        const rotation = new THREE.Matrix4().makeRotationZ(angle);
+        updateIrregularWallPoints(
+            editor,
+            object,
+            object.bottomPoints.map((point) => point.clone().sub(center).applyMatrix4(rotation).add(center)),
+            object.topPoints.map((point) => point.clone().sub(center).applyMatrix4(rotation).add(center)),
+        );
+        return;
+    }
 
     const rotation = getRotationZ(Math.abs(angle), Math.sign(angle), object);
     editor.cmdManager.execute('update-transform', { object, transform: { rotation } });
+}
+
+function updateIrregularWallPoints(
+    editor: Editor,
+    object: IrregularWall,
+    bottomPoints: THREE.Vector3[],
+    topPoints: THREE.Vector3[],
+): void {
+    editor.cmdManager.withGroup(() => {
+        editor.cmdManager.execute('update-irregular-wall-points', {
+            object,
+            side: 'bottom',
+            points: bottomPoints,
+        });
+        if (topPoints.length >= 2) {
+            editor.cmdManager.execute('update-irregular-wall-points', {
+                object,
+                side: 'top',
+                points: topPoints,
+            });
+        }
+    });
 }
 
 let tempV3 = new THREE.Vector3();

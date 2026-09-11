@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import Editor from '../Editor';
 import { IUserData } from '../type';
 import { nanoid } from 'nanoid';
-import { Box, GroundPolygon, GroundPolyline, Rect, Box2D, Vector2Of4 } from 'pc-render';
+import { Box, GroundPolygon, GroundPolyline, IrregularWall, Rect, Box2D, Vector2Of4 } from 'pc-render';
 
 export function setIdInfo(editor: Editor, userData: IUserData) {
     if (!userData.id) userData.id = THREE.MathUtils.generateUUID();
@@ -54,6 +54,18 @@ export function createGroundPolyline(
     userData: IUserData = {},
 ) {
     const object = new GroundPolyline(points);
+    object.userData = userData;
+    if (userData.id) object.uuid = userData.id;
+    return object;
+}
+
+export function createIrregularWall(
+    editor: Editor,
+    bottomPoints: THREE.Vector3[],
+    topPoints: THREE.Vector3[],
+    userData: IUserData = {},
+) {
+    const object = new IrregularWall(bottomPoints, topPoints);
     object.userData = userData;
     if (userData.id) object.uuid = userData.id;
     return object;

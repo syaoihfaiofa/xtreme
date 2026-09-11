@@ -105,6 +105,12 @@ public class DataAnnotationObjectUseCase {
             return true;
         }
         String type = attrs.getStr("type");
+        if ("IRREGULAR_WALL".equals(type)) {
+            var bottomPoints = contour == null ? null : contour.getJSONArray("bottomPoints");
+            var topPoints = contour == null ? null : contour.getJSONArray("topPoints");
+            return bottomPoints != null && bottomPoints.size() >= 2
+                    && (topPoints == null || topPoints.isEmpty() || topPoints.size() >= 2);
+        }
         return ("GROUND_POLYGON".equals(type) || "GROUND_POLYLINE".equals(type))
                 && contour != null && contour.getJSONArray("points") != null;
     }

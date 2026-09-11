@@ -15,6 +15,12 @@ server:
 spring:
   main:
     allow-circular-references: true
+  servlet:
+    multipart:
+      # A location.txt can contain one ego-pose row per frame and routinely
+      # exceeds Spring Boot's default 1 MB multipart limit on long scenes.
+      max-file-size: 100MB
+      max-request-size: 100MB
   application:
     name: xtreme1
   datasource:
@@ -82,6 +88,8 @@ export:
     version: Xtreme1 v0.6
 file:
   tempPath: /tmp/xtreme1/
+  # Mounted server volume for label backups. The UI accepts a subdirectory under this path only.
+  backupPath: /data/xtreme1/backups
   size:
     large: 800
     medium: 400
