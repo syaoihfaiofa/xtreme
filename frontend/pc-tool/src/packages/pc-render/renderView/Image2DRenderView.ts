@@ -23,7 +23,6 @@ const defaultActions: string[] = [
     'create-obj',
     'edit-2d',
     'transform-2d',
-    'edit-ground-polyline-visibility-2d',
 ];
 // const defaultActions: string[] = ['select-2d'];
 
@@ -33,8 +32,7 @@ type ActionType =
     | 'create-obj'
     | 'edit-2d'
     | 'transform-2d'
-    | 'render-2d-track'
-    | 'edit-ground-polyline-visibility-2d';
+    | 'render-2d-track';
 
 interface IOption {
     cameraInternal: ICameraInternal;
@@ -163,11 +161,7 @@ export default class Image2DRenderView extends Render {
         // let clipHelper = new THREE.CameraHelper(this.clipCamera);
         // this.group.add(clipHelper);
 
-        const actions = [...(config.actions || defaultActions)];
-        if (!actions.includes('edit-ground-polyline-visibility-2d')) {
-            actions.push('edit-ground-polyline-visibility-2d');
-        }
-        this.setActions(actions);
+        this.setActions(config.actions || defaultActions);
 
         // @ts-ignore
         window.imgView = this;

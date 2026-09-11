@@ -320,7 +320,6 @@ export interface IConfig {
     active2DBox: boolean;
     activeAnnotation: boolean;
     activeTranslate: boolean;
-    groundPolylineVisibilityEdit: boolean;
     groundShapeSplitEdit: boolean;
     activeTrack: boolean;
     circleRadius: number;
@@ -468,6 +467,8 @@ export interface IFrame {
     sceneId?: string;
     // id
     id: string;
+    /** Source frame name. Scene frame names carry the `_seconds_nanoseconds` timestamp. */
+    name?: string;
     // uuid
     // id: string;
     teamId?: string;

@@ -25,8 +25,6 @@ import {
 } from '../../../utils';
 import { IAnnotationInfo, StatusType, IUserData, Const, IObject } from '../../../type';
 import EditorEvent from '../../../config/event';
-import { computeGroundPolylineAutoOcclusion } from '../../../utils/groundPolylineAutoOcclusion';
-import { refreshGroundPolylineBevDisplay, getImageViews } from '../../../utils/groundPolylineVisibility';
 
 function showLoading(position: THREE.Vector3, view: MainRenderView) {
     const wrap = document.createElement('div');
@@ -365,22 +363,6 @@ export const createGroundPolyline = define({
                         polyline.uuid = polyline.userData.id as string;
                         editor.cmdManager.withGroup(() => {
                             editor.cmdManager.execute('add-object', polyline);
-                            const autoOcclusion = computeGroundPolylineAutoOcclusion(
-                                polyline.points3D,
-                                getImageViews(editor),
-                                editor.pc.getAnnotate3D().filter((object) => object instanceof Box) as Box[],
-                                editor.pc.groupPoints,
-                            );
-                            if (autoOcclusion.changed) {
-                                editor.cmdManager.execute('update-ground-polyline-visibility-range', {
-                                    object: polyline,
-                                    points: autoOcclusion.points,
-                                    byView: autoOcclusion.segmentVisibleByView,
-                                    forceVisibleByView: {},
-                                });
-                            } else {
-                                refreshGroundPolylineBevDisplay(editor, polyline);
-                            }
                             editor.cmdManager.execute('select-object', polyline);
                         });
                         resolve(polyline);

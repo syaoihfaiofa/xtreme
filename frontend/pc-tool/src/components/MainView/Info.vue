@@ -27,6 +27,7 @@
                     )},${formatNumber(state.position.z)}`
                 }}</div
             >
+            <div class="item"><span class="title">Speed：</span>{{ state.speed }}</div>
         </div>
         <Setting />
     </div>
@@ -40,6 +41,7 @@
     import * as THREE from 'three';
     import { formatNumber } from '../../utils';
     import { utils } from 'pc-editor';
+    import * as api from '../../api';
     // import { CloseCircleOutlined } from '@ant-design/icons-vue';
     import { IUserData, StatusType, Event as EditorEvent } from 'pc-editor';
     import * as locale from './lang';
@@ -65,7 +67,11 @@
         lMax: '' as any,
         wMax: '' as any,
         hMax: '' as any,
+        speed: '--',
     });
+
+    const poseCache = new Map<string, api.IScenePose>();
+    let speedRequestVersion = 0;
 
     let update = _.throttle(() => {
         let obj = pc.selection.find((item) => item instanceof Box) as Box;
@@ -134,16 +140,100 @@
         state.name = classType;
     }
 
+    /** Keep this aligned with the backend location importer: `_seconds_nanoseconds`. */
+    function getFrameTimestampNs(name?: string): number | undefined {
+        const match = name?.trim().match(/_(\d+)_(\d+)$/);
+        if (!match) return undefined;
+        const seconds = Number(match[1]);
+        const nanoseconds = Number(match[2]);
+        if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(nanoseconds)) return undefined;
+        return seconds * 1e9 + nanoseconds;
+    }
+
+    async function updateSpeed() {
+        const requestVersion = ++speedRequestVersion;
+        const { frames, frameIndex } = editor.state;
+        const current = frames[frameIndex];
+        const previous = frames[frameIndex - 1];
+        const next = frames[frameIndex + 1];
+        if (!current || getFrameTimestampNs(current.name) === undefined) {
+            state.speed = '--';
+            return;
+        }
+
+        const candidates = [previous, current, next].filter(
+            (frame): frame is NonNullable<typeof frame> =>
+                !!frame && getFrameTimestampNs(frame.name) !== undefined,
+        );
+        try {
+            const missingIds = candidates
+                .map((frame) => String(frame.id))
+                .filter((id) => !poseCache.has(id));
+            if (missingIds.length) {
+                const poses = await api.getScenePoses(missingIds);
+                Object.entries(poses).forEach(([id, pose]) => poseCache.set(id, pose));
+            }
+            // Ignore a late request after the annotator has switched frames again.
+            if (requestVersion !== speedRequestVersion) return;
+
+            const currentPose = poseCache.get(String(current.id));
+            const currentTime = getFrameTimestampNs(current.name);
+            if (!currentPose || currentTime === undefined) {
+                state.speed = '--';
+                return;
+            }
+
+            const validNeighbours = [previous, next]
+                .map((frame) => {
+                    if (!frame) return undefined;
+                    const time = getFrameTimestampNs(frame.name);
+                    const pose = poseCache.get(String(frame.id));
+                    return time === undefined || !pose ? undefined : { time, pose };
+                })
+                .filter(Boolean) as Array<{ time: number; pose: api.IScenePose }>;
+            if (!validNeighbours.length) {
+                state.speed = '--';
+                return;
+            }
+
+            // Prefer a centered estimate to make the displayed speed less sensitive to one frame's pose noise.
+            const before = validNeighbours.find((item) => item.time < currentTime);
+            const after = validNeighbours.find((item) => item.time > currentTime);
+            const currentSample = { time: currentTime, pose: currentPose };
+            const start = before || currentSample;
+            const end = after || currentSample;
+            const elapsedSeconds = Math.abs(end.time - start.time) / 1e9;
+            if (!elapsedSeconds) {
+                state.speed = '--';
+                return;
+            }
+            const dx = end.pose.posX - start.pose.posX;
+            const dy = end.pose.posY - start.pose.posY;
+            const kmh = (Math.hypot(dx, dy) / elapsedSeconds) * 3.6;
+            state.speed = Number.isFinite(kmh) ? `${formatNumber(kmh)} km/h` : '--';
+        } catch (error) {
+            if (requestVersion === speedRequestVersion) state.speed = '--';
+        }
+    }
+
+    function onFrameChange() {
+        update();
+        updateSpeed();
+    }
+
     onMounted(() => {
         editor.pc.addEventListener(Event.OBJECT_TRANSFORM, update);
         editor.pc.addEventListener(Event.SELECT, onSelect);
         editor.addEventListener(EditorEvent.ANNOTATE_CHANGE, update);
+        editor.addEventListener(EditorEvent.FRAME_CHANGE, onFrameChange);
+        updateSpeed();
     });
 
     onBeforeUnmount(() => {
         editor.pc.removeEventListener(Event.OBJECT_TRANSFORM, update);
         editor.pc.removeEventListener(Event.SELECT, onSelect);
         editor.removeEventListener(EditorEvent.ANNOTATE_CHANGE, update);
+        editor.removeEventListener(EditorEvent.FRAME_CHANGE, onFrameChange);
     });
 </script>
 

@@ -686,7 +686,7 @@ export default function useBottom() {
             const sourceIndex = trackList.findIndex((userData) => !!userData);
             const sourceFrame = editor.state.frames[sourceIndex];
             if (!sourceFrame) return;
-            const locationGapMs = trackList[sourceIndex]?.syncLocationGapMs ?? 200;
+            const locationGapMs = trackList[sourceIndex]?.syncLocationGapMs ?? 1000;
             const sceneFrameId = editor.state.frames[0]?.id;
             const cacheKey = `${sceneFrameId}:${locationGapMs}`;
             const cachedBoundaries = segmentBoundaryCache.get(cacheKey);

@@ -31,7 +31,7 @@ const SYNCABLE_MOTION_MODES: string[] = [
     MotionMode.DYNAMIC_FIXED_SIZE,
     MotionMode.DYNAMIC_VARIABLE_SIZE,
 ];
-const DEFAULT_SYNC_LOCATION_GAP_MS = 200;
+const DEFAULT_SYNC_LOCATION_GAP_MS = 1000;
 const DEFAULT_DYNAMIC_SYNC_FRAME_COUNT = 1;
 
 type SyncableGroundShape = GroundPolygon | GroundPolyline | IrregularWall;

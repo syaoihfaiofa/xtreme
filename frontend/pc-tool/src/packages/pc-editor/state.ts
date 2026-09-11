@@ -125,7 +125,6 @@ function getDefaultConfig(): IConfig {
         active3DBox: false,
         activeAnnotation: false,
         activeTranslate: false,
-        groundPolylineVisibilityEdit: false,
         groundShapeSplitEdit: false,
         activeTrack: false,
         circleRadius: 100,

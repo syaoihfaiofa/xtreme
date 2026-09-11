@@ -14,7 +14,7 @@ let SOURCE_CLASS = 'edit_class';
 const DEFAULT_SYNC_DISTANCE = 12;
 const DEFAULT_GROUND_POLYLINE_SYNC_DISTANCE = 15;
 const DEFAULT_SYNC_MAX_DISAPPEAR_GAP = 50;
-const DEFAULT_SYNC_LOCATION_GAP_MS = 200;
+const DEFAULT_SYNC_LOCATION_GAP_MS = 1000;
 const DEFAULT_DYNAMIC_SYNC_FRAME_COUNT = 1;
 // type IEmit = (event: 'close', ...args: any[]) => void;
 

@@ -939,6 +939,7 @@ export default class SideRenderView extends Render {
             ? (side === 'top' ? object.topPoints : object.bottomPoints).map((point) => point.clone())
             : object.points3D.map((point) => point.clone());
         let latestPoints = points.map((point) => point.clone());
+        let irregularWallChanged = false;
         const right = new THREE.Vector3(1, 0, 0).transformDirection(this.camera.matrixWorld);
         const up = new THREE.Vector3(0, 1, 0).transformDirection(this.camera.matrixWorld);
         const worldPerPixelX = (this.camera.right - this.camera.left) / this.width;
@@ -955,6 +956,7 @@ export default class SideRenderView extends Render {
                 this.onGroundPolygonPointsChange?.(object, candidate);
             } else if (object instanceof IrregularWall) {
                 latestPoints = candidate;
+                irregularWallChanged = true;
                 // Preview directly while dragging; committing a command for every
                 // pointer event makes long point-cloud walls visibly laggy.
                 object.setSidePoints(side, candidate);
@@ -966,7 +968,7 @@ export default class SideRenderView extends Render {
         };
         const onUp = (): void => {
             this.enableFit = true;
-            if (object instanceof IrregularWall && side) {
+            if (object instanceof IrregularWall && side && irregularWallChanged) {
                 this.onIrregularWallPointsChange?.(object, side, latestPoints, points);
             }
             document.removeEventListener('pointermove', onMove);
@@ -1076,6 +1078,7 @@ export default class SideRenderView extends Render {
                 ? beforeTopPoints[0].z - bottomPoints[0].z
                 : 0;
             const startPointer = new THREE.Vector2(event.clientX, event.clientY);
+            let irregularWallHeightChanged = false;
             this.heightDragMove = (moveEvent: PointerEvent): void => {
                 const delta = new THREE.Vector2(moveEvent.clientX, moveEvent.clientY).sub(startPointer);
                 const height = Math.max(0, startHeight + delta.dot(up) / up.lengthSq());
@@ -1083,16 +1086,19 @@ export default class SideRenderView extends Render {
                     'top',
                     bottomPoints.map((point) => point.clone().add(new THREE.Vector3(0, 0, height))),
                 );
+                irregularWallHeightChanged = true;
                 this.pointCloud.dispatchEvent({ type: Event.OBJECT_TRANSFORM, data: { object, option: { pointsChanged: true } } });
                 this.pointCloud.render();
             };
             this.heightDragUp = (): void => {
-                this.onIrregularWallPointsChange?.(
-                    object,
-                    'top',
-                    object.topPoints.map((point) => point.clone()),
-                    beforeTopPoints,
-                );
+                if (irregularWallHeightChanged) {
+                    this.onIrregularWallPointsChange?.(
+                        object,
+                        'top',
+                        object.topPoints.map((point) => point.clone()),
+                        beforeTopPoints,
+                    );
+                }
                 this.clearHeightDrag();
             };
             document.addEventListener('pointermove', this.heightDragMove);
@@ -1104,6 +1110,7 @@ export default class SideRenderView extends Render {
             ? (irregularWallSide === 'top' ? object.topPoints : object.bottomPoints).map((point) => point.clone())
             : [];
         const startPointer = new THREE.Vector2(event.clientX, event.clientY);
+        let irregularWallHeightChanged = false;
         this.heightDragMove = (moveEvent: PointerEvent): void => {
             const delta = new THREE.Vector2(moveEvent.clientX, moveEvent.clientY).sub(startPointer);
             const heightDelta = delta.dot(up) / up.lengthSq();
@@ -1112,6 +1119,7 @@ export default class SideRenderView extends Render {
                     irregularWallSide,
                     startPoints.map((point) => point.clone().add(new THREE.Vector3(0, 0, heightDelta))),
                 );
+                irregularWallHeightChanged = true;
                 this.pointCloud.dispatchEvent({ type: Event.OBJECT_TRANSFORM, data: { object, option: { pointsChanged: true } } });
                 this.pointCloud.render();
             } else if (object instanceof GroundPolyline) {
@@ -1122,7 +1130,7 @@ export default class SideRenderView extends Render {
             }
         };
         this.heightDragUp = (): void => {
-            if (object instanceof IrregularWall && irregularWallSide) {
+            if (object instanceof IrregularWall && irregularWallSide && irregularWallHeightChanged) {
                 const latestPoints = (irregularWallSide === 'top' ? object.topPoints : object.bottomPoints)
                     .map((point) => point.clone());
                 this.onIrregularWallPointsChange?.(object, irregularWallSide, latestPoints, startPoints);

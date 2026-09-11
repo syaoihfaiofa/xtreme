@@ -145,14 +145,16 @@ export default class EditIrregularWallAction extends Action {
         const bottom = object.bottomPoints.map((point) => point.clone());
         const beforeTop = object.topPoints.map((point) => point.clone());
         const baseHeight = beforeTop.length > 0 ? beforeTop[0].z - bottom[0].z : 0;
+        let changed = false;
         this.shiftMove = (moveEvent: PointerEvent) => {
             const height = Math.max(0, baseHeight + (event.clientY - moveEvent.clientY) * 0.02);
             object.setSidePoints('top', bottom.map((point) => point.clone().add(new THREE.Vector3(0, 0, height))));
+            changed = true;
             this.notifyPointsChanged(object);
             this.renderView.pointCloud.render();
         };
         this.shiftUp = () => {
-            this.onPointsChange?.(object, 'top', object.topPoints.map((point) => point.clone()), beforeTop);
+            if (changed) this.onPointsChange?.(object, 'top', object.topPoints.map((point) => point.clone()), beforeTop);
             this.clearShiftDrag();
         };
         document.addEventListener('pointermove', this.shiftMove); document.addEventListener('pointerup', this.shiftUp);
@@ -173,14 +175,15 @@ export default class EditIrregularWallAction extends Action {
         this.clearDrag();
         const before = (side === 'bottom' ? object.bottomPoints : object.topPoints).map((point) => point.clone());
         let latest = before.map((point) => point.clone());
+        let changed = false;
         this.dragMove = (moveEvent) => {
             // Existing wall vertices are moved in XY from the main cloud. Their
             // height is adjusted in a side view, avoiding accidental Z snapping.
             const point = this.pick(moveEvent, before[index].z, true); if (!point) return;
-            latest = before.map((item) => item.clone()); latest[index].copy(point);
+            latest = before.map((item) => item.clone()); latest[index].copy(point); changed = true;
             object.setSidePoints(side, latest); this.notifyPointsChanged(object); this.renderView.pointCloud.render();
         };
-        this.dragUp = () => { this.onPointsChange?.(object, side, latest, before); this.clearDrag(); };
+        this.dragUp = () => { if (changed) this.onPointsChange?.(object, side, latest, before); this.clearDrag(); };
         document.addEventListener('pointermove', this.dragMove); document.addEventListener('pointerup', this.dragUp);
     }
 

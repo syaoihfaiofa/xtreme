@@ -24,13 +24,7 @@ import {
     ProjectedIrregularWall,
     EditGroundPolylineAction,
     EditIrregularWallAction,
-    EditGroundPolylineVisibility2DAction,
 } from 'pc-render';
-import {
-    getViewKeyFromImageView,
-    resolveEffectiveVisibleForView,
-    toggleRangeBetweenHits,
-} from './utils/polylineSegmentVisibility';
 import * as _ from 'lodash';
 
 export default function hack(editor: Editor) {
@@ -236,55 +230,6 @@ function hackImgView(editor: Editor, view: Image2DRenderView) {
         };
         trackAction.trackRadius = () => {
             return editor.state.config.circleRadius;
-        };
-    }
-
-    const visibilityAction = view.getAction(
-        'edit-ground-polyline-visibility-2d',
-    ) as EditGroundPolylineVisibility2DAction;
-    if (visibilityAction) {
-        visibilityAction.toggle(editor.state.config.groundPolylineVisibilityEdit === true);
-        visibilityAction.onFirstPoint = (): void => {
-            editor.showMsg('info', '已选第一个点，请再点击折线上的第二个点', 3);
-        };
-        visibilityAction.onMiss = (): void => {
-            editor.showMsg('warning', '未命中折线，请点击图片中的折线上', 2);
-        };
-        visibilityAction.onRangePicked = (first, second): void => {
-            const viewKey = getViewKeyFromImageView(view);
-            const result = toggleRangeBetweenHits(
-                first.polyline.points3D,
-                first.polyline.segmentVisibleByView,
-                first.polyline.segmentForceVisibleByView,
-                {
-                    [viewKey]: resolveEffectiveVisibleForView(
-                        first.polyline.segmentVisibleByView[viewKey],
-                        first.polyline.points3D,
-                        view,
-                        first.polyline.segmentForceVisibleByView[viewKey],
-                    ),
-                },
-                viewKey,
-                { segmentIndex: first.segmentIndex, t: first.t },
-                { segmentIndex: second.segmentIndex, t: second.t },
-            );
-            if (!result) {
-                editor.showMsg('warning', '两个点太近，请重新选择', 3);
-                return;
-            }
-            editor.cmdManager.execute('update-ground-polyline-visibility-range', {
-                object: first.polyline,
-                points: result.points,
-                byView: result.byView,
-                forceVisibleByView: result.forceVisibleByView,
-            });
-            editor.showMsg(
-                'info',
-                result.visible
-                    ? '所选线段已恢复可见，BEV 已同步'
-                    : '所选线段已设为不可见，BEV 已同步',
-                3,
-            );
         };
     }
 

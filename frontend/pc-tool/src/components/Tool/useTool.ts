@@ -71,9 +71,6 @@ export default function useTool() {
                 stopOtherCreateAction('createIrregularWall');
                 editor.actionManager.execute('createIrregularWall');
                 break;
-            case 'groundPolylineVisibility':
-                startGroundPolylineVisibility();
-                break;
             case 'splitGroundShape':
                 startGroundShapeSplit();
                 break;
@@ -106,35 +103,6 @@ export default function useTool() {
         }
     }
 
-    function startGroundPolylineVisibility(): void {
-        stopGroundShapeSplit();
-        stopOtherCreateAction('groundPolylineVisibility');
-        const config = editor.state.config;
-        config.groundPolylineVisibilityEdit = !config.groundPolylineVisibilityEdit;
-        editor.pc.renderViews.forEach((view) => {
-            const visibilityAction = view.getAction('edit-ground-polyline-visibility-2d') as
-                | { clearPending?: () => void; toggle?: (enabled: boolean) => void }
-                | undefined;
-            visibilityAction?.clearPending?.();
-            visibilityAction?.toggle?.(config.groundPolylineVisibilityEdit);
-            if (config.groundPolylineVisibilityEdit) {
-                view.disableAction(['edit-2d', 'select']);
-            } else {
-                view.enableAction(['edit-2d', 'select']);
-            }
-        });
-        if (config.groundPolylineVisibilityEdit) {
-            editor.showMsg(
-                'warning',
-                '请在相机图的折线上依次点击两个点，两点之间将设为不可见',
-                5,
-            );
-        } else {
-            editor.showMsg('success', '已退出遮挡标注', 2);
-        }
-        editor.pc.render();
-    }
-
     function startGroundShapeSplit(): void {
         const view = editor.viewManager.getMainView();
         const action = view?.getAction('split-ground-shape') as SplitGroundShapeAction | undefined;
@@ -155,9 +123,6 @@ export default function useTool() {
         ) {
             editor.showMsg('warning', '不规则墙需要完整的顶边和底边后才能截断');
             return;
-        }
-        if (editor.state.config.groundPolylineVisibilityEdit) {
-            startGroundPolylineVisibility();
         }
         const enabled = !editor.state.config.groundShapeSplitEdit;
         editor.state.config.groundShapeSplitEdit = enabled;

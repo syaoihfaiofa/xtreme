@@ -13,7 +13,6 @@ import ViewHelperAction from './action/ViewHelperAction';
 import EditGroundPolylineAction from './action/EditGroundPolylineAction';
 import EditGroundPolygonAction from './action/EditGroundPolygonAction';
 import EditIrregularWallAction from './action/EditIrregularWallAction';
-import EditGroundPolylineVisibility2DAction from './action/EditGroundPolylineVisibility2DAction';
 import SplitGroundShapeAction from './action/SplitGroundShapeAction';
 
 import { registryAction } from './action/index';
@@ -33,7 +32,6 @@ import { registryAction } from './action/index';
     EditGroundPolylineAction,
     EditGroundPolygonAction,
     EditIrregularWallAction,
-    EditGroundPolylineVisibility2DAction,
     SplitGroundShapeAction,
 ].forEach((action) => {
     registryAction(action.actionName, action as any);
@@ -67,7 +65,6 @@ export {
     EditGroundPolylineAction,
     EditGroundPolygonAction,
     EditIrregularWallAction,
-    EditGroundPolylineVisibility2DAction,
     SplitGroundShapeAction,
 };
 

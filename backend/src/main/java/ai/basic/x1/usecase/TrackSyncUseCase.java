@@ -64,7 +64,7 @@ public class TrackSyncUseCase {
     private static final double STATIC_SYNC_VERTICAL_TOLERANCE_M = 2.0;
     private static final double DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M = 15.0;
     private static final int DEFAULT_SYNC_MAX_DISAPPEAR_GAP = 50;
-    private static final int DEFAULT_SYNC_LOCATION_GAP_MS = 200;
+    private static final int DEFAULT_SYNC_LOCATION_GAP_MS = 1000;
     private static final int DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES = 1;
     private static final int DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES = 1;
     private static final double POLYLINE_OVERLAP_SNAP_M = 0.2;

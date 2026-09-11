@@ -3,7 +3,6 @@ import Image2DRenderView from '../renderView/Image2DRenderView';
 import { Event } from '../config';
 import Action from './Action';
 import { Object2D, Rect, Box2D, Box, GroundPolygon, GroundPolyline, IrregularWall, ProjectedPolygon, ProjectedPolyline, ProjectedIrregularWall, AnnotateObject } from '../objects';
-import EditGroundPolylineVisibility2DAction from './EditGroundPolylineVisibility2DAction';
 import { renderBox2D, renderRect } from '../utils';
 import {
     getCameraViewKey,
@@ -527,11 +526,6 @@ export default class Render2DAction extends Action {
     onRender() {
         let objects = this.renderView.get2DObject();
         let lineWidth = this.getLineWidth();
-        const visibilityAction = this.renderView.getAction(
-            'edit-ground-polyline-visibility-2d',
-        ) as EditGroundPolylineVisibility2DAction | undefined;
-        const visibilityEditing = visibilityAction?.isEnable() === true;
-
         this.renderView.setContextTransform();
         objects.forEach((obj) => {
             if (this.renderView.isRenderable(obj)) {
@@ -540,9 +534,7 @@ export default class Render2DAction extends Action {
                 } else if (obj instanceof ProjectedPolygon) {
                     this.renderProjectedPolygon(obj, lineWidth);
                 } else if (obj instanceof ProjectedPolyline) {
-                    if (!visibilityEditing || !this.findSourceGroundPolyline(obj)) {
-                        this.renderProjectedPolyline(obj, lineWidth);
-                    }
+                    this.renderProjectedPolyline(obj, lineWidth);
                 } else if (obj instanceof ProjectedIrregularWall) {
                     this.renderProjectedIrregularWall(obj, lineWidth);
                 } else {
@@ -550,34 +542,6 @@ export default class Render2DAction extends Action {
                 }
             }
         });
-        if (visibilityEditing) {
-            this.renderView.get3DObject().forEach((obj) => {
-                if (obj instanceof GroundPolyline && obj.visible) {
-                    this.renderGroundPolylineProjection(obj, lineWidth * 2);
-                }
-            });
-        }
-        this.renderPendingVisibilityPoint();
     }
 
-    private renderPendingVisibilityPoint(): void {
-        const visibilityAction = this.renderView.getAction(
-            'edit-ground-polyline-visibility-2d',
-        ) as EditGroundPolylineVisibility2DAction | undefined;
-        const point = visibilityAction?.pendingImagePoint;
-        if (!point) {
-            return;
-        }
-        const { context } = this.renderView.proxy;
-        const radius = 5 / Math.max(this.renderView.getScale(), 0.0001);
-        context.save();
-        context.fillStyle = '#ffcc00';
-        context.strokeStyle = '#10252a';
-        context.lineWidth = this.getLineWidth();
-        context.beginPath();
-        context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        context.fill();
-        context.stroke();
-        context.restore();
-    }
 }
