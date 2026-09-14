@@ -36,6 +36,7 @@ const hotkeyConfig: IHotkeyConfig[] = [
     { key: 't', action: 'toggleClassView' },
     { key: 'm', action: 'toggleShowLabel' },
     { key: 'n', action: 'toggleShowMeasure' },
+    { key: 'u', action: 'togglePointDistanceMeasure' },
     { key: 'shift+h', action: 'toggleShowAnnotation' },
     { key: 'h', action: 'resultExpandToggle' },
     { key: 'b', action: 'filter2DByTrack' },

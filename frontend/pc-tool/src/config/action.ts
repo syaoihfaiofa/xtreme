@@ -33,6 +33,7 @@ export const generalActions: IBsActionName[] = [
     'toggleShowAnnotation',
     'toggleShowLabel',
     'toggleShowMeasure',
+    'togglePointDistanceMeasure',
     'pickObject',
     'resultExpandToggle',
     // 'filter2DByTrack',
@@ -45,6 +46,7 @@ export const readonlyActions: IBsActionName[] = [
     'toggleShowAnnotation',
     'toggleShowLabel',
     'toggleShowMeasure',
+    'togglePointDistanceMeasure',
     'pickObject',
     'resultExpandToggle',
 ];

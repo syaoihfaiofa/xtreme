@@ -1,4 +1,10 @@
-import { Box, Image2DRenderView, MainRenderView, TransformControlsAction } from 'pc-render';
+import {
+    Box,
+    DistanceMeasureAction,
+    Image2DRenderView,
+    MainRenderView,
+    TransformControlsAction,
+} from 'pc-render';
 import { define } from '../define';
 import Editor from '../../../Editor';
 import { IAnnotationInfo, StatusType } from '../../../type';
@@ -67,7 +73,7 @@ export const deleteObject = define({
             if (sourcePoints.length <= 2) {
                 editor.showMsg(
                     'warning',
-                    `${side === 'bottom' ? '底边' : '顶边'}至少需要保留两个点；取消点选后可删除整面墙`,
+                    `${side === 'bottom' ? '底边' : '顶边'}至少需要保留两个点；取消点选后可删除整条不规则的路沿`,
                 );
                 return;
             }
@@ -135,6 +141,33 @@ export const toggleShowMeasure = define({
     execute(editor: Editor) {
         let groupTrack = editor.pc.groupTrack;
         groupTrack.visible = !groupTrack.visible;
+        editor.pc.render();
+    },
+});
+
+export const togglePointDistanceMeasure = define({
+    valid(editor: Editor) {
+        return !!editor.viewManager.getMainView();
+    },
+    execute(editor: Editor) {
+        const view = editor.viewManager.getMainView();
+        const action = view?.getAction('distance-measure') as DistanceMeasureAction | undefined;
+        if (!action) return;
+        const enabled = !editor.state.config.pointDistanceMeasure;
+        if (enabled && editor.state.config.groundShapeSplitEdit) {
+            editor.state.config.groundShapeSplitEdit = false;
+            view?.getAction('split-ground-shape')?.toggle(false);
+        }
+        editor.state.config.pointDistanceMeasure = enabled;
+        editor.pc.renderViews.forEach((renderView) => {
+            const distanceAction = renderView.getAction(
+                'distance-measure',
+            ) as DistanceMeasureAction | undefined;
+            if (!distanceAction) return;
+            distanceAction.onMiss = () => editor.showMsg('warning', '请点击可拾取的点云点', 2);
+            distanceAction.toggle(enabled);
+        });
+        editor.showMsg('warning', enabled ? '距离测量：依次点击两个点云点，Esc 退出' : '已退出距离测量', 3);
         editor.pc.render();
     },
 });

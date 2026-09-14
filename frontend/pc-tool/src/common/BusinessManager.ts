@@ -26,6 +26,10 @@ export default class BusinessManager extends BaseBusinessManager {
         this.editor.performanceMonitor.end('frame-metadata-request', String(data.id), {
             fileCount: fileConfig.length,
         });
+        // Keep the frame metadata available to UI helpers after lazy loading.
+        // getInfoByRecordId normally fills this from getDataStatusByIds, while
+        // this also covers callers that construct a frame directly.
+        if (name) data.name = name;
         if (fileConfig.filter((e) => regLidar.test(e.dirName)).length === 0) {
             throw this.editor.lang('no-point-data');
         }

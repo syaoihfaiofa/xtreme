@@ -36,6 +36,20 @@ class SceneLocationImportServiceTest {
     }
 
     @Test
+    void parseTimestamp_acceptsPointCloudExtensionAndSensorSuffix() {
+        assertEquals(1_000_000_002L,
+                SceneLocationImportService.parseTimestampNs("frame_1_2.pcd"));
+        assertEquals(1_000_000_002L,
+                SceneLocationImportService.parseTimestampNs("frame_1_2_lidar"));
+    }
+
+    @Test
+    void parseTimestamp_usesFinalSecondsNanosecondsPairAfterDatePrefix() {
+        assertEquals(7_916_909_321_440L,
+                SceneLocationImportService.parseTimestampNs("20260814_153659_7916_909321440"));
+    }
+
+    @Test
     void interpolatePose_usesExplicitRollAndPitchWhenPresent() {
         List<LocationPoseInterpolator.TimestampedPoseSample> samples = List.of(
                 new LocationPoseInterpolator.TimestampedPoseSample(0L, 0, 0, 0, 0, 0.1, 0.2),

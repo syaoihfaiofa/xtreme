@@ -191,7 +191,7 @@ export default class Editor extends BaseEditor {
         const object = pick.object;
         const trackId = object.userData?.trackId;
         if (!trackId || !this.pc.selection.includes(object)) {
-            this.showMsg('warning', '请先选中需要截断的 curb、wall 或不规则墙');
+            this.showMsg('warning', '请先选中需要截断的 curb、wall 或不规则的路沿');
             return false;
         }
 

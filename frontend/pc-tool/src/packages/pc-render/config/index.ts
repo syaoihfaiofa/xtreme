@@ -13,5 +13,6 @@ export const Event = {
     LOAD_POINT_AFTER: 'load_point_after',
     LOAD_POINT_BEFORE: 'load_point_before',
     POINTS_CHANGE: 'POINTS_CHANGE',
+    DISTANCE_MEASURE_CLEAR: 'distance_measure_clear',
     CLEAR_DATA: 'clear_data',
 };

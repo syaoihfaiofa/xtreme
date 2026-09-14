@@ -14,6 +14,7 @@ import EditGroundPolylineAction from './action/EditGroundPolylineAction';
 import EditGroundPolygonAction from './action/EditGroundPolygonAction';
 import EditIrregularWallAction from './action/EditIrregularWallAction';
 import SplitGroundShapeAction from './action/SplitGroundShapeAction';
+import DistanceMeasureAction from './action/DistanceMeasureAction';
 
 import { registryAction } from './action/index';
 
@@ -33,6 +34,7 @@ import { registryAction } from './action/index';
     EditGroundPolygonAction,
     EditIrregularWallAction,
     SplitGroundShapeAction,
+    DistanceMeasureAction,
 ].forEach((action) => {
     registryAction(action.actionName, action as any);
 });
@@ -66,6 +68,7 @@ export {
     EditGroundPolygonAction,
     EditIrregularWallAction,
     SplitGroundShapeAction,
+    DistanceMeasureAction,
 };
 
 export * from './objects';

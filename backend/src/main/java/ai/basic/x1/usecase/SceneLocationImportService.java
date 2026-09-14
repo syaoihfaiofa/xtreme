@@ -18,13 +18,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class SceneLocationImportService {
-
-    private static final Pattern TIMESTAMP_PATTERN = Pattern.compile("_(\\d+)_(\\d+)$");
 
     @Autowired
     private DataInfoDAO dataInfoDAO;
@@ -104,17 +100,27 @@ public class SceneLocationImportService {
         if (StrUtil.isBlank(name)) {
             return null;
         }
-        Matcher matcher = TIMESTAMP_PATTERN.matcher(name.trim());
-        if (!matcher.find()) {
-            return null;
+        String basename = name.trim().replaceFirst("\\.[^.]+$", "");
+        String[] parts = basename.split("_");
+        // A standard lidar filename can have date/time prefix fields before its
+        // `_seconds_nanoseconds` suffix.  Scan from the end so
+        // `..._153659_7916_909321440` yields 7916.909321440 seconds.
+        for (int index = parts.length - 1; index > 0; index--) {
+            if (!parts[index - 1].matches("\\d+") || !parts[index].matches("\\d{1,9}")) {
+                continue;
+            }
+            try {
+                long seconds = Long.parseLong(parts[index - 1]);
+                long nanoseconds = Long.parseLong(parts[index]);
+                if (nanoseconds >= 1_000_000_000L) {
+                    continue;
+                }
+                return Math.addExact(Math.multiplyExact(seconds, 1_000_000_000L), nanoseconds);
+            } catch (ArithmeticException | NumberFormatException e) {
+                // A numeric non-timestamp token may overflow; keep looking left.
+            }
         }
-        try {
-            long high = Long.parseLong(matcher.group(1));
-            long low = Long.parseLong(matcher.group(2));
-            return high * 1_000_000_000L + low;
-        } catch (NumberFormatException e) {
-            return null;
-        }
+        return null;
     }
 
     static ParseResult parseLocationLines(Collection<String> lines) {

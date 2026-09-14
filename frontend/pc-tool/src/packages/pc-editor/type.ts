@@ -321,6 +321,7 @@ export interface IConfig {
     activeAnnotation: boolean;
     activeTranslate: boolean;
     groundShapeSplitEdit: boolean;
+    pointDistanceMeasure: boolean;
     activeTrack: boolean;
     circleRadius: number;
     activeHelper2d: IHelper2D[];

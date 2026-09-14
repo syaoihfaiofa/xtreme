@@ -61,6 +61,7 @@ const zh: ILocale = {
     measure: '辅助线(N)',
     measure_add: '添加一条辅助线',
     measure_radius: '半径(m)',
+    point_distance_measure: '两点距离测量 (U)',
 
     btn_msg: '信息',
     btn_setting: '显示',

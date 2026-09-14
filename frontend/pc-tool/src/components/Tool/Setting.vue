@@ -161,42 +161,44 @@
                         v-model:checked="config.hideNonGroundRgb"
                     />
                 </div>
-                <div class="title3" style="padding-top: 8px">
-                    地面 RGB 增强半径（以原点）
-                </div>
-                <a-slider
-                    style="width: 200px; margin: 0px; margin-top: 5px"
-                    v-model:value="config.rgbEnhanceRadius"
-                    :tip-formatter="formatter"
-                    :min="1"
-                    :max="100"
-                    :step="1"
-                    @change="() => update('rgbEnhanceRadius')"
-                />
-                <div class="title3" style="padding-top: 8px">
-                    地面 RGB 对比度
-                </div>
-                <a-slider
-                    style="width: 200px; margin: 0px; margin-top: 5px"
-                    v-model:value="config.rgbEnhanceContrast"
-                    :tip-formatter="formatter"
-                    :min="1"
-                    :max="10"
-                    :step="0.1"
-                    @change="() => update('rgbEnhanceContrast')"
-                />
-                <div class="title3" style="padding-top: 8px">
-                    RGB 增强最低亮度
-                </div>
-                <a-slider
-                    style="width: 200px; margin: 0px; margin-top: 5px"
-                    v-model:value="config.rgbEnhanceMinBrightness"
-                    :tip-formatter="formatter"
-                    :min="0.02"
-                    :max="0.3"
-                    :step="0.01"
-                    @change="() => update('rgbEnhanceMinBrightness')"
-                />
+                <template v-if="config.rgbEnhance">
+                    <div class="title3" style="padding-top: 8px">
+                        地面 RGB 增强半径（以原点）
+                    </div>
+                    <a-slider
+                        style="width: 200px; margin: 0px; margin-top: 5px"
+                        v-model:value="config.rgbEnhanceRadius"
+                        :tip-formatter="formatter"
+                        :min="1"
+                        :max="100"
+                        :step="1"
+                        @change="() => update('rgbEnhanceRadius')"
+                    />
+                    <div class="title3" style="padding-top: 8px">
+                        地面 RGB 对比度
+                    </div>
+                    <a-slider
+                        style="width: 200px; margin: 0px; margin-top: 5px"
+                        v-model:value="config.rgbEnhanceContrast"
+                        :tip-formatter="formatter"
+                        :min="1"
+                        :max="10"
+                        :step="0.1"
+                        @change="() => update('rgbEnhanceContrast')"
+                    />
+                    <div class="title3" style="padding-top: 8px">
+                        RGB 增强最低亮度
+                    </div>
+                    <a-slider
+                        style="width: 200px; margin: 0px; margin-top: 5px"
+                        v-model:value="config.rgbEnhanceMinBrightness"
+                        :tip-formatter="formatter"
+                        :min="0.02"
+                        :max="0.3"
+                        :step="0.01"
+                        @change="() => update('rgbEnhanceMinBrightness')"
+                    />
+                </template>
                 <div class="title3" style="padding-top: 8px">
                     地面局部 RGB 对比度
                     <a-switch

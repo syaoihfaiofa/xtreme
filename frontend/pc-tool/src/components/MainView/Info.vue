@@ -27,7 +27,11 @@
                     )},${formatNumber(state.position.z)}`
                 }}</div
             >
-            <div class="item"><span class="title">Speed：</span>{{ state.speed }}</div>
+        </div>
+        <!-- Vehicle speed belongs to the frame, not to a selected 3D box. Keep it
+             visible when annotating curb/wall or irregular-wall ground shapes. -->
+        <div class="item">
+            <span class="title">Speed：</span>{{ state.speed }}
         </div>
         <Setting />
     </div>
@@ -140,14 +144,34 @@
         state.name = classType;
     }
 
-    /** Keep this aligned with the backend location importer: `_seconds_nanoseconds`. */
-    function getFrameTimestampNs(name?: string): number | undefined {
-        const match = name?.trim().match(/_(\d+)_(\d+)$/);
-        if (!match) return undefined;
-        const seconds = Number(match[1]);
-        const nanoseconds = Number(match[2]);
-        if (!Number.isSafeInteger(seconds) || !Number.isSafeInteger(nanoseconds)) return undefined;
-        return seconds * 1e9 + nanoseconds;
+    /**
+     * Parse the location-import timestamp from the frame name. Point-cloud uploads
+     * may retain a file extension or append a sensor suffix, so accept both while
+     * preserving the backend's `_seconds_nanoseconds` convention.
+     */
+    function getFrameTimestampMs(name?: string): number | undefined {
+        const parts = name?.trim().replace(/\.[^.]+$/, '').split('_') || [];
+        // A name can contain a date and clock prefix (for example
+        // `20260814_153659_7916_909321440`).  Find the last adjacent numeric
+        // pair instead of letting a greedy regexp mistake `153659_7916` for
+        // the timestamp.  This also tolerates a trailing sensor name.
+        for (let index = parts.length - 1; index > 0; index--) {
+            if (!/^\d+$/.test(parts[index - 1]) || !/^\d{1,9}$/.test(parts[index])) continue;
+            const seconds = Number(parts[index - 1]);
+            const nanoseconds = Number(parts[index]);
+            if (
+                !Number.isSafeInteger(seconds) ||
+                !Number.isSafeInteger(nanoseconds) ||
+                nanoseconds < 0 ||
+                nanoseconds >= 1e9
+            ) {
+                continue;
+            }
+            // Nanoseconds since epoch exceed JavaScript's safe-integer range. Speed
+            // needs only a frame interval, so retain millisecond precision instead.
+            return seconds * 1000 + nanoseconds / 1e6;
+        }
+        return undefined;
     }
 
     async function updateSpeed() {
@@ -156,14 +180,14 @@
         const current = frames[frameIndex];
         const previous = frames[frameIndex - 1];
         const next = frames[frameIndex + 1];
-        if (!current || getFrameTimestampNs(current.name) === undefined) {
+        if (!current || getFrameTimestampMs(current.name) === undefined) {
             state.speed = '--';
             return;
         }
 
         const candidates = [previous, current, next].filter(
             (frame): frame is NonNullable<typeof frame> =>
-                !!frame && getFrameTimestampNs(frame.name) !== undefined,
+                !!frame && getFrameTimestampMs(frame.name) !== undefined,
         );
         try {
             const missingIds = candidates
@@ -177,7 +201,7 @@
             if (requestVersion !== speedRequestVersion) return;
 
             const currentPose = poseCache.get(String(current.id));
-            const currentTime = getFrameTimestampNs(current.name);
+            const currentTime = getFrameTimestampMs(current.name);
             if (!currentPose || currentTime === undefined) {
                 state.speed = '--';
                 return;
@@ -186,7 +210,7 @@
             const validNeighbours = [previous, next]
                 .map((frame) => {
                     if (!frame) return undefined;
-                    const time = getFrameTimestampNs(frame.name);
+                    const time = getFrameTimestampMs(frame.name);
                     const pose = poseCache.get(String(frame.id));
                     return time === undefined || !pose ? undefined : { time, pose };
                 })
@@ -202,7 +226,7 @@
             const currentSample = { time: currentTime, pose: currentPose };
             const start = before || currentSample;
             const end = after || currentSample;
-            const elapsedSeconds = Math.abs(end.time - start.time) / 1e9;
+            const elapsedSeconds = Math.abs(end.time - start.time) / 1000;
             if (!elapsedSeconds) {
                 state.speed = '--';
                 return;

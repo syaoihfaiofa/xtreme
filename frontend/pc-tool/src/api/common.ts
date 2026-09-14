@@ -393,6 +393,10 @@ export async function getInfoByRecordId(recordId: string) {
     dataInfos.forEach((data) => {
         let status = stateMap[data.id];
         if (!status) return;
+        // The annotation-record response only contains IDs.  Preserve the data
+        // name returned by the batched status endpoint so frame-level features
+        // (notably ego-speed timestamp parsing) have it before the frame loads.
+        data.name = status.name || data.name;
         data.dataStatus = status.status || 'VALID';
         data.annotationStatus = status.annotationStatus || 'NOT_ANNOTATED';
     });

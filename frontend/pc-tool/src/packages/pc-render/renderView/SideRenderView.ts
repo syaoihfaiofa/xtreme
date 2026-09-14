@@ -44,7 +44,7 @@ export type axisType = keyof typeof axisUpInfo;
 // export type axisType = 'x' | 'y' | 'z' | '-x' | '-y';
 
 // const defaultActions: string[] = [];
-const defaultActions = ['resize-translate'];
+const defaultActions = ['resize-translate', 'distance-measure'];
 // Keep the midpoint insertion control clear of the two vertex controls.
 const MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX = 36;
 
@@ -570,6 +570,11 @@ export default class SideRenderView extends Render {
                 } else {
                     this.renderer.render(hasObject3D, this.camera);
                 }
+                // Ground-shape side-view rendering returns early so its custom
+                // vertex overlays can be refreshed. Draw the transient measure
+                // layer before that return as well; otherwise a selected curb or
+                // wall hides the line segment between the two measured points.
+                this.renderer.render(this.pointCloud.groupMeasure, this.camera);
                 this.updateProjectRect();
                 this.updateGroundPolygonVertexHandles();
                 return;
@@ -643,6 +648,11 @@ export default class SideRenderView extends Render {
             this.renderer.render(groupPoints, this.camera);
             this.renderParkingDensityOverlay();
         }
+
+        // Distance measurements are scene-owned temporary graphics. Render them
+        // after the point cloud so their endpoints and line are visible in every
+        // orthographic side view without becoming annotation objects.
+        this.renderer.render(this.pointCloud.groupMeasure, this.camera);
 
         this.updateProjectRect();
         this.updateGroundPolygonVertexHandles();

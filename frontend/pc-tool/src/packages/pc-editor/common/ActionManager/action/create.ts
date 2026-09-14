@@ -402,14 +402,14 @@ export const createIrregularWall = define({
             (object) => object instanceof IrregularWall && object.topPoints.length === 0,
         ) as IrregularWall | undefined;
         if (selectedWall) {
-            const topPoints = await collect('不规则墙：绘制顶边，双击完成', 'point-cloud');
+            const topPoints = await collect('不规则的路沿：绘制顶边，双击完成', 'point-cloud');
             if (!topPoints || topPoints.length < 2) {
                 editor.showMsg('warning', '顶部至少需要两个点');
                 return null;
             }
             const error = new IrregularWall(selectedWall.bottomPoints, topPoints).validate();
             if (error) {
-                editor.showMsg('error', `不规则墙创建失败: ${error}`);
+                editor.showMsg('error', `不规则的路沿创建失败: ${error}`);
                 return null;
             }
             editor.cmdManager.execute('update-irregular-wall-points', {
@@ -420,7 +420,7 @@ export const createIrregularWall = define({
             return selectedWall;
         }
 
-        const bottomPoints = await collect('不规则墙：绘制底边，双击完成；选中后再次按 I 绘制顶边', 'ground');
+        const bottomPoints = await collect('不规则的路沿：绘制底边，双击完成；选中后再次按 I 绘制顶边', 'ground');
         if (!bottomPoints || bottomPoints.length < 2) {
             editor.showMsg('warning', '底边至少需要两个点');
             return null;
@@ -448,7 +448,7 @@ export const createIrregularWall = define({
             editor.showMsg('info', '底边已完成；可保留当前线，或选中后按 I 绘制顶边');
             return wall;
         } catch (error) {
-            editor.showMsg('error', `不规则墙创建失败: ${error instanceof Error ? error.message : String(error)}`);
+            editor.showMsg('error', `不规则的路沿创建失败: ${error instanceof Error ? error.message : String(error)}`);
             return null;
         }
     },

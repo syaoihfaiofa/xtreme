@@ -41,6 +41,10 @@ export class ResourceLoader {
         return this.promise;
     }
     cancel() {
+        // Prefetch loaders do not have a caller awaiting get().  Consume their expected
+        // abort rejection before cancelling so rapid navigation does not surface an
+        // unhandled AbortError in the browser console.
+        this.promise.catch(() => undefined);
         this.controller.abort();
         this.data.loadState = '';
         // A cancelled prefetch must immediately free its concurrency slot.  Do
@@ -382,7 +386,15 @@ export default class DataResource {
         const id = ++this.workerSequence;
         return new Promise((resolve, reject) => {
             this.workerJobs.set(id, { resolve, reject });
-            this.worker!.postMessage({ id, buffer }, [buffer]);
+            this.worker!.postMessage(
+                {
+                    id,
+                    buffer,
+                    // Only prepare the extra per-point data when local contrast is enabled.
+                    calculateLocalLuminance: this.editor.state.config.rgbLocalContrast,
+                },
+                [buffer],
+            );
         });
     }
 

@@ -1,7 +1,11 @@
 /// <reference lib="webworker" />
 import PCDFile from '../../pc-render/loader/PCDFile';
 
-type PointPayload = { id: number; buffer: ArrayBuffer };
+type PointPayload = {
+    id: number;
+    buffer: ArrayBuffer;
+    calculateLocalLuminance?: boolean;
+};
 
 interface LuminanceCell {
     sum: number;
@@ -17,9 +21,40 @@ function toColorChannel(value: number | undefined) {
 function calculateLocalLuminance(position: Float32Array, color: Uint8Array): Float32Array {
     const cellSize = 0.25;
     const heightSize = 0.25;
-    const cells = new Map<string, LuminanceCell>();
-    const luminance = new Float32Array(position.length / 3);
-    for (let index = 0; index < luminance.length; index++) {
+    const pointCount = position.length / 3;
+    const luminance = new Float32Array(pointCount);
+    if (!pointCount || color.length < position.length) return luminance;
+
+    // String keys were constructed twice for every point on every frame load.  For a
+    // typical LiDAR frame that dominates the local-contrast preparation time.  Encode
+    // grid cells relative to the frame's minimum cell instead, preserving exact cells
+    // without allocating per-point strings.
+    let minX = Infinity;
+    let minY = Infinity;
+    let minZ = Infinity;
+    let maxY = -Infinity;
+    let maxZ = -Infinity;
+    for (let index = 0; index < pointCount; index++) {
+        const offset = index * 3;
+        const x = Math.floor(position[offset] / cellSize);
+        const y = Math.floor(position[offset + 1] / cellSize);
+        const z = Math.floor(position[offset + 2] / heightSize);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        minZ = Math.min(minZ, z);
+        maxY = Math.max(maxY, y);
+        maxZ = Math.max(maxZ, z);
+    }
+    const yStride = maxY - minY + 1;
+    const zStride = maxZ - minZ + 1;
+    const getCellKey = (offset: number) => {
+        const x = Math.floor(position[offset] / cellSize) - minX;
+        const y = Math.floor(position[offset + 1] / cellSize) - minY;
+        const z = Math.floor(position[offset + 2] / heightSize) - minZ;
+        return (x * yStride + y) * zStride + z;
+    };
+    const cells = new Map<number, LuminanceCell>();
+    for (let index = 0; index < pointCount; index++) {
         const offset = index * 3;
         const value = (
             color[offset] * 0.2126
@@ -27,7 +62,7 @@ function calculateLocalLuminance(position: Float32Array, color: Uint8Array): Flo
             + color[offset + 2] * 0.0722
         ) / 255;
         luminance[index] = value;
-        const key = `${Math.floor(position[offset] / cellSize)}:${Math.floor(position[offset + 1] / cellSize)}:${Math.floor(position[offset + 2] / heightSize)}`;
+        const key = getCellKey(offset);
         const cell = cells.get(key);
         if (cell) {
             cell.sum += value;
@@ -36,9 +71,9 @@ function calculateLocalLuminance(position: Float32Array, color: Uint8Array): Flo
             cells.set(key, { sum: value, count: 1 });
         }
     }
-    for (let index = 0; index < luminance.length; index++) {
+    for (let index = 0; index < pointCount; index++) {
         const offset = index * 3;
-        const key = `${Math.floor(position[offset] / cellSize)}:${Math.floor(position[offset + 1] / cellSize)}:${Math.floor(position[offset + 2] / heightSize)}`;
+        const key = getCellKey(offset);
         const cell = cells.get(key);
         luminance[index] = cell ? cell.sum / cell.count : luminance[index];
     }
@@ -84,7 +119,11 @@ self.onmessage = ({ data }: MessageEvent<PointPayload>) => {
                 color[index * 3 + 2] = packed & 255;
             }
         }
-        const localLuminance = calculateLocalLuminance(position, color);
+        const hasRgb = rgb.length || hasSeparateRGB;
+        const localLuminance =
+            hasRgb && data.calculateLocalLuminance
+                ? calculateLocalLuminance(position, color)
+                : new Float32Array();
         let ground = 0;
         let groundCount = -1;
         groundHistogram.forEach((count, key) => {
@@ -98,7 +137,7 @@ self.onmessage = ({ data }: MessageEvent<PointPayload>) => {
                 id: data.id,
                 position,
                 intensity: normalizedIntensity,
-                color: rgb.length || hasSeparateRGB ? color : new Uint8Array(),
+                color: hasRgb ? color : new Uint8Array(),
                 localLuminance,
                 pointInfo: { ground, intensityRange: Number.isFinite(minIntensity) ? [minIntensity, maxIntensity] : undefined },
             },

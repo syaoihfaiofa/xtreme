@@ -7,5 +7,10 @@ const zh: ILocale = {
     side_length: '长',
     side_width: '宽',
     side_height: '高',
+    side_line_length: '线长',
+    side_bottom_length: '底边长',
+    side_wall_height: '墙高',
+    side_average_height: '平均高',
+    side_area: '面积',
 };
 export { zh };

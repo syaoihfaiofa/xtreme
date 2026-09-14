@@ -21,6 +21,7 @@ const defaultActions = [
     'edit-ground-polygon',
     'edit-irregular-wall',
     'split-ground-shape',
+    'distance-measure',
 ];
 export type wayToFocus = 'zTop' | 'auto';
 

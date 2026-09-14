@@ -116,7 +116,7 @@ export const allItems: IItemConfig[] = [
     },
     {
         action: 'createIrregularWall',
-        title: () => '不规则墙标注 (I)',
+        title: () => '不规则的路沿标注 (I)',
         getIcon: function () {
             return 'iconfont icon-polygon1';
         },
@@ -141,6 +141,23 @@ export const allItems: IItemConfig[] = [
         },
         isActive: function (editor: Editor) {
             return editor.state.config.groundShapeSplitEdit;
+        },
+    },
+    {
+        action: 'pointDistanceMeasure',
+        label: '测距',
+        title: ($$) => $$('point_distance_measure'),
+        getIcon: function () {
+            return 'iconfont icon-fuzhuxian';
+        },
+        isDisplay: function (editor: Editor) {
+            return (
+                editor.state.modeConfig.actions['togglePointDistanceMeasure'] &&
+                !editor.state.config.showSingleImgView
+            );
+        },
+        isActive: function (editor: Editor) {
+            return editor.state.config.pointDistanceMeasure;
         },
     },
     {

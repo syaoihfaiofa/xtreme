@@ -3,8 +3,26 @@
         <div style="height: 100%" ref="dom" @dblclick="onDBLclick"></div>
         <div class="title1">{{ title }}</div>
         <!-- <div class="title2" @click="changeAxis" v-if="axis !== 'z'">{{ title2 }}</div> -->
-        <div class="info" v-show="size.length() > 0">
-            <template v-if="props.axis === 'z'">
+        <div class="info" v-show="groundShapeMetrics.visible || size.length() > 0">
+            <template v-if="groundShapeMetrics.visible">
+                <template v-if="groundShapeMetrics.parkingSlot">
+                    <span style="margin-right: 4px"
+                        >{{ $$('side_length') }}×{{ $$('side_width') }}:{{ format(groundShapeMetrics.length) }}×{{
+                            format(groundShapeMetrics.width)
+                        }}m</span
+                    >
+                    <span>{{ $$('side_area') }}:{{ format(groundShapeMetrics.area) }}m²</span>
+                </template>
+                <template v-else>
+                    <span style="margin-right: 4px"
+                    >{{ $$(groundShapeMetrics.irregularWall ? 'side_bottom_length' : 'side_line_length') }}:{{
+                        format(groundShapeMetrics.lineLength)
+                    }}</span
+                >
+                    <span>{{ $$(groundShapeMetrics.irregularWall ? 'side_average_height' : 'side_wall_height') }}:{{ format(groundShapeMetrics.height) }}</span>
+                </template>
+            </template>
+            <template v-else-if="props.axis === 'z'">
                 <span style="margin-right: 4px">{{ $$('side_length') }}:{{ format(size.x) }}</span>
                 <span>{{ $$('side_width') }}:{{ format(size.y) }}</span>
             </template>
@@ -84,7 +102,7 @@
     let dom = ref<HTMLDivElement | null>(null);
     let { canEdit } = useUI();
     let { handleContext, clearContext } = useContextMenu();
-    const { title, size, onAction, onDBLclick, $$ } = useSideView(dom, props);
+    const { title, size, groundShapeMetrics, onAction, onDBLclick, $$ } = useSideView(dom, props);
 
     onMounted(() => {
         if (dom.value) {

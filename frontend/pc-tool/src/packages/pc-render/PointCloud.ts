@@ -18,6 +18,8 @@ export default class PointCloud extends THREE.EventDispatcher {
     annotate2D: Object2D[] = [];
     groupPoints: THREE.Group;
     groupTrack: THREE.Group;
+    /** Transient two-point measurement graphics. Never part of annotation data. */
+    groupMeasure: THREE.Group;
     selection: AnnotateObject[];
     selectionMap: Record<string, AnnotateObject>;
     renderViews: RenderView[];
@@ -45,6 +47,7 @@ export default class PointCloud extends THREE.EventDispatcher {
         this.annotate3D = new THREE.Group();
         this.groupPoints = new THREE.Group();
         this.groupTrack = new THREE.Group();
+        this.groupMeasure = new THREE.Group();
 
         let ground = new THREE.PlaneHelper(
             new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
@@ -67,6 +70,7 @@ export default class PointCloud extends THREE.EventDispatcher {
             this.ground,
             this.trimBox,
             this.groupTrack,
+            this.groupMeasure,
         );
 
         const axesHelper = new THREE.AxesHelper(100);
@@ -264,6 +268,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     }
 
     clearData() {
+        this.clearDistanceMeasure();
         this.selectObject();
         this.annotate3D.children = [];
         this.annotate2D = [];
@@ -273,6 +278,7 @@ export default class PointCloud extends THREE.EventDispatcher {
 
     // *********************************************
     setPointCloudData(data: any) {
+        this.clearDistanceMeasure();
         this.clearPointCloudChunks();
         let points;
         if (this.groupPoints.children.length === 0) {
@@ -292,6 +298,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     }
 
     setPointCloudChunk(id: string, data: any) {
+        this.clearDistanceMeasure();
         let points = this.groupPoints.children.find((child) => child.userData.chunkId === id) as Points;
         if (!points) {
             // The preview is replaced once the first high-density chunk arrives.
@@ -302,6 +309,22 @@ export default class PointCloud extends THREE.EventDispatcher {
             this.chunkPointIds.add(id);
         }
         points.updateData(data);
+        this.render();
+    }
+
+    clearDistanceMeasure(notify: boolean = true) {
+        this.groupMeasure.traverse((object) => {
+            const geometry = (object as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+            if (geometry) geometry.dispose();
+            const material = (object as THREE.Mesh).material as
+                | THREE.Material
+                | THREE.Material[]
+                | undefined;
+            if (Array.isArray(material)) material.forEach((item) => item.dispose());
+            else material?.dispose();
+        });
+        this.groupMeasure.clear();
+        if (notify) this.dispatchEvent({ type: Event.DISTANCE_MEASURE_CLEAR });
         this.render();
     }
 

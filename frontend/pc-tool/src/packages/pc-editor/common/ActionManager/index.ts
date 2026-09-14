@@ -93,7 +93,13 @@ export default class ActionManager {
     }
 
     handleEsc() {
-        if (this.currentAction) {
+        const measureAction = this.editor.viewManager
+            .getMainView()
+            ?.getAction('distance-measure');
+        if (this.editor.state.config.pointDistanceMeasure && measureAction?.isEnable()) {
+            this.editor.state.config.pointDistanceMeasure = false;
+            this.editor.pc.renderViews.forEach((view) => view.getAction('distance-measure')?.toggle(false));
+        } else if (this.currentAction) {
             this.stopCurrentAction();
         } else if (this.editor.getSelectedGroundPolylineVertex()) {
             this.editor.clearSelectedGroundPolylineVertex();

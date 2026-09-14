@@ -1185,7 +1185,7 @@ public class TrackSyncUseCase {
             int locationGapMs,
             boolean syncUseZ,
             boolean syncWorldVertical) {
-        attrs.set("classId", source.getClassId());
+        copyClassId(attrs, source.getClassId());
         attrs.set("motionMode", motionMode);
         attrs.set("dynamicRangeSyncEnabled", true);
         attrs.set("dynamicSyncPreviousFrames", previousFrames);
@@ -1278,7 +1278,7 @@ public class TrackSyncUseCase {
                 continue;
             }
             contour.set("points", targetPoints);
-            attrs.set("classId", source.getClassId());
+            copyClassId(attrs, source.getClassId());
             attrs.set("type", "GROUND_POLYGON");
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
@@ -1409,7 +1409,7 @@ public class TrackSyncUseCase {
                         distanceMask.outsideSegments));
             }
             attrs.set("type", GROUND_POLYLINE);
-            attrs.set("classId", source.getClassId());
+            copyClassId(attrs, source.getClassId());
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
             attrs.set("syncUseZ", getBoolean(sourceAttrs, "syncUseZ", true));
@@ -1498,7 +1498,7 @@ public class TrackSyncUseCase {
             // Keep a conventional points contour for clients that use the bottom
             // boundary for generic shape indexing.
             contour.set("points", bottomPoints);
-            attrs.set("classId", source.getClassId());
+            copyClassId(attrs, source.getClassId());
             attrs.set("type", IRREGULAR_WALL);
             attrs.set("trackId", trackId);
             attrs.set("motionMode", MOTION_STATIC);
@@ -2201,7 +2201,7 @@ public class TrackSyncUseCase {
         if (contour != null) {
             contour.set("size3D", JSONUtil.parseObj(JSONUtil.toJsonStr(size3D)));
         }
-        attrs.set("classId", source.getClassId());
+        copyClassId(attrs, source.getClassId());
         attrs.set("motionMode", MOTION_STATIC);
         attrs.set("syncDistance", syncRadius);
         attrs.set("syncUseZ", syncUseZ);
@@ -2252,7 +2252,7 @@ public class TrackSyncUseCase {
             // This is an action marker, not persistent track metadata.  Clearing it on every
             // row makes a later Sync Now idempotent.
             existingAttrs.remove(PENDING_SYNC_QUARTER_TURNS);
-            existingAttrs.set("classId", source.getClassId());
+            copyClassId(existingAttrs, source.getClassId());
             existingAttrs.set("motionMode", MOTION_DYNAMIC_FIXED_SIZE);
             copyDynamicSyncConfiguration(existingAttrs, source.getClassAttributes());
             updateSyncMetadata(existingAttrs, maxDisappearGap, segmentByDataId.get(frame.getId()), locationGapMs);
@@ -2297,7 +2297,7 @@ public class TrackSyncUseCase {
                 continue;
             }
             JSONObject existingAttrs = existing.getClassAttributes();
-            existingAttrs.set("classId", source.getClassId());
+            copyClassId(existingAttrs, source.getClassId());
             existingAttrs.set("motionMode", motionMode);
             copyDynamicSyncConfiguration(existingAttrs, source.getClassAttributes());
             updateSyncMetadata(existingAttrs, maxDisappearGap, segmentByDataId.get(frame.getId()), locationGapMs);
@@ -2700,6 +2700,19 @@ public class TrackSyncUseCase {
         }
         JSONObject attrs = obj.getClassAttributes();
         return attrs == null ? null : attrs.getLong("classId");
+    }
+
+    /**
+     * Hutool represents {@code JSONObject#set(key, null)} as JSONNull.  That sentinel cannot
+     * be serialized by the MyBatis JSON type handler, so an unclassified track must omit the
+     * optional classId attribute altogether.
+     */
+    private static void copyClassId(JSONObject attrs, Long classId) {
+        if (classId == null) {
+            attrs.remove("classId");
+        } else {
+            attrs.set("classId", classId);
+        }
     }
 
     private static String classTypeOf(JSONObject attrs) {

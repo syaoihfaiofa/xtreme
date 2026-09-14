@@ -59,6 +59,7 @@ const en = {
     measure: 'Distance Measure(N)',
     measure_add: 'Add a Measure',
     measure_radius: 'Radius(m)',
+    point_distance_measure: 'Two-point distance measure (U)',
 
     btn_msg: 'Info',
     btn_setting: 'Setting',

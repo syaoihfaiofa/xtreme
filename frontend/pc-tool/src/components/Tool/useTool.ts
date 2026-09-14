@@ -47,6 +47,10 @@ export default function useTool() {
         if (name !== 'splitGroundShape' && config.groundShapeSplitEdit) {
             stopGroundShapeSplit();
         }
+        if (name !== 'pointDistanceMeasure' && config.pointDistanceMeasure) {
+            config.pointDistanceMeasure = false;
+            editor.pc.renderViews.forEach((view) => view.getAction('distance-measure')?.toggle(false));
+        }
         switch (name) {
             case 'create2DBox':
                 stopOtherCreateAction('create2DBox');
@@ -73,6 +77,9 @@ export default function useTool() {
                 break;
             case 'splitGroundShape':
                 startGroundShapeSplit();
+                break;
+            case 'pointDistanceMeasure':
+                editor.actionManager.execute('togglePointDistanceMeasure');
                 break;
             case 'createRect':
                 stopOtherCreateAction('create2DRect');
@@ -110,7 +117,7 @@ export default function useTool() {
             (object) => object instanceof GroundPolyline || object instanceof IrregularWall,
         );
         if (!action || !selected) {
-            editor.showMsg('warning', '请先选中需要截断的 curb、wall 或不规则墙');
+            editor.showMsg('warning', '请先选中需要截断的 curb、wall 或不规则的路沿');
             return;
         }
         if (!selected.userData?.trackId) {
@@ -121,7 +128,7 @@ export default function useTool() {
             selected instanceof IrregularWall &&
             (selected.bottomPoints.length < 2 || selected.topPoints.length < 2)
         ) {
-            editor.showMsg('warning', '不规则墙需要完整的顶边和底边后才能截断');
+            editor.showMsg('warning', '不规则的路沿需要完整的顶边和底边后才能截断');
             return;
         }
         const enabled = !editor.state.config.groundShapeSplitEdit;

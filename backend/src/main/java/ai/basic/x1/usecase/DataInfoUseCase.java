@@ -134,6 +134,9 @@ public class DataInfoUseCase {
     private SceneLocationDAO sceneLocationDAO;
 
     @Autowired
+    private SceneLocationSampleDAO sceneLocationSampleDAO;
+
+    @Autowired
     private UploadDataUseCase uploadDataUseCase;
 
     @Value("${file.tempPath:/tmp/xtreme1/}")
@@ -271,7 +274,7 @@ public class DataInfoUseCase {
         }
         List<SceneLocation> list = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
                 .in(SceneLocation::getDataId, dataIds));
-        return list.stream().collect(Collectors.toMap(SceneLocation::getDataId, e -> SceneLocationBO.builder()
+        Map<Long, SceneLocationBO> poses = list.stream().collect(Collectors.toMap(SceneLocation::getDataId, e -> SceneLocationBO.builder()
                 .dataId(e.getDataId())
                 .posX(e.getPosX())
                 .posY(e.getPosY())
@@ -280,6 +283,57 @@ public class DataInfoUseCase {
                 .roll(e.getRoll())
                 .pitch(e.getPitch())
                 .build()));
+        if (poses.size() == dataIds.size()) {
+            return poses;
+        }
+
+        // Older scenes may have location samples but no per-frame scene_location
+        // row: the former importer rejected names such as "..._123.pcd".  Compute
+        // only the missing rows from the original samples so the editor can show
+        // speed immediately, without requiring the dataset owner to re-upload
+        // location.txt.  Newly imported scenes continue to use the stored rows.
+        List<DataInfo> missingFrames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .in(DataInfo::getId, dataIds)
+                .eq(DataInfo::getIsDeleted, false));
+        Map<Long, List<DataInfo>> framesByScene = missingFrames.stream()
+                .filter(frame -> !poses.containsKey(frame.getId()) && frame.getParentId() != null)
+                .collect(Collectors.groupingBy(DataInfo::getParentId));
+        if (framesByScene.isEmpty()) {
+            return poses;
+        }
+        List<SceneLocationSample> samples = sceneLocationSampleDAO.list(Wrappers.lambdaQuery(SceneLocationSample.class)
+                .in(SceneLocationSample::getSceneId, framesByScene.keySet())
+                .orderByAsc(SceneLocationSample::getTimestampNs));
+        Map<Long, List<SceneLocationSample>> samplesByScene = samples.stream()
+                .collect(Collectors.groupingBy(SceneLocationSample::getSceneId));
+        framesByScene.forEach((sceneId, frames) -> {
+            List<SceneLocationSample> sceneSamples = samplesByScene.get(sceneId);
+            if (CollUtil.isEmpty(sceneSamples)) {
+                return;
+            }
+            List<LocationPoseInterpolator.TimestampedPoseSample> sortedSamples =
+                    LocationPoseInterpolator.toSortedSamples(sceneSamples);
+            for (DataInfo frame : frames) {
+                Long timestampNs = SceneLocationImportService.parseTimestampNs(frame.getName());
+                if (timestampNs == null) {
+                    continue;
+                }
+                double[] pose = LocationPoseInterpolator.interpolatePose(timestampNs, sortedSamples);
+                if (pose == null) {
+                    continue;
+                }
+                poses.put(frame.getId(), SceneLocationBO.builder()
+                        .dataId(frame.getId())
+                        .posX(pose[0])
+                        .posY(pose[1])
+                        .posZ(pose[2])
+                        .yaw(pose[3])
+                        .roll(Double.isNaN(pose[4]) ? null : pose[4])
+                        .pitch(Double.isNaN(pose[5]) ? null : pose[5])
+                        .build());
+            }
+        });
+        return poses;
     }
 
     @Transactional(rollbackFor = Exception.class)
