@@ -60,6 +60,7 @@ import java.util.stream.Collectors;
 public class TrackSyncUseCase {
 
     private static final double DEFAULT_STATIC_SYNC_RADIUS_M = 12.0;
+    private static final double DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M = 10.0;
     /** Do not propagate a static target between vertically separated road levels. */
     private static final double STATIC_SYNC_VERTICAL_TOLERANCE_M = 2.0;
     private static final double DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M = 15.0;
@@ -948,7 +949,7 @@ public class TrackSyncUseCase {
         boolean syncWorldVertical = useWorldVerticalSync(attrs);
         if (isGroundPolygon(attrs) && MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
-            double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
+            double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M);
             return syncGroundPolygon(
                     source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
         }

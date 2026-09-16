@@ -1,0 +1,52 @@
+{
+    "description": "Rough AVM stitching layout for the CARLA vehicle.tesla.model3 rig, same structure and same pixels_per_meter/width/height as BYD_QinPro_white. Only the rig-dependent numbers were recomputed: car_origin_y so the centre of the four wheels lands on the image centre (wheel_base 3.005 m from car_info.json, origin is the rear axle centre, so car_origin_y = height/2 + wheel_base/2 * pixels_per_meter, rounded to an integer), and blind_x/y/width/height as the rectangle spanned by the four surround camera mounts in vector_dev/carla/scripts/surround_sensor_config.json (front 3.84 m, back -1.02 m, left +1.08 m, right -1.08 m from the rear axle) - the patch of ground between the cameras that none of them can see. Image axes follow ad_ext/TopdownCoordinate.py: image_x = car_origin_x - y * pixels_per_meter, image_y = car_origin_y - x * pixels_per_meter, with x forward and y left.",
+    "output" : {
+        "comment": "output is the params needed by other components",
+        "far_avm": {
+            "pixels_per_meter": 25,
+            "width": 512,
+            "height": 512,
+            "car_origin_x": 256,
+            "car_origin_y": 294,
+            "blind_x": 229,
+            "blind_y": 198,
+            "blind_width": 54,
+            "blind_height": 121
+        },
+        "medium_avm": {
+            "pixels_per_meter": 34.5,
+            "width": 512,
+            "height": 512,
+            "car_origin_x": 256,
+            "car_origin_y": 308,
+            "blind_x": 219,
+            "blind_y": 176,
+            "blind_width": 75,
+            "blind_height": 168
+        },
+        "near_avm_vpa": {
+            "pixels_per_meter": 47.4016,
+            "width": 480,
+            "height": 720,
+            "car_origin_x": 240,
+            "car_origin_y": 431,
+            "blind_x": 189,
+            "blind_y": 249,
+            "blind_width": 102,
+            "blind_height": 230
+        },
+        "near_avm": {
+            "pixels_per_meter": 71.1024,
+            "width": 480,
+            "height": 720,
+            "car_origin_x": 240,
+            "car_origin_y": 467,
+            "blind_x": 163,
+            "blind_y": 194,
+            "blind_width": 154,
+            "blind_height": 346
+        },
+        "perspective": {
+        }
+    }
+}

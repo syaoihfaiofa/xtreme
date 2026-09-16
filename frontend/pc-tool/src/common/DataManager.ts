@@ -11,6 +11,7 @@ import { expandKeypointLiftedCandidates } from '../utils/keypointLiftedResult';
 const INFERENCE_POLL_INTERVAL_MS = 1500;
 const INFERENCE_STATUS_MAX_RETRIES = 3;
 const IMAGE_KEYPOINT_LIFTED_DETECTION = 'IMAGE_KEYPOINT_LIFTED_DETECTION';
+const PARKING_SLOT_DETECTION = 'PARKING_SLOT_DETECTION';
 
 export default class DataManager extends BaseDataManager {
     editor: Editor;
@@ -232,6 +233,12 @@ export default class DataManager extends BaseDataManager {
                                 });
                                 if (modelCode === IMAGE_KEYPOINT_LIFTED_DETECTION) {
                                     objects = expandKeypointLiftedCandidates(objects);
+                                } else if (modelCode === PARKING_SLOT_DETECTION) {
+                                    // stitched_img is appended after calibrated camera views.
+                                    objects = expandKeypointLiftedCandidates(
+                                        objects,
+                                        editor.state.imgViews.length - 1,
+                                    );
                                 }
                                 editor.modelManager.modelMap.set(dataMeta.id, objects);
                             } else {
@@ -248,7 +255,14 @@ export default class DataManager extends BaseDataManager {
 
                     // data.forEach((info: any) => {
                 })
-                .catch(() => {});
+                .catch((error: unknown) => {
+                    // Do not silently ignore a result-query failure: it makes the
+                    // "show result" action look like it did nothing.
+                    const message = error instanceof Error && error.message
+                        ? error.message
+                        : editor.lang('model-run-error');
+                    editor.showMsg('error', message);
+                });
 
             return request;
         }

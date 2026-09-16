@@ -333,7 +333,7 @@ export function getActionColumn(funcObj: {
     dataIndex: 'action',
     align: 'left',
     customRender: ({ record }) => {
-      if (record.status !== statusEnum.failure) {
+      if (record.status === statusEnum.started || record.status === statusEnum.running) {
         return (
           <div class="flex gap-8px">
             <Button

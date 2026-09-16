@@ -1,0 +1,23 @@
+{
+    "description": "Chery X70",
+	"car_info" : {
+        "car_width" : 1.855,
+        "car_length" : 4.749,
+        "wheel_radius" : 0.3681,
+        "front_overhang" : 0.93,
+        "rear_overhang" : 1.074,
+        "min_turn_radius" : 4.6,
+        "head_cut_width" : 0.2,
+        "head_cut_height": 0.2,
+        "tail_cut_width" : 0.3,
+        "tail_cut_height": 0.3,
+        "wheel_base" : 2.745,
+        "axle_base" : 1.580,
+        "max_steering_wheel_angle" : 9.25,
+        "has_wheel_counter" : true,
+        "wheel_reset_position" : 8191,
+        "counts_per_circle" : 96,
+        "support_uss_blind_area_detect" : false,
+        "use_ratios_lut" : false
+    }
+}

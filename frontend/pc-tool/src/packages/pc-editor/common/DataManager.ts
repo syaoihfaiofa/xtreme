@@ -247,7 +247,14 @@ export default class DataManager {
             }
         });
 
-        if (selectFlag) this.editor.updateSelect();
+        if (selectFlag) {
+            // Do not leave a hidden source (or a hidden derived projection) in
+            // the active selection: it must neither show edit handles nor be
+            // acted on by keyboard shortcuts.
+            this.editor.pc.selectObject(
+                this.editor.pc.selection.filter((item) => item.visible !== false),
+            );
+        }
 
         let remainObjects = allObjects.filter((e) => !removeMap[e.uuid]);
         frame.needSave = true;
@@ -285,16 +292,27 @@ export default class DataManager {
         let selectionMap = this.editor.pc.selectionMap;
         let selectFlag = false;
         let isMultiVisible = Array.isArray(visible);
+        const linked2D = this.editor.pc.getAnnotate2D();
         objects.forEach((object, index) => {
             let visibleNew = isMultiVisible ? visible[index] : visible;
-            object.visible = visibleNew;
-            if (!visibleNew && selectionMap[object.uuid]) {
-                delete selectionMap[object.uuid];
-                selectFlag = true;
-            }
+            const related = [object, ...linked2D.filter((candidate) =>
+                !!object.userData?.trackId &&
+                candidate.userData?.trackId === object.userData.trackId,
+            )];
+            related.forEach((candidate) => {
+                candidate.visible = visibleNew;
+                if (!visibleNew && selectionMap[candidate.uuid]) {
+                    delete selectionMap[candidate.uuid];
+                    selectFlag = true;
+                }
+            });
         });
 
-        if (selectFlag) this.editor.updateSelect();
+        if (selectFlag) {
+            this.editor.pc.selectObject(
+                this.editor.pc.selection.filter((item) => item.visible !== false),
+            );
+        }
 
         this.onAnnotatesChange(objects, frame, { type: 'visible', visible });
     }

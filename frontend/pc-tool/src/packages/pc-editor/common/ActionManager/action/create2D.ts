@@ -340,6 +340,35 @@ export const projectObject2D = define({
             const projectionKey = object.uuid || trackId;
             views.forEach((view) => {
                 let viewId = view.id;
+                // The stitched image is an orthographic top-down view. A box's
+                // regular camera projection loses yaw in an axis-aligned Rect;
+                // retain its ground footprint and +X heading as a directed
+                // polygon instead.
+                if (object instanceof Box && view.isBirdEye()) {
+                    const projection = createBirdEyeBoxProjection(view, object);
+                    const existing = existMapParking[viewId][projectionKey] ||
+                        existMapParking[viewId][trackId];
+                    // Before BEV box headings existed, this same source could
+                    // have a perspective-style Rect/Box2D in the stitched view.
+                    // Replace it rather than rendering an old axis-aligned box
+                    // underneath the new oriented footprint.
+                    const legacyRect = existMapRect[viewId][trackId];
+                    const legacyBox2D = existMapBox2D[viewId][trackId];
+                    if (legacyRect) deleteObjects.push(legacyRect);
+                    if (legacyBox2D) deleteObjects.push(legacyBox2D);
+                    if (existing && updateFlag) {
+                        existing.setPoints(projection.points);
+                        existing.openingDirection.copy(projection.openingDirection);
+                        syncProjectionAppearance(existing, object);
+                        existing.userData.projectedFromId = object.uuid;
+                        updateN++;
+                    } else if (!existing && createFlag) {
+                        setIdInfo(editor, projection.userData);
+                        projection.uuid = projection.userData.id as string;
+                        addObjects.push(projection);
+                    }
+                    return;
+                }
                 if (object instanceof IrregularWall) {
                     const projectPoints = (points: THREE.Vector3[]) =>
                         points.map((point) => {
@@ -352,6 +381,7 @@ export const projectObject2D = define({
                         existMapIrregularWall[viewId][trackId];
                     if (existing && updateFlag) {
                         existing.setPoints(bottomPoints, topPoints);
+                        syncProjectionAppearance(existing, object);
                         existing.userData.projectedFromId = object.uuid;
                         updateN++;
                     } else if (!existing && createFlag) {
@@ -379,6 +409,7 @@ export const projectObject2D = define({
                             existMapPolyline[viewId][trackId];
                         if (existing && updateFlag) {
                             existing.points.splice(0, existing.points.length, ...points);
+                            syncProjectionAppearance(existing, object);
                             existing.userData.projectedFromId = object.uuid;
                             updateN++;
                         } else if (!existing && createFlag) {
@@ -406,6 +437,7 @@ export const projectObject2D = define({
                             existing.setPoints(projection.points);
                             existing.openingDirection.copy(projection.openingDirection);
                             existing.edgePoints = projection.edgePoints;
+                            syncProjectionAppearance(existing, object);
                             existing.userData.projectedFromId = object.uuid;
                             updateN++;
                         } else if (!existing && createFlag) {
@@ -419,9 +451,11 @@ export const projectObject2D = define({
                     return;
                 }
 
-                // isBoxInImage
+                // A stitched bird's-eye image is an orthographic ground-plane
+                // view. Every 3D category can be shown there; do not apply the
+                // perspective camera frustum test.
                 if (isObjectVisibleInView(view, object)) {
-                    if (config.projectPoint8) {
+                    if (config.projectPoint8 && !view.isBirdEye()) {
                         if (existMapBox2D[viewId][trackId]) {
                             if (updateFlag) {
                                 updateProjectBox(view, object, existMapBox2D[viewId][trackId]);
@@ -517,6 +551,38 @@ export const projectObject2D = define({
             return projection;
         }
 
+        function createBirdEyeBoxProjection(
+            view: Image2DRenderView,
+            object: Box,
+        ): ProjectedPolygon {
+            const bounds = object.geometry.boundingBox;
+            if (!bounds) throw new Error('Cannot project a box without bounds');
+            // Box local +X is the heading indicated by the 3D box arrow. P0/P3
+            // are the front edge so ProjectedPolygon renders the same heading.
+            const worldPoints = [
+                new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+                new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+                new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+                new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+            ].map((point) => point.applyMatrix4(object.matrixWorld));
+            const points = worldPoints.map((point) => {
+                const image = view.worldToImg(point);
+                return new THREE.Vector2(image.x, image.y);
+            });
+            const rearCenter = points[1].clone().add(points[2]).multiplyScalar(0.5);
+            const frontCenter = points[0].clone().add(points[3]).multiplyScalar(0.5);
+            const projection = new ProjectedPolygon(points, frontCenter.sub(rearCenter).normalize());
+            projection.viewId = view.id;
+            projection.userData = {
+                ...getProjectionUserData(object.userData as IUserData),
+                isProjection: true,
+                projectedFromId: object.uuid,
+                bevBoxHeading: '+X',
+            };
+            projection.color = object.color.getStyle();
+            return projection;
+        }
+
         function updateProjectRect(view: Image2DRenderView, object: Box, target: Rect) {
             let info1 = view.getBoxRect(object);
             target.center.copy(info1.center);
@@ -526,6 +592,7 @@ export const projectObject2D = define({
                 validRect(view, target);
             }
             target.userData.projectedFromId = object.uuid;
+            syncProjectionAppearance(target, object);
 
             editor.pc.render();
         }
@@ -547,6 +614,7 @@ export const projectObject2D = define({
             target.copyVector2Of4(info2.positionsFront as any, target.positions1);
             target.copyVector2Of4(info2.positionsBack as any, target.positions2);
             target.userData.projectedFromId = object.uuid;
+            syncProjectionAppearance(target, object);
             // TODO:
             editor.pc.render();
         }
@@ -587,6 +655,19 @@ export const projectObject2D = define({
             addObjects.push(object2D);
 
             // editor.pc.addObject(object2D as any);
+        }
+
+        function syncProjectionAppearance(
+            projection: Rect | Box2D | ProjectedPolygon | ProjectedPolyline | ProjectedIrregularWall,
+            source: Box | GroundPolygon | GroundPolyline | IrregularWall,
+        ) {
+            Object.assign(projection.userData, getProjectionUserData(source.userData as IUserData), {
+                isProjection: true,
+                projectedFromId: source.uuid,
+            });
+            projection.color = source instanceof Box
+                ? source.color.getStyle()
+                : `#${source.color.getHexString()}`;
         }
     },
 });

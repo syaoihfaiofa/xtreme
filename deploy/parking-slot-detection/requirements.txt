@@ -1,0 +1,8 @@
+fastapi==0.115.12
+matplotlib==3.9.2
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+pycocotools==2.0.8
+requests==2.32.3
+uvicorn==0.30.6
+progress==1.6

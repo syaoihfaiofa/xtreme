@@ -1,0 +1,25 @@
+{
+    "description": "BJ41",
+	"car_info" : {
+        "car_width" : 1.94,
+        "car_length" : 4.55272,
+        "wheel_radius" : 0.3761,
+        "front_overhang" : 0.86467,
+        "rear_overhang" : 0.92805,
+        "min_turn_radius" : 4.4566,
+        "head_cut_width" : 0.3,
+        "head_cut_height": 0.3,
+        "tail_cut_width" : 0.3,
+        "tail_cut_height": 0.3,
+        "wheel_base" : 2.76,
+        "axle_base" : 1.580,
+        "max_steering_wheel_angle" : 8.7266,
+        "has_wheel_counter" : true,
+        "wheel_reset_position" : 255,
+        "counts_per_circle" : 104,
+        "support_uss_blind_area_detect" : false,
+        "use_ratios_lut" : false,
+        "back_tire_size" : 0.25,
+        "vehicle_edge" : [3.42,0.97,3.62,0.77,3.62,-0.77,3.42,-0.97,-0.73,-0.97,-0.93,-0.77,-0.93,-0.48,-1.18,-0.48,-1.18,0.34,-0.93,0.34,-0.93,0.77,-0.73,0.97]
+    }
+}

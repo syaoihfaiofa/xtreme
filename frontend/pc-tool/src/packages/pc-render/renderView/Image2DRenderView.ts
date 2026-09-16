@@ -43,6 +43,11 @@ interface IOption {
     imgUrl?: string;
     imgObject: HTMLImageElement;
     occlusionMask?: Array<{ x: number; y: number }>;
+    birdEye?: {
+        pixelsPerMeter: number;
+        carOriginX: number;
+        carOriginY: number;
+    };
 }
 
 let positionsFrontV3 = [...Array(4)].map((e) => new THREE.Vector3());
@@ -239,6 +244,13 @@ export default class Image2DRenderView extends Render {
         this.imgAspectRatio = this.imgSize.x / this.imgSize.y;
         this.updateAspectRatioConfig();
 
+        // A stitched surround image is a calibrated top-down plane, not a
+        // perspective camera. It has no camera matrix to initialise.
+        if (option.birdEye) {
+            this.render();
+            return;
+        }
+
         this.matrixInternal.copy(
             createMatrixFromCameraInternal(option.cameraInternal, this.imgSize.x, this.imgSize.y),
         );
@@ -272,6 +284,10 @@ export default class Image2DRenderView extends Render {
 
     isFisheye() {
         return isFisheyeCamera(this.option.cameraModel);
+    }
+
+    isBirdEye() {
+        return !!this.option.birdEye;
     }
 
     hasOcclusionMask(): boolean {
@@ -329,6 +345,15 @@ export default class Image2DRenderView extends Render {
     worldToImg(pos: THREE.Vector3, target?: THREE.Vector3) {
         // let domElement = this.renderer.domElement;
         target = target || pos;
+        const birdEye = this.option.birdEye;
+        if (birdEye) {
+            target.set(
+                birdEye.carOriginX - pos.y * birdEye.pixelsPerMeter,
+                birdEye.carOriginY - pos.x * birdEye.pixelsPerMeter,
+                pos.z,
+            );
+            return target;
+        }
 
         projectWorldToImage(pos, target, {
             cameraInternal: this.option.cameraInternal,
@@ -346,6 +371,14 @@ export default class Image2DRenderView extends Render {
         height: number,
         target: THREE.Vector3 = new THREE.Vector3(),
     ): THREE.Vector3 | null {
+        const birdEye = this.option.birdEye;
+        if (birdEye) {
+            return target.set(
+                (birdEye.carOriginY - imagePoint.y) / birdEye.pixelsPerMeter,
+                (birdEye.carOriginX - imagePoint.x) / birdEye.pixelsPerMeter,
+                height,
+            );
+        }
         const ray = {
             origin: new THREE.Vector3(),
             direction: new THREE.Vector3(),
@@ -404,6 +437,17 @@ export default class Image2DRenderView extends Render {
 
     getBox2DBox(object: Box) {
         let bbox = object.geometry.boundingBox as THREE.Box3;
+
+        if (this.isBirdEye()) {
+            getPositions(bbox, positionsFrontV3, positionsBackV3);
+            [...positionsFrontV3, ...positionsBackV3].forEach((position) => {
+                position.applyMatrix4(object.matrixWorld);
+                this.worldToImg(position);
+            });
+            positionsFrontV2.forEach((target, index) => target.copy(positionsFrontV3[index]));
+            positionsBackV2.forEach((target, index) => target.copy(positionsBackV3[index]));
+            return { positionsBack: positionsBackV2, positionsFront: positionsFrontV2 };
+        }
 
         // let newBBox = bbox.clone().applyMatrix4(object.matrixWorld);
         getPositions(bbox, positionsFrontV3, positionsBackV3);

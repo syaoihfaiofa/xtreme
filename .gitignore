@@ -42,6 +42,7 @@ frontend/**/vite.config.local.*
 
 ### Model weights ###
 *.pth
+!deploy/parking-slot-detection/models/model_last.pth
 
 # Local browser performance reports can include machine-specific timing data.
 artifacts/performance/

@@ -5,6 +5,8 @@ const en = {
     'header-remove-all': 'Remove All',
     'title-hide': 'Hide',
     'title-show': 'Show',
+    'title-hide-all': 'Hide all instances',
+    'title-show-all': 'Show all instances',
     'title-edit': 'Edit',
     'title-delete': 'Delete',
     'title-annotation': 'Has annotation',

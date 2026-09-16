@@ -82,6 +82,12 @@ public class DataInfoController extends BaseDatasetController {
         return String.valueOf(uploadDataUseCase.upload(dataInfoUploadBO));
     }
 
+    @PostMapping(value = "{dataId}/stitched-image", consumes = "multipart/form-data")
+    public Long appendStitchedImage(@PathVariable Long dataId, @RequestPart("file") MultipartFile file,
+                                    @LoggedUser LoggedUserDTO userDTO) {
+        return uploadDataUseCase.appendStitchedImage(dataId, file, userDTO.getId());
+    }
+
     @GetMapping("findUploadRecordBySerialNumbers")
     public List<UploadRecordDTO> findUploadRecordBySerialNumbers(
             @NotEmpty(message = "serialNumbers cannot be null") @RequestParam(required = false) List<String> serialNumbers) {

@@ -64,6 +64,8 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
     let pointsUrl = '';
     const regLidar = new RegExp(/point(_?)cloud/i);
     const regImage = new RegExp(/camera(_?)image/i);
+    const regStitchedImage = new RegExp(/^stitched_img$/i);
+    let stitchedImage: IFileConfig | undefined;
     fileConfig.forEach((e) => {
         if (regLidar.test(e.dirName)) {
             pointsUrl = e.url;
@@ -80,6 +82,11 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
                 name: e.name,
                 imgObject: null as any,
             };
+        } else if (regStitchedImage.test(e.dirName)) {
+            // stitched_img is optional and has no per-camera calibration. Keep
+            // it after the calibrated camera views so a four-fisheye dataset
+            // renders its stitched surround image as the final view.
+            stitchedImage = e;
         }
     });
     viewConfig = viewConfig.filter((e) => !!e);
@@ -101,6 +108,26 @@ export function createViewConfig(fileConfig: IFileConfig[], cameraInfo: any[]) {
 
     // Keep camera views that have image URLs even without calibration (display-only).
     viewConfig = viewConfig.filter((e) => !!e.imgUrl);
+
+    if (stitchedImage) {
+        viewConfig.push({
+            cameraInternal: { fx: 0, fy: 0, cx: 0, cy: 0 },
+            cameraExternal: [],
+            cameraModel: 'pinhole',
+            imgSize: [0, 0],
+            imgUrl: stitchedImage.url,
+            name: stitchedImage.name,
+            imgObject: null as any,
+            // BYD Qin Pro far_avm: the same 512x512 ground-plane convention
+            // used by parking-slot inference. This is an orthographic BEV view,
+            // not a fifth camera with fabricated intrinsics/extrinsics.
+            birdEye: {
+                pixelsPerMeter: 25,
+                carOriginX: 256,
+                carOriginY: 286,
+            },
+        });
+    }
 
     return { pointsUrl, config: viewConfig };
 }

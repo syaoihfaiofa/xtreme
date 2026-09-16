@@ -21,5 +21,9 @@ public enum ModelCodeEnum {
     /**
      * IMAGE_KEYPOINT_LIFTED_DETECTION
      */
-    IMAGE_KEYPOINT_LIFTED_DETECTION
+    IMAGE_KEYPOINT_LIFTED_DETECTION,
+    /**
+     * CenterNet parking-slot detection from a stitched surround-view image.
+     */
+    PARKING_SLOT_DETECTION
 }

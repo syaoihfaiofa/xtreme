@@ -1,0 +1,12 @@
+car
+bike
+person
+obstacle
+traffic_light
+traffic_sign
+lane_parking
+crosswalk
+lane_solid
+lane_dash
+lane_curb
+lane_arrow

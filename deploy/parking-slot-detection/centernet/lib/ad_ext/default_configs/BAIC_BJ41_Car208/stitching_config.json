@@ -1,0 +1,63 @@
+{
+	"output" : {
+		"comment": "output is the params needed by other components",
+		"far_avm": {
+			"pixels_per_meter": 25,
+			"width": 512,
+			"height": 512,
+			"car_origin_x": 256,
+			"car_origin_y": 286,
+			"blind_x": 234,
+			"blind_y": 191,
+			"blind_width": 44,
+			"blind_height": 124
+		},
+		"medium_avm": {
+			"pixels_per_meter": 34.5,
+			"width": 512,
+			"height": 512,
+			"car_origin_x": 256,
+			"car_origin_y": 286,
+			"blind_x": 223,
+			"blind_y": 148,
+			"blind_width": 66,
+			"blind_height": 176
+		},
+		"near_avm_vpa": {
+			"pixels_per_meter": 47.4016,
+			"width": 480,
+			"height": 720,
+			"car_origin_x": 240,
+			"car_origin_y": 443,
+			"blind_x": 199,
+			"blind_y": 266,
+			"blind_width": 82,
+			"blind_height": 239
+		},
+		"near_avm": {
+			"pixels_per_meter": 71.1024,
+			"width": 480,
+			"height": 720,
+			"car_origin_x": 240,
+			"car_origin_y": 443,
+			"blind_x": 179,
+			"blind_y": 170,
+			"blind_width": 122,
+			"blind_height": 353
+		},
+		"custom1": {
+			"pixels_per_meter": 71.1024,
+			"width": 960,
+			"height": 720,
+			"car_origin_x": 480,
+			"car_origin_y": 460,
+			"blind_x": 413,
+			"blind_y": 196,
+			"blind_width": 134,
+			"blind_height": 327
+		},
+		"perspective": {
+			
+		}
+	}
+}

@@ -313,18 +313,27 @@ export default class Render2DAction extends Action {
             const topReversed = source
                 ? this.isIrregularWallTopReversed(source.bottomPoints, source.topPoints)
                 : this.isIrregularWallTopReversed(obj.bottomPoints, obj.topPoints);
+            const alignedTop = topReversed ? [...obj.topPoints].reverse() : obj.topPoints;
+            const fillBottom = source && this.renderView.isFisheye()
+                ? this.projectFisheyeWallBoundary(source.bottomPoints)
+                : obj.bottomPoints;
+            const fillTop = source && this.renderView.isFisheye()
+                ? this.projectFisheyeWallBoundary(
+                    topReversed ? [...source.topPoints].reverse() : source.topPoints,
+                )
+                : alignedTop;
             this.renderFlatWallFace(
-                obj.bottomPoints,
-                topReversed ? [...obj.topPoints].reverse() : obj.topPoints,
+                fillBottom,
+                fillTop,
                 color,
             );
             if (source && this.renderView.isFisheye()) {
-                const alignedTop = topReversed ? [...source.topPoints].reverse() : source.topPoints;
-                if (alignedTop.length >= 2) {
-                    this.renderFisheyeSideEdge(source.bottomPoints[0], alignedTop[0], color, lineWidth);
+                const alignedTopWorld = topReversed ? [...source.topPoints].reverse() : source.topPoints;
+                if (alignedTopWorld.length >= 2) {
+                    this.renderFisheyeSideEdge(source.bottomPoints[0], alignedTopWorld[0], color, lineWidth);
                     this.renderFisheyeSideEdge(
                         source.bottomPoints.at(-1)!,
-                        alignedTop.at(-1)!,
+                        alignedTopWorld.at(-1)!,
                         color,
                         lineWidth,
                     );
@@ -335,19 +344,82 @@ export default class Render2DAction extends Action {
         renderBoundary(obj.topPoints, source?.topPoints);
     }
 
+    private projectFisheyeWallBoundary(points: THREE.Vector3[]): THREE.Vector2[] {
+        if (points.length < 2) return [];
+        const sampled: THREE.Vector2[] = [];
+        for (let index = 0; index + 1 < points.length; index++) {
+            for (let sampleIndex = 0; sampleIndex <= SEGMENT_RENDER_SAMPLES; sampleIndex++) {
+                if (index > 0 && sampleIndex === 0) continue;
+                const world = points[index]
+                    .clone()
+                    .lerp(points[index + 1], sampleIndex / SEGMENT_RENDER_SAMPLES);
+                const image = this.renderView.worldToImg(world);
+                if (Number.isFinite(image.x) && Number.isFinite(image.y)) {
+                    sampled.push(new THREE.Vector2(image.x, image.y));
+                }
+            }
+        }
+        return sampled;
+    }
+
     private renderFlatWallFace(bottom: THREE.Vector2[], top: THREE.Vector2[], color: string): void {
         if (bottom.length < 2 || top.length < 2) return;
         const { context } = this.renderView.proxy;
+        const samples = this.getWallFaceSamples(bottom, top);
+        if (samples.length < 2) return;
         context.save();
         context.fillStyle = color;
         context.globalAlpha = 0.18;
-        context.beginPath();
-        context.moveTo(bottom[0].x, bottom[0].y);
-        bottom.slice(1).forEach((point) => context.lineTo(point.x, point.y));
-        [...top].reverse().forEach((point) => context.lineTo(point.x, point.y));
-        context.closePath();
-        context.fill();
+        // Do not fill the whole ruled face as one polygon. In a fisheye image
+        // its two boundaries can be concave (and have different sample counts),
+        // which makes that polygon self-intersect and leaves apparent holes.
+        // Filling aligned quad strips mirrors IrregularWall's 3D mesh and is
+        // stable for arbitrary curb/wall shapes.
+        for (let index = 0; index + 1 < samples.length; index++) {
+            const current = samples[index];
+            const next = samples[index + 1];
+            context.beginPath();
+            context.moveTo(current.bottom.x, current.bottom.y);
+            context.lineTo(next.bottom.x, next.bottom.y);
+            context.lineTo(next.top.x, next.top.y);
+            context.lineTo(current.top.x, current.top.y);
+            context.closePath();
+            context.fill();
+        }
         context.restore();
+    }
+
+    private getWallFaceSamples(
+        bottom: THREE.Vector2[],
+        top: THREE.Vector2[],
+    ): Array<{ bottom: THREE.Vector2; top: THREE.Vector2 }> {
+        const parameters = (points: THREE.Vector2[]): number[] => {
+            const lengths = [0];
+            for (let index = 1; index < points.length; index++) {
+                lengths.push(lengths[index - 1] + points[index - 1].distanceTo(points[index]));
+            }
+            const total = lengths.at(-1)!;
+            return total > 1e-8 ? lengths.map((length) => length / total) : lengths.map(() => 0);
+        };
+        const interpolate = (points: THREE.Vector2[], values: number[], parameter: number) => {
+            for (let index = 1; index < values.length; index++) {
+                if (parameter <= values[index] + 1e-8) {
+                    const span = values[index] - values[index - 1];
+                    const ratio = span <= 1e-8 ? 0 : (parameter - values[index - 1]) / span;
+                    return points[index - 1].clone().lerp(points[index], ratio);
+                }
+            }
+            return points.at(-1)!.clone();
+        };
+        const bottomParameters = parameters(bottom);
+        const topParameters = parameters(top);
+        const merged = [...bottomParameters, ...topParameters]
+            .sort((left, right) => left - right)
+            .filter((value, index, values) => index === 0 || value - values[index - 1] > 1e-8);
+        return merged.map((parameter) => ({
+            bottom: interpolate(bottom, bottomParameters, parameter),
+            top: interpolate(top, topParameters, parameter),
+        }));
     }
 
     private renderFisheyeSideEdge(

@@ -77,6 +77,11 @@ public class ImageKeypointLiftedModelResultConverter {
                     || object.getPoints().stream().anyMatch(point -> !isCompletePoint(point))) {
                 return "has incomplete ground polyline geometry";
             }
+        } else if ("GROUND_POLYGON".equals(object.getObjType())) {
+            if (object.getPoints() == null || object.getPoints().size() != 4
+                    || object.getPoints().stream().anyMatch(point -> !isCompletePoint(point))) {
+                return "has incomplete ground polygon geometry";
+            }
         } else {
             return "has unsupported object type";
         }
@@ -134,7 +139,7 @@ public class ImageKeypointLiftedModelResultConverter {
                 .size3D(source.getSize3D())
                 .rotation3D(source.getRotation3D())
                 .viewIndex(primaryViewIndex(source.getSourceViewIndexes()))
-                .points("GROUND_POLYLINE".equals(source.getObjType())
+                .points(("GROUND_POLYLINE".equals(source.getObjType()) || "GROUND_POLYGON".equals(source.getObjType()))
                         ? polylinePoints(source.getPoints())
                         : primaryKeypoints(source.getSourceKeypoints()))
                 .sourceViewIndexes(source.getSourceViewIndexes())

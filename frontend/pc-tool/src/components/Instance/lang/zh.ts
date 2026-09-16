@@ -7,6 +7,8 @@ const zh: ILocale = {
     'header-remove-all': '删除所有',
     'title-hide': '隐藏',
     'title-show': '显示',
+    'title-hide-all': '隐藏全部目标',
+    'title-show-all': '显示全部目标',
     'title-edit': '编辑',
     'title-delete': '删除',
     'title-annotation': '有批注信息',

@@ -190,6 +190,11 @@ public class JobConfig {
     }
 
     @Bean
+    public ParkingSlotDetectionModelMessageHandler parkingSlotDetectionModelMessageHandler() {
+        return new ParkingSlotDetectionModelMessageHandler();
+    }
+
+    @Bean
     public PointCloudTrackingModelMessageHandler pointCloudTrackingModelMessageHandler() {
         return new PointCloudTrackingModelMessageHandler();
     }

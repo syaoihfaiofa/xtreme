@@ -79,6 +79,12 @@ public interface Constants {
     String CAMERA_IMAGE = "camera_image";
 
     /**
+     * Optional stitched surround-view image.  Each file uses the same frame
+     * name as its corresponding point cloud.
+     */
+    String STITCHED_IMAGE = "stitched_img";
+
+    /**
      * camera_config
      */
     String CAMERA_CONFIG = "camera_config";

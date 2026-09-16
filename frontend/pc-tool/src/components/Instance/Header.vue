@@ -6,6 +6,18 @@
             ({{ data.objectN }})
         </span>
         <div class="tool">
+            <EyeOutlined
+                v-if="data.visible"
+                class="icon"
+                :title="$$('title-hide-all')"
+                @click.stop="onToggleAllVisible"
+            />
+            <EyeInvisibleOutlined
+                v-else
+                class="icon"
+                :title="$$('title-show-all')"
+                @click.stop="onToggleAllVisible"
+            />
             <i
                 :class="
                     tState.config.showAttr
@@ -39,6 +51,7 @@
     import { useInjectEditor } from '../../state';
     import * as locale from './lang';
     import { IClassify } from './type';
+    import { EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons-vue';
 
     // ***************Props and Emits***************
     let emit = defineEmits(['toggle-attr']);
@@ -67,19 +80,33 @@
         emit('toggle-attr');
     }
 
-    function onDelete() {
-        let trackIdMap = {};
-        props.data.data.forEach((e) => {
-            e.data.forEach((trackInfo) => {
-                trackInfo.data.forEach((obj) => {
-                    trackIdMap[obj.id] = true;
+    function getAllObjects() {
+        const objectIdMap: Record<string, true> = {};
+        props.data.data.forEach((classInfo) => {
+            classInfo.data.forEach((trackInfo) => {
+                trackInfo.data.forEach((item) => {
+                    objectIdMap[item.id] = true;
                 });
             });
         });
-        let annotate3D = editor.pc.getAnnotate3D();
-        let annotate2D = editor.pc.getAnnotate2D();
+        return [...editor.pc.getAnnotate3D(), ...editor.pc.getAnnotate2D()].filter(
+            (object) => objectIdMap[object.uuid],
+        );
+    }
 
-        let objects = [...annotate3D, ...annotate2D].filter((e) => trackIdMap[e.uuid]);
+    function onToggleAllVisible() {
+        const objects = getAllObjects();
+        if (objects.length === 0) return;
+        editor.cmdManager.execute('toggle-visible', {
+            objects,
+            // If any instance is visible, the aggregate control hides all;
+            // otherwise it restores all of them.
+            visible: !props.data.visible,
+        });
+    }
+
+    function onDelete() {
+        const objects = getAllObjects();
 
         editor
             .showConfirm({

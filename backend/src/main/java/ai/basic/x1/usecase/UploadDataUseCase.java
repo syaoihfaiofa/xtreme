@@ -4,6 +4,7 @@ import ai.basic.x1.adapter.dto.ApiResult;
 import ai.basic.x1.adapter.port.dao.DataAnnotationObjectDAO;
 import ai.basic.x1.adapter.port.dao.DataInfoDAO;
 import ai.basic.x1.adapter.port.dao.DatasetDAO;
+import ai.basic.x1.adapter.port.dao.FileDAO;
 import ai.basic.x1.adapter.port.dao.UploadRecordDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataAnnotationObject;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
@@ -41,6 +42,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.FileFilter;
@@ -96,6 +98,9 @@ public class UploadDataUseCase {
 
     @Autowired
     private DataInfoDAO dataInfoDAO;
+
+    @Autowired
+    private FileDAO fileDAO;
 
     @Autowired
     private MinioService minioService;
@@ -287,6 +292,90 @@ public class UploadDataUseCase {
     public void parsePointCloudUploadFile(DataInfoUploadBO dataInfoUploadBO) {
         pointCloudUploadUseCase.normalizeUploadLayout(dataInfoUploadBO.getBaseSavePath());
         this.commonParseUploadFile(dataInfoUploadBO, pointCloudUploadUseCase::findPointCloudParentList, pointCloudUploadUseCase::getDataNames);
+    }
+
+    /**
+     * Adds the optional stitched surround-view image to an existing LiDAR frame.
+     * This is intentionally separate from archive upload: archive upload creates
+     * frames, whereas this operation enriches one already-imported frame.
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long appendStitchedImage(Long dataId, MultipartFile image, Long userId) {
+        if (image == null || image.isEmpty()) {
+            throw new UsecaseException("stitched image is required");
+        }
+        var filename = image.getOriginalFilename();
+        var mimeType = FileUtil.getMimeType(filename);
+        if (StrUtil.isEmpty(filename) || !Constants.IMAGE_DATA_TYPE.contains(mimeType)) {
+            throw new UsecaseException("stitched image must be a supported image file");
+        }
+
+        var dataInfos = dataInfoUseCase.listByIds(Collections.singletonList(dataId), false);
+        if (CollUtil.isEmpty(dataInfos)) {
+            throw new UsecaseException(UsecaseCode.NOT_FOUND);
+        }
+        var content = dataInfos.get(0).getContent();
+        if (CollUtil.isEmpty(content)) {
+            throw new UsecaseException("frame has no files");
+        }
+        if (content.stream().anyMatch(node -> STITCHED_IMAGE.equalsIgnoreCase(node.getName()))) {
+            throw new UsecaseException("frame already has a stitched image");
+        }
+
+        var lidarNode = content.stream()
+                .filter(node -> node.getName() != null && node.getName().toLowerCase().startsWith(LIDAR_POINT_CLOUD))
+                .findFirst()
+                .orElseThrow(() -> new UsecaseException("frame has no lidar point cloud"));
+        var lidarFileId = findFirstFileId(lidarNode);
+        if (lidarFileId == null) {
+            throw new UsecaseException("frame has no lidar point cloud file");
+        }
+        var lidarFile = fileUseCase.findById(lidarFileId);
+        var expectedName = FileUtil.getPrefix(lidarFile.getName());
+        if (!expectedName.equals(FileUtil.getPrefix(filename))) {
+            throw new UsecaseException("stitched image name must match the point cloud name");
+        }
+
+        var parentPath = lidarFile.getPath().substring(0, lidarFile.getPath().lastIndexOf('/') + 1);
+        var path = parentPath + STITCHED_IMAGE + "/" + filename;
+        var existingFile = fileDAO.getOne(Wrappers.lambdaQuery(ai.basic.x1.adapter.port.dao.mybatis.model.File.class)
+                .eq(ai.basic.x1.adapter.port.dao.mybatis.model.File::getPath, path));
+        FileBO file;
+        if (existingFile != null) {
+            file = DefaultConverter.convert(existingFile, FileBO.class);
+        } else {
+            try (var inputStream = image.getInputStream()) {
+                minioService.uploadFile(minioProp.getBucketName(), path, inputStream, mimeType, image.getSize());
+            } catch (Exception e) {
+                log.error("Upload stitched image failed, dataId:{}", dataId, e);
+                throw new UsecaseException("stitched image upload failed");
+            }
+            file = fileUseCase.saveBatchFile(userId, List.of(FileBO.builder()
+                    .name(filename).originalName(filename).bucketName(minioProp.getBucketName())
+                    .path(path).type(mimeType).size(image.getSize()).build())).get(0);
+        }
+        content.add(DataInfoBO.FileNodeBO.builder().name(STITCHED_IMAGE).type(DIRECTORY)
+                .files(List.of(DataInfoBO.FileNodeBO.builder().name(filename).fileId(file.getId()).type(FILE).build()))
+                .build());
+        dataInfoDAO.updateById(DataInfo.builder().id(dataId)
+                .content(DefaultConverter.convert(content, DataInfo.FileNode.class)).updatedBy(userId).build());
+        return file.getId();
+    }
+
+    private Long findFirstFileId(DataInfoBO.FileNodeBO node) {
+        if (FILE.equals(node.getType())) {
+            return node.getFileId();
+        }
+        if (CollUtil.isEmpty(node.getFiles())) {
+            return null;
+        }
+        for (var child : node.getFiles()) {
+            var fileId = findFirstFileId(child);
+            if (fileId != null) {
+                return fileId;
+            }
+        }
+        return null;
     }
 
     private void parseImageUploadFile(DataInfoUploadBO dataInfoUploadBO) {
@@ -720,7 +809,7 @@ public class UploadDataUseCase {
             return file.isDirectory() && filename.startsWith(Constants.IMAGE);
         } else {
             return file.isDirectory() && (filename.startsWith(Constants.CAMERA_IMAGE) || filename.startsWith(LIDAR_POINT_CLOUD) ||
-                    filename.equalsIgnoreCase(CAMERA_CONFIG));
+                    filename.equalsIgnoreCase(CAMERA_CONFIG) || filename.equalsIgnoreCase(STITCHED_IMAGE));
         }
     }
 

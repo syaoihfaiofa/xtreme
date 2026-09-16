@@ -1,0 +1,11 @@
+car
+person
+bike
+pillar
+cone
+parkinglock_locked
+parkinglock_unlocked
+board_no_parking
+ev_charger
+obstacle
+parkingspace

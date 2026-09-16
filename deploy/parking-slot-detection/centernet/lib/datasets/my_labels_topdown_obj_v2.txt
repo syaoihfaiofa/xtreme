@@ -1,0 +1,3 @@
+corner_car
+corner_pillar
+corner_wheel_stopper

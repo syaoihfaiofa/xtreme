@@ -11,7 +11,8 @@ export type ModelCode =
   | 'IMAGE_DETECTION'
   | 'LIDAR_DETECTION'
   | 'LIDAR_TRACKING'
-  | 'IMAGE_KEYPOINT_LIFTED_DETECTION';
+  | 'IMAGE_KEYPOINT_LIFTED_DETECTION'
+  | 'PARKING_SLOT_DETECTION';
 
 /** list item */
 export interface ModelListItem {

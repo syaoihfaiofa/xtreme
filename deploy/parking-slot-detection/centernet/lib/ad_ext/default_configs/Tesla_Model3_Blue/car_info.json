@@ -1,0 +1,22 @@
+{
+    "description": "CARLA vehicle.tesla.model3 (blue skin), measured from the simulator's own physics/bounding-box data. Not the real Tesla Model 3 spec sheet: CARLA's mesh/collision model runs a bit wider than the real car (its bounding box includes the mirrors) and its overhangs are a bit longer, so numbers below are what the simulator itself will show a sensor, not the manufacturer's numbers.",
+    "source": "vector_dev/carla/scripts/capture_surround_sensors.py: rear_axle_from_wheels() + vehicle.bounding_box + vehicle.get_physics_control().wheels, sampled after settle_vehicle() so the suspension has settled onto the road.",
+    "car_info" : {
+        "car_width" : 2.163,
+        "car_length" : 4.792,
+        "wheel_radius" : 0.370,
+        "front_overhang" : 0.807,
+        "rear_overhang" : 0.980,
+        "wheel_base" : 3.005,
+        "axle_base" : 1.667,
+        "min_turn_radius" : null,
+        "head_cut_width" : 0.2,
+        "head_cut_height": 0.2,
+        "tail_cut_width" : 0.3,
+        "tail_cut_height": 0.3,
+        "max_steering_wheel_angle" : null,
+        "has_wheel_counter" : false,
+        "support_uss_blind_area_detect" : false,
+        "use_ratios_lut" : false
+    }
+}

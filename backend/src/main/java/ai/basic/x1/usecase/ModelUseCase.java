@@ -3,6 +3,7 @@ package ai.basic.x1.usecase;
 import ai.basic.x1.adapter.api.config.ImageDatasetInitialInfo;
 import ai.basic.x1.adapter.api.config.PointCloudDatasetInitialInfo;
 import ai.basic.x1.adapter.api.job.converter.ImageKeypointLiftedModelReqConverter;
+import ai.basic.x1.adapter.api.job.converter.ParkingSlotDetectionModelReqConverter;
 import ai.basic.x1.adapter.api.job.converter.ModelCocoRequestConverter;
 import ai.basic.x1.adapter.api.job.converter.PointCloudDetectionModelReqConverter;
 import ai.basic.x1.adapter.api.job.converter.PointCloudTrackingModelReqConverter;
@@ -110,6 +111,9 @@ public class ModelUseCase {
 
     @Autowired
     private SceneInferenceUseCase sceneInferenceUseCase;
+
+    @Autowired
+    private ParkingSlotSceneInferenceUseCase parkingSlotSceneInferenceUseCase;
 
     @Autowired
     private PointCloudDatasetInitialInfo pointCloudDatasetInitialInfo;
@@ -238,7 +242,7 @@ public class ModelUseCase {
             throw new UsecaseException(UsecaseCode.DATASET__MODEL_NOT_EXIST);
         }
         checkDatasetType(dataset.getType(), model.getDatasetType());
-        if (SceneInferenceUseCase.supportsSceneTracking(model.getModelCode())
+        if (supportsSceneRun(model.getModelCode())
                 && ModelRunSceneTrackingParamBO.hasClassMappings(modelRunBO.getResultFilterParam())) {
             startSceneTrackingModelRun(modelRunBO, dataset, model);
             return;
@@ -304,8 +308,10 @@ public class ModelUseCase {
                         .eq(DatasetClass::getDatasetId, datasetId));
         Map<Long, DatasetClass> datasetClassById = datasetClasses.stream()
                 .collect(Collectors.toMap(DatasetClass::getId, datasetClass -> datasetClass));
+        ToolTypeEnum expectedToolType = modelId != null && modelDAO.getById(modelId).getModelCode() == ModelCodeEnum.PARKING_SLOT_DETECTION
+                ? ToolTypeEnum.PARKING_SLOT : ToolTypeEnum.CUBOID;
         Map<String, DatasetClass> cuboidClassByName = datasetClasses.stream()
-                .filter(datasetClass -> datasetClass.getToolType() == ToolTypeEnum.CUBOID)
+                .filter(datasetClass -> datasetClass.getToolType() == expectedToolType)
                 .collect(Collectors.toMap(
                         datasetClass -> normalizeClassName(datasetClass.getName()),
                         datasetClass -> datasetClass,
@@ -322,13 +328,18 @@ public class ModelUseCase {
         for (DatasetInferenceConfig.ClassMapping mapping : trackingParam.getClassMappings()) {
             if (mapping.getDatasetClassId() != null) {
                 DatasetClass selected = datasetClassById.get(mapping.getDatasetClassId());
-                if (selected == null || selected.getToolType() != ToolTypeEnum.CUBOID) {
+                if (selected == null || selected.getToolType() != expectedToolType) {
                     throw new UsecaseException(PARAM_ERROR,
-                            "Mapped dataset class must be a CUBOID in the selected dataset: datasetId="
+                            "Mapped dataset class has an incompatible tool type in the selected dataset: datasetId="
                                     + datasetId + ", datasetClassId=" + mapping.getDatasetClassId()
                                     + ", modelClassCode=" + mapping.getModelClassCode());
                 }
                 continue;
+            }
+            if (expectedToolType == ToolTypeEnum.PARKING_SLOT) {
+                throw new UsecaseException(PARAM_ERROR,
+                        "Parking-slot model classes must be mapped to an existing PARKING_SLOT dataset class: modelClassCode="
+                                + mapping.getModelClassCode());
             }
             String normalizedCode = normalizeClassName(mapping.getModelClassCode());
             ModelClass modelClass = modelClassByCode.get(normalizedCode);
@@ -418,13 +429,18 @@ public class ModelUseCase {
         List<String> failures = new ArrayList<>();
         for (Long sceneId : sceneIds) {
             try {
-                sceneInferenceUseCase.runForModelRun(
-                        modelRunRecord.getId(),
-                        modelRunRecord.getDatasetId(),
-                        sceneId,
-                        model,
-                        config);
+                List<String> skippedFrames = Collections.emptyList();
+                if (model.getModelCode() == ModelCodeEnum.PARKING_SLOT_DETECTION) {
+                    skippedFrames = parkingSlotSceneInferenceUseCase.runForModelRun(modelRunRecord.getId(),
+                            modelRunRecord.getDatasetId(), sceneId, model, config);
+                } else {
+                    sceneInferenceUseCase.runForModelRun(
+                            modelRunRecord.getId(), modelRunRecord.getDatasetId(), sceneId, model, config);
+                }
                 successCount++;
+                if (!skippedFrames.isEmpty()) {
+                    failures.add(sceneId + ": skipped frames: " + JSONUtil.toJsonStr(skippedFrames));
+                }
             } catch (RuntimeException exception) {
                 failures.add(sceneId + ":" + exception.getClass().getSimpleName()
                         + ": " + exception.getMessage());
@@ -459,6 +475,11 @@ public class ModelUseCase {
             return RunStatusEnum.FAILURE;
         }
         return RunStatusEnum.SUCCESS_WITH_ERROR;
+    }
+
+    private static boolean supportsSceneRun(ModelCodeEnum modelCode) {
+        return SceneInferenceUseCase.supportsSceneTracking(modelCode)
+                || modelCode == ModelCodeEnum.PARKING_SLOT_DETECTION;
     }
 
     private void checkDatasetType(DatasetTypeEnum datasetType, ModelDatasetTypeEnum modelDatasetType) {
@@ -514,7 +535,7 @@ public class ModelUseCase {
 
     private void reRunSceneTracking(ModelRunRecord modelRunRecord) {
         Model model = modelDAO.getById(modelRunRecord.getModelId());
-        if (model == null || !SceneInferenceUseCase.supportsSceneTracking(model.getModelCode())) {
+        if (model == null || !supportsSceneRun(model.getModelCode())) {
             throw new UsecaseException(UsecaseCode.DATASET__MODEL_NOT_EXIST);
         }
         if (StrUtil.isEmpty(model.getUrl())) {
@@ -582,6 +603,11 @@ public class ModelUseCase {
             case IMAGE_KEYPOINT_LIFTED_DETECTION:
                 dataInfoBO = dataInfoUseCase.getInitDataInfoBO(pointCloudDatasetInitialInfo);
                 requestBody = JSONUtil.toJsonStr(ImageKeypointLiftedModelReqConverter.convert(
+                        ModelMessageBO.builder().dataInfo(dataInfoBO).build()));
+                break;
+            case PARKING_SLOT_DETECTION:
+                dataInfoBO = dataInfoUseCase.getInitDataInfoBO(pointCloudDatasetInitialInfo);
+                requestBody = JSONUtil.toJsonStr(ParkingSlotDetectionModelReqConverter.convert(
                         ModelMessageBO.builder().dataInfo(dataInfoBO).build()));
                 break;
             default:
@@ -773,6 +799,7 @@ public class ModelUseCase {
             case LIDAR_DETECTION:
             case LIDAR_TRACKING:
             case IMAGE_KEYPOINT_LIFTED_DETECTION:
+            case PARKING_SLOT_DETECTION:
                 var missFiled = new ArrayList<>();
                 var content = modelResponseBO.getContent();
                 if (!content.containsKey(Constants.MODEL_RUN_RESULT_CODE)) {

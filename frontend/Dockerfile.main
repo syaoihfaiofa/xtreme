@@ -1,0 +1,14 @@
+FROM node:16 AS build
+
+WORKDIR /build
+COPY main/package.json main/yarn.lock ./main/
+RUN cd main && yarn install --frozen-lockfile
+
+COPY main ./main
+
+# Keep this separate from the all-tools Dockerfile: a change to the management
+# UI should not rebuild pc-tool, image-tool, text-tool, or reconstruction-tool.
+RUN cd main && npm run build
+
+FROM nginx:1.22
+COPY --from=build /build/dist/main /usr/share/nginx/html/main

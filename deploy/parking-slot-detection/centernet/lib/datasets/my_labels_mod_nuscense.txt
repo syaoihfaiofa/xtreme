@@ -1,0 +1,10 @@
+barrier
+bicycle
+bus
+car
+construction_vehicle
+motorcycle
+pedestrian
+traffic_cone
+trailer
+truck

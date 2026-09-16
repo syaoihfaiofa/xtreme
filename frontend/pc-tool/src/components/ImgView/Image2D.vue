@@ -4,7 +4,7 @@
         @dblclick="onDBClick"
         :style="{
             borderColor: state.config.imgRegionIndex === props.imgIndex ? '#1890ff' : '#2e2525',
-            aspectRatio: state.config.aspectRatio,
+            aspectRatio: viewAspectRatio,
         }"
     >
         <div class="render" ref="dom"></div>
@@ -23,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-    import { onMounted, ref, onBeforeUnmount } from 'vue';
+    import { computed, onMounted, ref, onBeforeUnmount, nextTick, watch } from 'vue';
     import * as THREE from 'three';
     import {
         Image2DRenderView,
@@ -58,6 +58,42 @@
     let { canOperate } = useUI();
     let { handleContext, clearContext } = useContextMenu();
     let renderProxy = useInjectProxy();
+    let resizeObserver: ResizeObserver | undefined;
+    let resizeFrame = 0;
+
+    // Preserve the image's native aspect ratio in the viewport. Camera images
+    // remain 16:9, while a square stitched image receives a square viewport
+    // instead of letterboxing it inside the camera layout.
+    const viewAspectRatio = computed(() => {
+        const config = state.imgViews[props.imgIndex];
+        // birdEye is available before the browser has decoded imgObject. Do
+        // not briefly fall back to the camera 16:9 ratio on the first frame.
+        if (config?.birdEye) return 1;
+        const image = config?.imgObject;
+        if (!image?.naturalWidth || !image?.naturalHeight) {
+            return state.config.aspectRatio;
+        }
+        return image.naturalWidth / image.naturalHeight;
+    });
+
+    // The first resource load can mount this component before its Image object
+    // has finished decoding. Re-applying options after imgObject arrives is
+    // essential: frame switches did it incidentally, which is why only frame 1
+    // showed black letterboxing.
+    watch(
+        () => state.imgViews[props.imgIndex]?.imgObject,
+        (image) => {
+            if (!image || !dom.value || !view.setOptions) return;
+            nextTick(() => {
+                requestAnimationFrame(() => {
+                    if (!dom.value) return;
+                    view.setOptions(state.imgViews[props.imgIndex]);
+                    view.updateSize();
+                    view.render();
+                });
+            });
+        },
+    );
 
     onMounted(() => {
         // console.log('img view onMounted');
@@ -80,11 +116,31 @@
             view.setOptions(state.imgViews[props.imgIndex]);
             view.renderPoints = false;
 
+            // The stitched image changes this component from the initial
+            // camera 16:9 layout to 1:1 after Vue has painted it. Recompute
+            // the canvas fit matrix on that layout change; otherwise the first
+            // frame is letterboxed until a later frame happens to resize it.
+            resizeObserver = new ResizeObserver(() => {
+                if (resizeFrame) cancelAnimationFrame(resizeFrame);
+                resizeFrame = requestAnimationFrame(() => {
+                    resizeFrame = 0;
+                    view.updateSize();
+                    view.render();
+                });
+            });
+            resizeObserver.observe(dom.value);
+            nextTick(() => {
+                view.updateSize();
+                view.render();
+            });
+
             handleContext(dom.value);
         }
     });
 
     onBeforeUnmount(() => {
+        resizeObserver?.disconnect();
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
         clearContext();
 
         pc.removeRenderView(view);

@@ -18,6 +18,28 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class ImageKeypointLiftedModelResultConverterTest {
 
     @Test
+    void convert_preservesFourVertexGroundPolygon() {
+        ImageKeypointLiftedDetectionRespDTO.ObjectDTO object = ImageKeypointLiftedDetectionRespDTO.ObjectDTO.builder()
+                .objType("GROUND_POLYGON").modelClass("parkinglot").confidence(BigDecimal.valueOf(0.8))
+                .points(List.of(
+                        PointBO.builder().x(BigDecimal.ZERO).y(BigDecimal.ZERO).z(BigDecimal.valueOf(-0.3)).build(),
+                        PointBO.builder().x(BigDecimal.ONE).y(BigDecimal.ZERO).z(BigDecimal.valueOf(-0.3)).build(),
+                        PointBO.builder().x(BigDecimal.ONE).y(BigDecimal.ONE).z(BigDecimal.valueOf(-0.3)).build(),
+                        PointBO.builder().x(BigDecimal.ZERO).y(BigDecimal.ONE).z(BigDecimal.valueOf(-0.3)).build()))
+                .sourceViewIndexes(List.of(0)).sourceKeypoints(List.of(List.of(
+                        BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ONE, BigDecimal.ZERO,
+                        BigDecimal.ONE, BigDecimal.ONE, BigDecimal.ZERO, BigDecimal.ONE))).build();
+        ImageKeypointLiftedObjectBO result = ImageKeypointLiftedModelResultConverter.convert(
+                new ApiResult<>(UsecaseCode.OK, "", List.of(ImageKeypointLiftedDetectionRespDTO.builder()
+                        .id(42L).code("OK").objects(List.of(object)).build())),
+                Map.of("parkinglot", ModelClass.builder().name("Parking slot").code("parkinglot").build()), null);
+
+        assertEquals("GROUND_POLYGON", result.getObjects().get(0).getType());
+        assertEquals(4, result.getObjects().get(0).getPoints().size());
+        assertEquals(BigDecimal.valueOf(-0.3), result.getObjects().get(0).getPoints().get(0).getZ());
+    }
+
+    @Test
     void convert_preservesGroundPolylineAndVariableSourcePoints() {
         ImageKeypointLiftedDetectionRespDTO.ObjectDTO responseObject =
                 ImageKeypointLiftedDetectionRespDTO.ObjectDTO.builder()

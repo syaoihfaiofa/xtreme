@@ -290,6 +290,12 @@ export interface IImgViewConfig {
     // rowMajor?: boolean;
     name: string;
     occlusionMask?: Array<{ x: number; y: number }>;
+    /** Orthographic surround-view calibration for an optional stitched_img. */
+    birdEye?: {
+        pixelsPerMeter: number;
+        carOriginX: number;
+        carOriginY: number;
+    };
 }
 
 export interface IConfig {

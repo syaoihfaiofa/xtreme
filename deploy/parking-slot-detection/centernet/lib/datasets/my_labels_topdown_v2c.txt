@@ -1,0 +1,5 @@
+parkinglot
+parkinglot_parked
+parkinglot_mechanical
+parkinglot_handicap
+parkinglot_parked_partial

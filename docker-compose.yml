@@ -197,6 +197,22 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+  parking-slot-detection:
+    build: ./deploy/parking-slot-detection
+    environment:
+      PARKING_SCORE_THRESHOLD: ${PARKING_SCORE_THRESHOLD:-0.3}
+      PARKING_MODEL_PATH: /app/models/model_last.pth
+    ports:
+      - 8299:5000
+    profiles:
+      - model
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
   point-cloud-object-tracking:
     build:
       context: ./deploy/point-cloud-object-tracking

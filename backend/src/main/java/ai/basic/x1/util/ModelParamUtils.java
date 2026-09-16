@@ -25,6 +25,7 @@ public class ModelParamUtils {
             case LIDAR_DETECTION:
             case IMAGE_DETECTION:
             case IMAGE_KEYPOINT_LIFTED_DETECTION:
+            case PARKING_SLOT_DETECTION:
                 var modelClass = DefaultConverter.convert(resultFilterParam, PreModelParamDTO.class);
                 ValidateUtil.validate(modelClass);
                 if (modelClass.getMinConfidence() != null && modelClass.getMaxConfidence() != null
@@ -32,7 +33,7 @@ public class ModelParamUtils {
                     throw new UsecaseException(UsecaseCode.PARAM_ERROR,
                             "minConfidence must be less than or equal to maxConfidence");
                 }
-                validateSceneTrackingMappings(resultFilterParam, modelClass.getClasses());
+                validateSceneTrackingMappings(resultFilterParam, modelClass.getClasses(), modelCode);
                 break;
             case LIDAR_TRACKING:
                 break;
@@ -41,7 +42,8 @@ public class ModelParamUtils {
         }
     }
 
-    private static void validateSceneTrackingMappings(JSONObject resultFilterParam, List<String> selectedClasses) {
+    private static void validateSceneTrackingMappings(JSONObject resultFilterParam, List<String> selectedClasses,
+                                                      ModelCodeEnum modelCode) {
         if (resultFilterParam.getJSONArray("classMappings") == null) {
             return;
         }
@@ -66,6 +68,12 @@ public class ModelParamUtils {
             if (!selectedClasses.contains(mapping.getModelClassCode())) {
                 throw new UsecaseException(UsecaseCode.PARAM_ERROR,
                         "Mapped model class is not selected: modelClassCode=" + mapping.getModelClassCode());
+            }
+            if (modelCode == ModelCodeEnum.PARKING_SLOT_DETECTION
+                    && (mapping.getDatasetClassId() == null
+                    || mapping.getMotionMode() != ai.basic.x1.entity.enums.InferenceMotionModeEnum.STATIC)) {
+                throw new UsecaseException(UsecaseCode.PARAM_ERROR,
+                        "Parking-slot mappings require a dataset class and STATIC motion mode");
             }
         }
     }

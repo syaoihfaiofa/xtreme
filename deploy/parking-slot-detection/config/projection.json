@@ -1,0 +1,9 @@
+{
+  "image_width": 512,
+  "image_height": 512,
+  "pixels_per_meter": 25.0,
+  "car_origin_x": 256.0,
+  "car_origin_y": 286.0,
+  "fallback_ground_z": 0.0,
+  "max_ground_slope": 0.12
+}

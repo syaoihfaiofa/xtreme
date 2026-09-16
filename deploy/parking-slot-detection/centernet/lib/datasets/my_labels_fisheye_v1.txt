@@ -1,0 +1,16 @@
+car
+bus
+truck
+tricycle
+bike
+person
+pillar
+cone
+parkinglock_locked
+parkinglock_unlocked
+board_no_parking
+ev_charger
+boom_gate
+pole
+barrier
+handcart

@@ -17,6 +17,13 @@ class ModelParamUtilsTest {
     }
 
     @Test
+    void valid_acceptsParkingSlotDetectionFilter() {
+        assertDoesNotThrow(() -> ModelParamUtils.valid(
+                JSONUtil.parseObj("{\"classes\":[\"parkinglot\"],\"minConfidence\":0.3,\"maxConfidence\":1}"),
+                ModelCodeEnum.PARKING_SLOT_DETECTION));
+    }
+
+    @Test
     void valid_rejectsInvalidImageKeypointLiftedDetectionFilter() {
         assertThrows(RuntimeException.class, () -> ModelParamUtils.valid(
                 JSONUtil.parseObj("{\"classes\":[],\"minConfidence\":1.1}"),

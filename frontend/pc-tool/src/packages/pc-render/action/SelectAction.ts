@@ -117,7 +117,9 @@ export default class SelectAction extends Action {
     checkMainView(event: MouseEvent) {
         let pos = get(THREE.Vector2, 0);
         this.getProjectPos(event, pos);
-        let annotate3D = this.renderView.pointCloud.getAnnotate3D();
+        let annotate3D = this.renderView.pointCloud
+            .getAnnotate3D()
+            .filter((object) => object.visible !== false);
 
         this.raycaster.setFromCamera(pos, this.renderView.camera);
         const intersects = this.raycaster.intersectObjects(annotate3D);
@@ -149,7 +151,7 @@ export default class SelectAction extends Action {
             for (let i = annotate2D.length - 1; i >= 0; i--) {
                 obj = annotate2D[i];
 
-                if (renderView.isRenderable(obj) && obj.isContainPosition(imgPos)) {
+                if (obj.visible !== false && renderView.isRenderable(obj) && obj.isContainPosition(imgPos)) {
                     findObject = obj;
                     break;
                 }
@@ -157,7 +159,7 @@ export default class SelectAction extends Action {
         }
 
         if (!findObject && renderView.renderBox) {
-            let annotate3D = renderView.get3DObject();
+            let annotate3D = renderView.get3DObject().filter((object) => object.visible !== false);
             let projectPos = get(THREE.Vector2, 1).copy(imgPos);
             this.getProjectImgPos(projectPos);
             this.raycaster.setFromCamera(projectPos, this.renderView.camera);
@@ -259,9 +261,10 @@ export default class SelectAction extends Action {
         const trackId = projection.userData?.trackId;
         const sources = this.renderView.pointCloud.getAnnotate3D().filter(
             (candidate): candidate is GroundPolygon | GroundPolyline | IrregularWall =>
-                (projection instanceof ProjectedPolygon && candidate instanceof GroundPolygon) ||
-                (projection instanceof ProjectedPolyline && candidate instanceof GroundPolyline) ||
-                (projection instanceof ProjectedIrregularWall && candidate instanceof IrregularWall),
+                candidate.visible !== false &&
+                ((projection instanceof ProjectedPolygon && candidate instanceof GroundPolygon) ||
+                    (projection instanceof ProjectedPolyline && candidate instanceof GroundPolyline) ||
+                    (projection instanceof ProjectedIrregularWall && candidate instanceof IrregularWall)),
         );
         const linked = sources.find(
             (candidate) =>

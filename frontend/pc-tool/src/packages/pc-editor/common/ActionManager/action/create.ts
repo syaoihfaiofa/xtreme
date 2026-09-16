@@ -286,6 +286,7 @@ export const createParkingSlot = define({
                             classType: classConfig?.name,
                             classId: classConfig?.id,
                             motionMode: 'STATIC' as any,
+                            syncDistance: 10,
                         };
                         const parkingSlot = new GroundPolygon(points);
                         parkingSlot.userData = userData;

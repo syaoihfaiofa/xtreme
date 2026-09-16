@@ -144,7 +144,10 @@
                     {{ datasetClass.name }}
                   </Select.Option>
                 </Select>
-                <Select v-model:value="row.motionMode">
+                <span v-if="isParkingSlotModel">
+                  {{ t('business.models.runModel.motionStatic') }}
+                </span>
+                <Select v-else v-model:value="row.motionMode">
                   <Select.Option value="STATIC">
                     {{ t('business.models.runModel.motionStatic') }}
                   </Select.Option>
@@ -226,8 +229,10 @@
   const isSceneTrackingModel = computed(
     () =>
       props.modelCode === 'LIDAR_DETECTION' ||
-      props.modelCode === 'IMAGE_KEYPOINT_LIFTED_DETECTION',
+      props.modelCode === 'IMAGE_KEYPOINT_LIFTED_DETECTION' ||
+      props.modelCode === 'PARKING_SLOT_DETECTION',
   );
+  const isParkingSlotModel = computed(() => props.modelCode === 'PARKING_SLOT_DETECTION');
 
   const selectedSceneIdsModel = computed<number[]>({
     get: () => props.selectedSceneIds || [],
@@ -365,6 +370,11 @@
         changeOkLoading(false);
         return;
       }
+      if (isParkingSlotModel.value && preModelResults.classMappings?.some((mapping) => !mapping.datasetClassId)) {
+        createMessage.error(t('business.models.runModel.selectDatasetClass'));
+        changeOkLoading(false);
+        return;
+      }
     }
     // 判断data
     if (props.modelType !== 'model' && Number(getDataCount.value) === 0) {
@@ -396,9 +406,11 @@
       return {
         name: item.name,
         code: item.code,
-        datasetClassId: matched?.id,
-        motionMode:
-          normalizedName === 'person'
+        // Parking slots require an explicit operator choice; name equality is not a mapping.
+        datasetClassId: isParkingSlotModel.value ? undefined : matched?.id,
+        motionMode: isParkingSlotModel.value
+          ? MotionMode.STATIC
+          : normalizedName === 'person'
             ? MotionMode.DYNAMIC_VARIABLE_SIZE
             : MotionMode.STATIC,
       };
@@ -447,7 +459,7 @@
       pageSize: 1000,
     });
     datasetClasses.value = (response.list || [])
-      .filter((item) => item.toolType === 'CUBOID')
+      .filter((item) => item.toolType === (isParkingSlotModel.value ? 'PARKING_SLOT' : 'CUBOID'))
       .map((item) => ({
         id: Number(item.id),
         name: item.name,

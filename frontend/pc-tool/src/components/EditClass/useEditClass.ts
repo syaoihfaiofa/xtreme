@@ -12,6 +12,7 @@ import useControl from './useControl';
 
 let SOURCE_CLASS = 'edit_class';
 const DEFAULT_SYNC_DISTANCE = 12;
+const DEFAULT_GROUND_POLYGON_SYNC_DISTANCE = 10;
 const DEFAULT_GROUND_POLYLINE_SYNC_DISTANCE = 15;
 const DEFAULT_SYNC_MAX_DISAPPEAR_GAP = 50;
 const DEFAULT_SYNC_LOCATION_GAP_MS = 1000;
@@ -509,6 +510,7 @@ export default function useEditClass() {
     function getSyncDistance(userData?: IUserData, object?: AnnotateObject) {
         const value = Number(userData?.syncDistance);
         if (Number.isFinite(value) && value > 0) return value;
+        if (object instanceof GroundPolygon) return DEFAULT_GROUND_POLYGON_SYNC_DISTANCE;
         return object instanceof GroundPolyline
             ? DEFAULT_GROUND_POLYLINE_SYNC_DISTANCE
             : DEFAULT_SYNC_DISTANCE;

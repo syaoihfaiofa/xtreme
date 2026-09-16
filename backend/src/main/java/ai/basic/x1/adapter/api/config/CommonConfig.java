@@ -213,6 +213,11 @@ public class CommonConfig implements WebMvcConfigurer {
     }
 
     @Bean
+    public ParkingSlotSceneInferenceUseCase parkingSlotSceneInferenceUseCase() {
+        return new ParkingSlotSceneInferenceUseCase();
+    }
+
+    @Bean
     public SceneInferenceFinalizer sceneInferenceFinalizer() {
         return new SceneInferenceFinalizer();
     }
