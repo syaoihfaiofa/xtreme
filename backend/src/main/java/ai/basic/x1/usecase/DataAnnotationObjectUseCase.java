@@ -245,6 +245,8 @@ public class DataAnnotationObjectUseCase {
         var lambdaQueryWrapper = Wrappers.lambdaQuery(DataAnnotationObject.class);
         lambdaQueryWrapper.select(DataAnnotationObject::getSourceId);
         lambdaQueryWrapper.eq(DataAnnotationObject::getDataId, dataId);
+        lambdaQueryWrapper.eq(DataAnnotationObject::getSourceType,
+                DataAnnotationObjectSourceTypeEnum.MODEL);
         lambdaQueryWrapper.isNotNull(DataAnnotationObject::getSourceId);
         lambdaQueryWrapper.groupBy(DataAnnotationObject::getSourceId);
         var dataAnnotationObjectList = dataAnnotationObjectDAO.list(lambdaQueryWrapper);

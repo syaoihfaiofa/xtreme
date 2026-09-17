@@ -1,5 +1,6 @@
 package ai.basic.x1.adapter.api.controller;
 
+import ai.basic.x1.adapter.api.annotation.user.LoggedUser;
 import ai.basic.x1.adapter.dto.*;
 import ai.basic.x1.adapter.dto.request.DatasetRequestDTO;
 import ai.basic.x1.adapter.exception.ApiException;
@@ -46,6 +47,35 @@ public class DatasetController extends BaseDatasetController {
 
     @Autowired
     private ClassUseCase classUseCase;
+
+    @Autowired
+    private DatasetLabelSourceUseCase datasetLabelSourceUseCase;
+
+    @Autowired
+    private DatasetLabelSnapshotUseCase datasetLabelSnapshotUseCase;
+
+    @GetMapping("{datasetId}/labelSources")
+    public DatasetLabelSourcesBO listLabelSources(@PathVariable Long datasetId) {
+        return datasetLabelSourceUseCase.list(datasetId);
+    }
+
+    @PostMapping("{datasetId}/labelSources/{snapshotId}/restore")
+    public LabelSnapshotRestoreBO restoreLabelSnapshot(
+            @PathVariable Long datasetId,
+            @PathVariable Long snapshotId,
+            @LoggedUser LoggedUserDTO userDTO) {
+        return datasetLabelSnapshotUseCase.restore(
+                datasetId,
+                snapshotId,
+                userDTO.getId());
+    }
+
+    @DeleteMapping("{datasetId}/labelSources/{snapshotId}")
+    public void deleteLabelSnapshot(
+            @PathVariable Long datasetId,
+            @PathVariable Long snapshotId) {
+        datasetLabelSnapshotUseCase.delete(datasetId, snapshotId);
+    }
 
 
     @PostMapping("create")

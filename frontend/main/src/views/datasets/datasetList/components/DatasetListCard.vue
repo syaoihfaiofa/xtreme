@@ -100,6 +100,10 @@
                 <Icon class="ml-3 mr-2" icon="ant-design:setting-outlined" size="12" />
                 <span class="text-sm">{{ t('business.dataset.settings') }}</span>
               </div>
+              <div class="item" @click="handleManageLabels">
+                <Icon class="ml-3 mr-2" icon="ant-design:tags-outlined" size="12" />
+                <span class="text-sm">标签管理</span>
+              </div>
               <div
                 class="item"
                 @click="
@@ -213,7 +217,9 @@
   const itemId = ref();
   const itemName = ref();
   const props = defineProps<Props>();
-  // const emit = defineEmits(['fetchList', 'closeCreateModal']);
+  const emit = defineEmits<{
+    (event: 'manageLabels', datasetId: number): void;
+  }>();
   const go = useGo();
   const handleGo = (id) => {
     setDatasetBreadcrumb(props.data.name, props.data.type);
@@ -234,6 +240,10 @@
   const handleSettings = (e, data: DatasetListItem) => {
     e.stopPropagation();
     openSettingsModal(true, { datasetId: data.id });
+  };
+  const handleManageLabels = (event: MouseEvent) => {
+    event.stopPropagation();
+    emit('manageLabels', Number(props.data.id));
   };
 </script>
 <style lang="less" scoped>

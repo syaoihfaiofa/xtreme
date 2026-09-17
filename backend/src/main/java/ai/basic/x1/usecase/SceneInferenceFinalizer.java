@@ -253,7 +253,7 @@ public class SceneInferenceFinalizer {
                 || Math.hypot(first.x - second.x, first.y - second.y) <= distanceThreshold;
     }
 
-    private static Box boxFromAttributes(JSONObject attributes) {
+    static Box boxFromAttributes(JSONObject attributes) {
         JSONObject contour = attributes == null ? null : attributes.getJSONObject("contour");
         JSONObject center = contour == null ? null : contour.getJSONObject("center3D");
         JSONObject size = contour == null ? null : contour.getJSONObject("size3D");

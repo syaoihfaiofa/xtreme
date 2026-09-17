@@ -1,5 +1,6 @@
 package ai.basic.x1.usecase;
 
+import ai.basic.x1.adapter.port.dao.DataAnnotationObjectDAO;
 import ai.basic.x1.adapter.port.dao.ModelDAO;
 import ai.basic.x1.adapter.port.dao.ModelDatasetResultDAO;
 import ai.basic.x1.adapter.port.dao.ModelRunRecordDAO;
@@ -9,6 +10,7 @@ import ai.basic.x1.adapter.port.dao.redis.ModelSerialNoCountDAO;
 import ai.basic.x1.adapter.port.dao.redis.ModelSerialNoIncrDAO;
 import ai.basic.x1.entity.*;
 import ai.basic.x1.entity.RunRecordQueryBO;
+import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.entity.enums.RunStatusEnum;
 import ai.basic.x1.entity.enums.SortEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
@@ -52,6 +54,9 @@ public class ModelRunRecordUseCase {
 
     @Autowired
     private ModelDatasetResultDAO modelDatasetResultDAO;
+
+    @Autowired
+    private DataAnnotationObjectDAO dataAnnotationObjectDAO;
 
     @Autowired
     private ModelSerialNoCountDAO modelSerialNoCountDAO;
@@ -132,6 +137,9 @@ public class ModelRunRecordUseCase {
         if (modelRunRecord == null) {
             return;
         }
+        dataAnnotationObjectDAO.remove(new LambdaUpdateWrapper<DataAnnotationObject>()
+                .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.MODEL)
+                .eq(DataAnnotationObject::getSourceId, id));
         modelRunRecordDAO.removeById(id);
         var modelRunRecordId = modelRunRecord.getId();
 

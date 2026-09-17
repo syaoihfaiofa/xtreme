@@ -5,6 +5,34 @@ import { utils } from 'pc-editor';
 const IMAGE_KEYPOINT_LIFTED_DETECTION = 'IMAGE_KEYPOINT_LIFTED_DETECTION';
 const LIDAR_FUSION = 'LIDAR_FUSION';
 
+export interface CompletedSceneModelRun {
+    recordId: number;
+    modelId: number;
+    modelName: string;
+    modelCode: string;
+    createdAt?: string;
+    frameCount: number;
+    objectCount: number;
+}
+
+export interface MergeModelRunsRequest {
+    datasetId: number;
+    sceneId: number;
+    modelRunRecordIds: number[];
+    mode: 'APPEND' | 'REPLACE';
+}
+
+export interface MergeModelRunsResult {
+    writtenObjectCount: number;
+    frameCount: number;
+    skippedFrames: number[];
+    snapshotId?: number;
+}
+
+interface ApiResponse<T> {
+    data: T;
+}
+
 export async function getModelList(datasetType?: string) {
     let url = '/api/model/list';
     let data = await get(url);
@@ -52,4 +80,23 @@ export async function getModelResult(dataIds: string[], recordId: string) {
 export async function runModel(config: any) {
     let url = '/api/data/modelAnnotate';
     return await post(url, config);
+}
+
+export async function getCompletedSceneModelRuns(
+    sceneId: string,
+): Promise<CompletedSceneModelRun[]> {
+    const response = await get<ApiResponse<CompletedSceneModelRun[]>>(
+        `/api/data/scene/${sceneId}/completedModelRuns`,
+    );
+    return response.data || [];
+}
+
+export async function mergeModelRunsToGt(
+    request: MergeModelRunsRequest,
+): Promise<MergeModelRunsResult> {
+    const response = await post<ApiResponse<MergeModelRunsResult>>(
+        '/api/data/mergeModelRunsToGt',
+        request,
+    );
+    return response.data;
 }

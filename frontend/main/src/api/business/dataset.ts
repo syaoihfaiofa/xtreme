@@ -357,6 +357,47 @@ export const exportDataRecordCallBack = (params: { serialNumbers: string }) =>
     },
   });
 
+export interface DatasetLabelSources {
+  current: {
+    objectCount: number;
+    sceneCounts: Array<{ sceneId: number; objectCount: number }>;
+  };
+  snapshots: Array<{
+    id: number;
+    sceneId: number;
+    name: string;
+    objectCount: number;
+    createdAt?: string;
+  }>;
+  modelRuns: Array<{
+    recordId: number;
+    modelName: string;
+    status: string;
+    objectCount: number;
+    createdAt?: string;
+  }>;
+}
+
+export interface RestoreLabelSnapshotResult {
+  newSnapshotId?: number;
+  writtenObjectCount: number;
+}
+
+export const getDatasetLabelSources = (datasetId: number) =>
+  defHttp.get<DatasetLabelSources>({
+    url: `${Api.DATASET}/${datasetId}/labelSources`,
+  });
+
+export const restoreDatasetLabelSnapshot = (datasetId: number, snapshotId: number) =>
+  defHttp.post<RestoreLabelSnapshotResult>({
+    url: `${Api.DATASET}/${datasetId}/labelSources/${snapshotId}/restore`,
+  });
+
+export const deleteDatasetLabelSnapshot = (datasetId: number, snapshotId: number) =>
+  defHttp.delete<void>({
+    url: `${Api.DATASET}/${datasetId}/labelSources/${snapshotId}`,
+  });
+
 export const generatePresignedUrl = (params: GetPresignedParams) =>
   defHttp.get<ResponsePresignedParams>({
     url: `${Api.DATA}/generatePresignedUrl`,

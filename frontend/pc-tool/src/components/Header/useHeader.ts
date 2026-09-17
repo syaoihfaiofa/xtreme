@@ -86,6 +86,76 @@ export default function useHeader() {
         editor.showMsg('success', bsState.reviewMode ? '已开启审阅模式' : '已关闭审阅模式');
     }
 
+    const canMergeModelRuns = computed(() => {
+        const frame = editor.getCurrentFrame();
+        return !editor.state.config.showSingleImgView && !!frame?.sceneId;
+    });
+
+    async function onMergeModelRunsToGt(): Promise<void> {
+        const frame = editor.getCurrentFrame();
+        if (!frame?.datasetId || !frame.sceneId) {
+            editor.showMsg('warning', '当前帧不属于可合并的场景');
+            return;
+        }
+        let mergeStarted = false;
+        try {
+            const selection = (await editor.showModal('MergeModelRunsToGt', {
+                title: '合并模型结果为 Ground Truth',
+                width: 680,
+                data: { sceneId: frame.sceneId },
+            })) as {
+                modelRunRecordIds: number[];
+                mode: 'APPEND' | 'REPLACE';
+            };
+            if (selection.mode === 'REPLACE') {
+                await editor.showModal('ModalConfirm', {
+                    title: '确认替换',
+                    data: {
+                        content: '当前场景人工标注会先备份，再被所选模型结果覆盖。',
+                        okText: '确认替换',
+                        cancelText: '取消',
+                        btns: ['ok', 'cancel'],
+                    },
+                });
+            }
+            mergeStarted = true;
+            editor.showLoading({
+                type: 'loading',
+                content: `正在合并 ${selection.modelRunRecordIds.length} 个模型结果，请勿关闭页面…`,
+            });
+            const result = await api.mergeModelRunsToGt({
+                datasetId: Number(frame.datasetId),
+                sceneId: Number(frame.sceneId),
+                modelRunRecordIds: selection.modelRunRecordIds,
+                mode: selection.mode,
+            });
+            editor.showLoading({
+                type: 'loading',
+                content: '合并完成，正在刷新当前场景…',
+            });
+            const affectedFrames = editor.state.frames
+                .filter((item) => item.sceneId === frame.sceneId)
+                .map((item) => item.id);
+            affectedFrames.forEach((frameId) => {
+                const target = editor.state.frames.find((item) => item.id === frameId);
+                if (target) target.sources = undefined;
+            });
+            editor.dataManager.invalidateFrameObjects(affectedFrames);
+            await editor.loadFrame(editor.state.frameIndex, false, true);
+            editor.showMsg(
+                result.skippedFrames.length > 0 ? 'warning' : 'success',
+                `已写入 ${result.writtenObjectCount} 个对象，跳过 ${result.skippedFrames.length} 帧`,
+            );
+        } catch (error: unknown) {
+            const message = error instanceof Error ? error.message : '';
+            if (message && message !== 'cancel') {
+                editor.showMsg('error', message);
+            }
+        } finally {
+            if (mergeStarted) editor.showLoading(false);
+        }
+    }
+
     function onMarkTrackCorrect() {
         editor.markSelectedTrackReviewedCorrect();
     }
@@ -362,5 +432,7 @@ export default function useHeader() {
         onModify,
         onToggleReviewMode,
         onMarkTrackCorrect,
+        onMergeModelRunsToGt,
+        canMergeModelRuns,
     };
 }

@@ -41,6 +41,7 @@
             :data="item"
             @fetchList="fetchList"
             @closeCreateModal="closeCreateModal"
+            @manageLabels="selectedDatasetId = $event"
           />
         </ScrollContainer>
       </div>
@@ -87,6 +88,7 @@
             <CustomRadio :options="typeFilter" v-model:type="type" />
           </CollContainer>
         </div>
+        <LabelSourceManager :dataset-id="selectedDatasetId" />
       </div>
     </div>
   </div>
@@ -107,6 +109,7 @@
   import { useModal } from '/@/components/Modal';
   import CreateDatasetModal from './components/CreateDatasetForm.vue';
   import ListCard from './components/DatasetListCard.vue';
+  import LabelSourceManager from './components/LabelSourceManager.vue';
   import { datasetListSortOption, SortTypeOption } from '../datasetContent/components/data';
   import { SortTypeEnum } from '/@/api/model/baseModel';
   import { ScrollContainer, ScrollActionType } from '/@/components/Container/index';
@@ -126,6 +129,7 @@
   const end = ref<Nullable<Dayjs>>(null);
   const scrollRef = ref<Nullable<ScrollActionType>>(null);
   const name = ref<string>('');
+  const selectedDatasetId = ref<number | null>(null);
   const sortField = ref<SortFieldEnum>(SortFieldEnum.CREATED_AT);
   const sortType = ref<SortTypeEnum>(SortTypeEnum.ASC);
   const { t } = useI18n();

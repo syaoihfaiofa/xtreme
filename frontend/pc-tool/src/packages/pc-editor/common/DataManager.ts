@@ -20,7 +20,7 @@ import Editor from '../Editor';
 import { Event as EditorEvent } from 'pc-editor';
 // import * as api from '../api';
 import * as utils from '../utils';
-import { Const, ICmdName, IFilter, IUserData } from '../type';
+import { Const, ICmdName, IFilter, IUserData, SourceType } from '../type';
 import Event from '../config/event';
 import * as THREE from 'three';
 import {
@@ -89,7 +89,9 @@ export default class DataManager {
                 withoutTrack.push(object);
                 return;
             }
-            const dedupeKey = `${trackId}:${object.objectType}`;
+            const sourceType = object.userData?.sourceType || SourceType.DATA_FLOW;
+            const sourceId = object.userData?.sourceId || this.editor.state.config.withoutTaskId;
+            const dedupeKey = `${sourceType}:${sourceId}:${trackId}:${object.objectType}`;
             const existing = keptByTrack.get(dedupeKey);
             if (!existing) {
                 keptByTrack.set(dedupeKey, object);
@@ -114,7 +116,11 @@ export default class DataManager {
         objects.forEach((object) => {
             const userData = object.userData as Required<IUserData>;
             const sourceId = userData.sourceId || withoutTaskId;
-            const valid = filterMap.all || filterMap.source[sourceId];
+            const sourceKey =
+                userData.sourceType === SourceType.SNAPSHOT
+                    ? `${SourceType.SNAPSHOT}:${sourceId}`
+                    : sourceId;
+            const valid = filterMap.all || filterMap.source[sourceKey];
             if (!valid) return;
             // 3D annotations are Three.js objects. Do not restrict this to Box:
             // parking slots and future LiDAR shapes must survive a frame reload too.

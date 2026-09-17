@@ -98,6 +98,7 @@ export enum SourceType {
     MODEL = 'MODEL',
     IMPORTED = 'IMPORTED',
     INFERENCE = 'INFERENCE',
+    SNAPSHOT = 'SNAPSHOT',
 }
 
 export interface IResultSource {

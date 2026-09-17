@@ -4,6 +4,9 @@ import ai.basic.x1.adapter.api.annotation.user.LoggedUser;
 import ai.basic.x1.adapter.dto.*;
 import ai.basic.x1.adapter.dto.request.DataInfoSplitFilterDTO;
 import ai.basic.x1.adapter.dto.request.DataInfoSplitReqDTO;
+import ai.basic.x1.adapter.dto.request.MergeModelRunsToGtDTO;
+import ai.basic.x1.adapter.dto.response.CompletedSceneModelRunDTO;
+import ai.basic.x1.adapter.dto.response.MergeModelRunsToGtResultDTO;
 import ai.basic.x1.adapter.exception.ApiException;
 import ai.basic.x1.adapter.port.rpc.dto.DatasetModelResultDTO;
 import ai.basic.x1.entity.*;
@@ -73,6 +76,12 @@ public class DataInfoController extends BaseDatasetController {
 
     @Autowired
     protected UploadDataUseCase uploadDataUseCase;
+
+    @Autowired
+    private ModelRunGroundTruthMergeUseCase modelRunGroundTruthMergeUseCase;
+
+    @Autowired
+    private DatasetLabelSourceUseCase datasetLabelSourceUseCase;
 
     @PostMapping("upload")
     public String upload(@RequestBody @Validated DataInfoUploadDTO dto, @LoggedUser LoggedUserDTO userDTO) throws IOException {
@@ -255,6 +264,29 @@ public class DataInfoController extends BaseDatasetController {
     @PostMapping("backupLabels")
     public String backupLabels(@Validated @RequestBody DataLabelBackupDTO dto) {
         return String.valueOf(dataInfoUsecase.backupLabels(dto));
+    }
+
+    @PostMapping("mergeModelRunsToGt")
+    public MergeModelRunsToGtResultDTO mergeModelRunsToGt(
+            @Validated @RequestBody MergeModelRunsToGtDTO dto,
+            @LoggedUser LoggedUserDTO userDTO) {
+        var request = DefaultConverter.convert(dto, MergeModelRunsToGtBO.class);
+        var result = modelRunGroundTruthMergeUseCase.merge(request, userDTO.getId());
+        return DefaultConverter.convert(result, MergeModelRunsToGtResultDTO.class);
+    }
+
+    @GetMapping("scene/{sceneId}/completedModelRuns")
+    public List<CompletedSceneModelRunDTO> listCompletedSceneModelRuns(
+            @PathVariable Long sceneId) {
+        return DefaultConverter.convert(
+                modelRunGroundTruthMergeUseCase.listCompletedRuns(sceneId),
+                CompletedSceneModelRunDTO.class);
+    }
+
+    @GetMapping("getDataLabelSnapshots/{dataId}")
+    public List<DatasetLabelSourcesBO.SnapshotSource> getDataLabelSnapshots(
+            @PathVariable Long dataId) {
+        return datasetLabelSourceUseCase.listSnapshotsForData(dataId);
     }
 
     @GetMapping("findExportRecordBySerialNumbers")

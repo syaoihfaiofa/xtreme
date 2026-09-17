@@ -72,7 +72,7 @@
             else filterMap[e] = true;
         });
 
-        let tabs = state.sources.filter((e) => hasAll || filterMap[e.sourceId]);
+        let tabs = state.sources.filter((e) => hasAll || filterMap[sourceKey(e)]);
 
         return tabs;
     });
@@ -117,6 +117,10 @@
         });
         return filters;
     });
+
+    function sourceKey(source: IResultSource): string {
+        return source.sourceId;
+    }
 
     function onSelect(value: string) {
         let ALL = state.config.FILTER_ALL;

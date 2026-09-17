@@ -70,7 +70,17 @@
             {{ inferenceStatusText }}
         </div>
         <div class="item-wrap">
-            <!-- Save -->
+            <a-button
+                v-if="canMergeModelRuns"
+                class="basic-btn merge-gt"
+                :disabled="blocking"
+                size="large"
+                title="Merge model results into Ground Truth"
+                @click="onMergeModelRunsToGt"
+            >
+                <template #icon><MergeCellsOutlined /></template>
+                <div class="title">Merge</div>
+            </a-button>
             <a-button
                 v-if="has(BsUIType.reviewMode)"
                 class="basic-btn review-mode"
@@ -205,6 +215,7 @@
         SaveOutlined,
         CloseOutlined,
         CheckCircleOutlined,
+        MergeCellsOutlined,
         AuditOutlined,
         UnorderedListOutlined,
     } from '@ant-design/icons-vue';
@@ -238,6 +249,8 @@
         onModify,
         onToggleReviewMode,
         onMarkTrackCorrect,
+        onMergeModelRunsToGt,
+        canMergeModelRuns,
     } = useHeader();
     let { has, canEdit } = useUI();
     let { init } = useFlow();

@@ -247,4 +247,19 @@ public class CommonConfig implements WebMvcConfigurer {
         return new ReconstructionUseCase();
     }
 
+    @Bean
+    public DatasetLabelSnapshotUseCase datasetLabelSnapshotUseCase() {
+        return new DatasetLabelSnapshotUseCase();
+    }
+
+    @Bean
+    public DatasetLabelSourceUseCase datasetLabelSourceUseCase() {
+        return new DatasetLabelSourceUseCase();
+    }
+
+    @Bean
+    public ModelRunGroundTruthMergeUseCase modelRunGroundTruthMergeUseCase() {
+        return new ModelRunGroundTruthMergeUseCase();
+    }
+
 }

@@ -186,6 +186,7 @@ export async function getSyncTrackObjectBatch(
         rows.forEach((row: any) => {
             const dataId = String(row.dataId);
             objectsMap[dataId] = (row.objects || [])
+                .filter((object: any) => object.sourceType !== SourceType.SNAPSHOT)
                 .map((object: any) => {
                     const { id, sourceId, sourceType, classId } = object;
                     const classAttributes = object.classAttributes || {};
@@ -193,10 +194,10 @@ export async function getSyncTrackObjectBatch(
                     try {
                         return utils.translateToObject(
                             Object.assign(
-                                { backId: id, sourceId, sourceType, classId },
                                 rest,
                                 meta || {},
                                 contour || {},
+                                { backId: id, sourceId, sourceType, classId },
                             ),
                         );
                     } catch (error) {
@@ -228,6 +229,7 @@ export async function getDataObject(dataIds: string[] | string | number) {
     data.forEach((e: any) => {
         const { dataId, objects, classificationValues } = e;
         objectsMap[String(dataId)] = (objects || [])
+            .filter((object: any) => object.sourceType !== SourceType.SNAPSHOT)
             .map((o: any) => {
                 let { id, sourceId, sourceType, classId } = o;
                 const classAttributes = o.classAttributes || {};
@@ -235,10 +237,10 @@ export async function getDataObject(dataIds: string[] | string | number) {
                 try {
                     return utils.translateToObject(
                         Object.assign(
-                            { backId: id, sourceId, sourceType, classId },
                             rest,
                             meta || {},
                             contour || {},
+                            { backId: id, sourceId, sourceType, classId },
                         ),
                     );
                 } catch (error) {
@@ -515,10 +517,7 @@ export async function getLockRecord(datasetId: string) {
     return data;
 }
 export async function getResultSources(dataId: string) {
-    let url = `/api/data/getDataModelRunResult/${dataId}`;
-    // let url = `/api/dataset/dataset/getDatasetAnnotateResult/${datasetId}`;
-    let data = await get(url);
-
+    const data = await get(`/api/data/getDataModelRunResult/${dataId}`);
     const payload = data.data;
     if (!Array.isArray(payload)) {
         return [] as IResultSource[];
