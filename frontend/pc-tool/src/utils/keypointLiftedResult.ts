@@ -45,6 +45,7 @@ function toSourceAnnotation(
         modelClass: candidate.modelClass,
         classType: candidate.classType || candidate.modelClass,
         confidence: candidate.confidence,
+        trackName: candidate.trackName,
         // The 2D stitched overlay and its canonical 3D result deliberately
         // share a track id. This lets subsequent ground-polygon edits refresh
         // the prediction overlay in place instead of creating a second one.

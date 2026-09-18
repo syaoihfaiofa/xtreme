@@ -73,8 +73,6 @@ public class ParkingSlotSceneInferenceUseCase {
             DatasetInferenceConfig.ClassMapping mapping = mappings.get(key(modelClass.getCode()));
             if (mapping != null && modelClass.getName() != null) mappings.put(key(modelClass.getName()), mapping);
         }
-        List<Point> cameraCenters = cameraCenters(dataInfoUseCase.findById(frames.get(0).getId()));
-
         List<Track> tracks = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
         for (DataInfo frame : frames) {
@@ -82,6 +80,7 @@ public class ParkingSlotSceneInferenceUseCase {
             if (!complete(pose)) { skipped.add(frame.getId() + ": missing pose"); continue; }
             var frameInfo = dataInfoUseCase.findById(frame.getId());
             if (!ParkingSlotDetectionModelReqConverter.hasStitchedImage(frameInfo)) { skipped.add(frame.getId() + ": missing stitched_img"); continue; }
+            List<Point> cameraCenters = cameraCenters(frameInfo);
             List<ImageKeypointLiftedObjectBO.ObjectBO> objects;
             try {
                 objects = detect(runId, datasetId, frame.getId(), model, frameInfo, modelClasses, config);
@@ -92,18 +91,26 @@ public class ParkingSlotSceneInferenceUseCase {
             for (ImageKeypointLiftedObjectBO.ObjectBO object : objects) {
                 DatasetInferenceConfig.ClassMapping mapping = mappings.get(key(object.getModelClass()));
                 if (mapping == null || object.getPoints() == null || object.getPoints().size() != 4) continue;
+                List<Point> local = object.getPoints().stream()
+                        .map(point -> new Point(point.getX().doubleValue(), point.getY().doubleValue(), point.getZ().doubleValue()))
+                        .collect(Collectors.toList());
                 List<Point> world = object.getPoints().stream().map(p -> localToWorld(p, pose)).collect(Collectors.toList());
+                double cameraDistance = distanceToNearestCameraFootprint(local, cameraCenters);
                 Track track = tracks.stream().filter(t -> t.classId.equals(mapping.getDatasetClassId()))
                         .filter(t -> iou(t.world, world) >= config.getAssociationIou()).findFirst().orElse(null);
                 if (track == null) {
-                    track = new Track(mapping.getDatasetClassId(), object.getModelClass(), object.getConfidence(), world);
+                    track = new Track(mapping.getDatasetClassId(), object.getModelClass(), object.getConfidence(), world,
+                            cameraDistance, frame.getId(), object.getSourceViewIndexes(), object.getSourceKeypoints());
                     tracks.add(track);
-                } else if (object.getConfidence().compareTo(track.confidence) > 0) {
+                } else if (cameraDistance < track.cameraDistance) {
+                    // For a static slot, geometry from the camera-nearest observation is the representative.
                     track.world = world; track.confidence = object.getConfidence(); track.modelClass = object.getModelClass();
+                    track.cameraDistance = cameraDistance; track.sourceDataId = frame.getId();
+                    track.sourceViewIndexes = object.getSourceViewIndexes(); track.sourceKeypoints = object.getSourceKeypoints();
                 }
             }
         }
-        writeTracks(runId, datasetId, frames, poses, tracks, config.getAssociationIou(), cameraCenters);
+        writeTracks(runId, datasetId, frames, poses, tracks, config.getAssociationIou());
         return skipped;
     }
 
@@ -126,7 +133,7 @@ public class ParkingSlotSceneInferenceUseCase {
     }
 
     private void writeTracks(Long runId, Long datasetId, List<DataInfo> frames, Map<Long, SceneLocation> poses,
-                             List<Track> tracks, double protectedIou, List<Point> cameraCenters) {
+                             List<Track> tracks, double protectedIou) {
         List<Long> ids = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
         List<DataAnnotationObject> protectedObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .in(DataAnnotationObject::getDataId, ids).in(DataAnnotationObject::getSourceType,
@@ -134,18 +141,18 @@ public class ParkingSlotSceneInferenceUseCase {
         dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class).in(DataAnnotationObject::getDataId, ids)
                 .eq(DataAnnotationObject::getSourceType, DataAnnotationObjectSourceTypeEnum.MODEL)
                 .eq(DataAnnotationObject::getSourceId, runId));
+        for (int index = 0; index < tracks.size(); index++) tracks.get(index).trackName = String.valueOf(index + 1);
         List<DataAnnotationObject> inserts = new ArrayList<>();
         for (DataInfo frame : frames) {
             SceneLocation pose = poses.get(frame.getId()); if (!complete(pose)) continue;
             for (Track track : tracks) {
                 List<Point> local = track.world.stream().map(p -> worldToLocal(p, pose)).collect(Collectors.toList());
-                // A static slot is only useful in frames where it is near the ego vehicle.
-                // This mirrors the editor's ground-polygon sync-radius behavior.
-                if (distanceToNearestCameraFootprint(local, cameraCenters) > PARKING_SLOT_SYNC_DISTANCE_METERS) continue;
+                // The sync radius is measured from the rear-axle center, the local-coordinate origin.
+                if (distanceToFootprint(local) > PARKING_SLOT_SYNC_DISTANCE_METERS) continue;
                 if (overlapsProtected(local, track.classId, protectedObjects, frame.getId(), protectedIou)) continue;
                 inserts.add(DataAnnotationObject.builder().datasetId(datasetId).dataId(frame.getId()).classId(track.classId)
                         .sourceType(DataAnnotationObjectSourceTypeEnum.MODEL).sourceId(runId)
-                        .classAttributes(attributes(track, local)).build());
+                        .classAttributes(attributes(track, local, frame.getId())).build());
             }
         }
         if (!inserts.isEmpty()) dataAnnotationObjectDAO.saveBatch(inserts);
@@ -164,14 +171,23 @@ public class ParkingSlotSceneInferenceUseCase {
         return false;
     }
 
-    private cn.hutool.json.JSONObject attributes(Track track, List<Point> points) {
+    private cn.hutool.json.JSONObject attributes(Track track, List<Point> points, Long dataId) {
         JSONArray jsonPoints = new JSONArray();
         for (Point p : points) jsonPoints.add(JSONUtil.createObj().set("x", p.x).set("y", p.y).set("z", p.z));
-        return JSONUtil.createObj().set("type", "GROUND_POLYGON").set("contour", JSONUtil.createObj().set("points", jsonPoints))
-                .set("trackId", track.trackId).set("motionMode", InferenceMotionModeEnum.STATIC.name())
+        JSONObject result = JSONUtil.createObj().set("type", "GROUND_POLYGON").set("contour", JSONUtil.createObj().set("points", jsonPoints))
+                .set("trackId", track.trackId).set("trackName", track.trackName)
+                .set("sourceDataId", track.sourceDataId).set("motionMode", InferenceMotionModeEnum.STATIC.name())
                 .set("syncDistance", PARKING_SLOT_SYNC_DISTANCE_METERS)
                 .set("parkingOpeningEdge", "P3_P0").set("modelClass", track.modelClass)
                 .set("confidence", track.confidence);
+        // Only the representative/source frame has model-authored 2D points.  Keeping
+        // those points avoids a second 3D-to-image projection and makes it identical to
+        // a single-frame model run. Other frames intentionally use their final 3D projection.
+        if (dataId.equals(track.sourceDataId) && track.sourceViewIndexes != null && track.sourceKeypoints != null) {
+            result.set("sourceViewIndexes", track.sourceViewIndexes);
+            result.set("sourceKeypoints", track.sourceKeypoints);
+        }
+        return result;
     }
 
     private static boolean complete(SceneLocation p) { return p != null && p.getPosX() != null && p.getPosY() != null && p.getPosZ() != null && p.getYaw() != null; }
@@ -252,5 +268,15 @@ public class ParkingSlotSceneInferenceUseCase {
     private static Point intersection(Point p,Point q,Point a,Point b){double dx=q.x-p.x,dy=q.y-p.y,ex=b.x-a.x,ey=b.y-a.y,d=dx*ey-dy*ex; if(Math.abs(d)<1e-9)return p; double t=((a.x-p.x)*ey-(a.y-p.y)*ex)/d;return new Point(p.x+t*dx,p.y+t*dy,p.z+t*(q.z-p.z));}
     private static double area(List<Point> points){double sum=0;for(int i=0;i<points.size();i++){Point a=points.get(i),b=points.get((i+1)%points.size());sum+=a.x*b.y-b.x*a.y;}return sum/2;}
     static class Point { final double x,y,z; Point(double x,double y,double z){this.x=x;this.y=y;this.z=z;} }
-    private static class Track { final Long classId; final String trackId=UUID.randomUUID().toString(); String modelClass; java.math.BigDecimal confidence; List<Point> world; Track(Long id,String label,java.math.BigDecimal confidence,List<Point> world){this.classId=id;this.modelClass=label;this.confidence=confidence;this.world=world;} }
+    private static class Track {
+        final Long classId; final String trackId=UUID.randomUUID().toString(); String trackName;
+        String modelClass; java.math.BigDecimal confidence; List<Point> world; double cameraDistance; Long sourceDataId;
+        List<Integer> sourceViewIndexes; List<List<java.math.BigDecimal>> sourceKeypoints;
+        Track(Long id, String label, java.math.BigDecimal confidence, List<Point> world, double cameraDistance,
+              Long sourceDataId, List<Integer> sourceViewIndexes, List<List<java.math.BigDecimal>> sourceKeypoints) {
+            this.classId=id; this.modelClass=label; this.confidence=confidence; this.world=world;
+            this.cameraDistance=cameraDistance; this.sourceDataId=sourceDataId;
+            this.sourceViewIndexes=sourceViewIndexes; this.sourceKeypoints=sourceKeypoints;
+        }
+    }
 }

@@ -5,6 +5,7 @@ import { IFrame, IObject, IUserData, Const } from '../type';
 import { ResourceLoader } from './DataResource';
 import { AnnotateObject } from 'pc-render';
 import Event from '../config/event';
+import { expandKeypointLiftedCandidates } from '../../../utils/keypointLiftedResult';
 
 export default class LoadManager {
     editor: Editor;
@@ -125,7 +126,7 @@ export default class LoadManager {
                     utils.lookupByFrameId(data.classificationMap, frame.id) || {},
                 );
 
-                let objects = utils.objectsMapForFrame(data.objectsMap, frame.id);
+                let objects = this.expandSourceKeypoints(utils.objectsMapForFrame(data.objectsMap, frame.id));
                 let annotates = utils.convertObject2Annotate(objects, this.editor);
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
                 this.editor.dataManager.markFrameObjectsComplete(frame.id);
@@ -274,7 +275,7 @@ export default class LoadManager {
             }
 
             filterFrames.forEach((frame) => {
-                let objects = utils.objectsMapForFrame(data.objectsMap, frame.id);
+                let objects = this.expandSourceKeypoints(utils.objectsMapForFrame(data.objectsMap, frame.id));
                 frame.queryTime = data.queryTime;
 
                 frame.classifications = utils.copyClassification(
@@ -294,6 +295,12 @@ export default class LoadManager {
         } catch (error: any) {
             this.editor.handleErr(error, this.editor.lang('load-object-error'));
         }
+    }
+
+    private expandSourceKeypoints(objects: IObject[]): IObject[] {
+        if (!objects.some((object) => Array.isArray((object as any).sourceKeypoints))) return objects;
+        // Parking-slot sourceKeypoints describe the stitched image, appended after camera views.
+        return expandKeypointLiftedCandidates(objects, this.editor.state.imgViews.length - 1);
     }
 
     // setTrackData(objectsMap: Record<string, IObject[]>) {
