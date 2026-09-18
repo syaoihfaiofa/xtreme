@@ -28,6 +28,18 @@ import {
 import * as _ from 'lodash';
 
 export default function hack(editor: Editor) {
+    // Long GroundPolyline previews defer their full projection rebuild until
+    // pointer release.  While dragging, update only the moved image vertex;
+    // this keeps camera overlays responsive without reprojecting the full wall.
+    editor.pc.addEventListener('object_transform', ((event: any) => {
+        const object = event.data?.object;
+        const pointIndex = event.data?.option?.previewPointIndex;
+        if (!(object instanceof GroundPolyline) || !Number.isInteger(pointIndex)) {
+            return;
+        }
+        editor.dataManager.refreshGroundPolylineProjectionPoint(object, pointIndex);
+    }) as any);
+
     let addRenderView = editor.pc.addRenderView;
     editor.pc.addRenderView = (view: RenderView) => {
         if (view instanceof SideRenderView) {
@@ -370,9 +382,17 @@ function updateGroundProjectionPoint(
 
     // Dragging remains smooth because this is false during pointer moves.  On
     // release, use the nearest height-continuous raw return as the final point.
-    const worldPoint = snapToPointCloud
-        ? snapToCurrentGroundPoint(editor, view, imagePoint, planePoint)
-        : planePoint;
+    let worldPoint = planePoint;
+    if (snapToPointCloud) {
+        worldPoint = snapToCurrentGroundPoint(editor, view, imagePoint, planePoint);
+        // An image drag of an L (ground-polyline) vertex is an XY edit on the
+        // vertex's existing height plane.  A nearby raw return can be above a
+        // curb/ground point; use it to refine XY only, otherwise releasing the
+        // pointer lifts the base and the rendered wall top with it.
+        if (source instanceof GroundPolyline) {
+            worldPoint.z = planePoint.z;
+        }
+    }
     const points = source.points3D.map((point) => point.clone());
     points[index].copy(source.worldToLocal(worldPoint.clone()));
     if (source instanceof GroundPolygon && !GroundPolygon.isValidPoints(points)) return;

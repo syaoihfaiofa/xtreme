@@ -386,7 +386,7 @@ export default class DataManager {
         // Parking slots, curbs, and walls are static ground shapes. Any local
         // geometry edit must immediately advertise that it awaits propagation.
         this.editor.markSyncDirtyForGroundShape(object);
-        this.updateGroundShapeProjections(object);
+        this.refreshGroundShapeProjections(object);
         // One P-annotation vertex is shared by the main cloud, all side views and
         // its image projections. Re-render every view after the canonical 3D point
         // has changed so no view keeps a stale handle or projected position.
@@ -422,7 +422,12 @@ export default class DataManager {
         });
     }
 
-    private updateGroundShapeProjections(object: GroundPolygon | GroundPolyline): void {
+    /**
+     * Refreshes derived image overlays only.  It deliberately does not mark an
+     * annotation dirty or notify persistence, so interactive 3D previews can
+     * keep their camera views in sync without creating edit commands.
+     */
+    refreshGroundShapeProjections(object: GroundPolygon | GroundPolyline): void {
         const views = this.editor.pc.renderViews.filter(
             (view) => view instanceof Image2DRenderView,
         ) as Image2DRenderView[];
@@ -490,6 +495,37 @@ export default class DataManager {
                 projection.openingDirection.copy(opening.sub(rear).normalize());
             }
             projection.userData.projectedFromId = object.uuid;
+        });
+    }
+
+    /**
+     * Lightweight preview path for dragging one GroundPolyline vertex.  A long
+     * wall can contain thousands of points, so refreshing every vertex in every
+     * image on each pointer event is unnecessary: only the moved vertex changes.
+     */
+    refreshGroundPolylineProjectionPoint(object: GroundPolyline, pointIndex: number): void {
+        if (!Number.isInteger(pointIndex) || !object.points3D[pointIndex]) return;
+        const views = this.editor.pc.renderViews.filter(
+            (view) => view instanceof Image2DRenderView,
+        ) as Image2DRenderView[];
+        const sourceTrackId = object.userData?.trackId as string | undefined;
+        this.editor.pc.getAnnotate2D().forEach((annotate) => {
+            if (!(annotate instanceof ProjectedPolyline)) return;
+            if (
+                annotate.userData.projectedFromId !== object.uuid &&
+                (!sourceTrackId || annotate.userData.trackId !== sourceTrackId)
+            ) {
+                return;
+            }
+            const view = views.find(
+                (item) => item.id === annotate.viewId || item.renderId === annotate.viewId,
+            );
+            const target = annotate.points[pointIndex];
+            if (!view || !target) return;
+            const projected = view.worldToImg(object.points3D[pointIndex].clone());
+            if (Number.isFinite(projected.x) && Number.isFinite(projected.y)) {
+                target.set(projected.x, projected.y);
+            }
         });
     }
 

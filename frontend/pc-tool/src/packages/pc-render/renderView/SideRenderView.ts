@@ -986,7 +986,7 @@ export default class SideRenderView extends Render {
                 object.setPoints(candidate);
                 this.pointCloud.dispatchEvent({
                     type: Event.OBJECT_TRANSFORM,
-                    data: { object, option: { pointsChanged: true } },
+                    data: { object, option: { pointsChanged: true, previewPointIndex: index } },
                 });
                 this.pointCloud.render();
             }

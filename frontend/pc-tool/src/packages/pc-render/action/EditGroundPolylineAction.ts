@@ -514,7 +514,7 @@ export default class EditGroundPolylineAction extends Action {
             object.setPoints(points);
             this.renderView.pointCloud.dispatchEvent({
                 type: Event.OBJECT_TRANSFORM,
-                data: { object, option: { pointsChanged: true } },
+                data: { object, option: { pointsChanged: true, previewPointIndex: index } },
             });
             this.renderView.pointCloud.render();
         };
