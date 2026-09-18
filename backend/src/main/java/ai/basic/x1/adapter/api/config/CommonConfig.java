@@ -71,6 +71,11 @@ public class CommonConfig implements WebMvcConfigurer {
     }
 
     @Bean
+    public DatasetStatisticsUseCase datasetStatisticsUseCase() {
+        return new DatasetStatisticsUseCase();
+    }
+
+    @Bean
     public FileUseCase fileUseCase() {
         return new FileUseCase();
     }

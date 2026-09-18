@@ -1,9 +1,9 @@
 <template>
   <div class="chart_wrapper">
-    <div class="title">Distribution</div>
+    <div class="title">Label distribution</div>
     <div class="chartContainer">
       <Tabs v-model:activeKey="activeKey" @change="handleChange">
-        <Tabs.TabPane :key="tabPaneEnum.CLASS" tab="Classes" forceRender>
+        <Tabs.TabPane :key="tabPaneEnum.CLASS" tab="Categories" forceRender>
           <ChartEmpty v-if="!hasClassData" tip="No Classes" class="py-80px" />
           <div v-else>
             <!-- <div class="class-legend">
@@ -19,7 +19,7 @@
             <div ref="plotClassRef" class="chartContainer__box"></div>
           </div>
         </Tabs.TabPane>
-        <Tabs.TabPane :key="tabPaneEnum.CLASSIFICATION" tab="Classifications" forceRender>
+        <Tabs.TabPane :key="tabPaneEnum.CLASSIFICATION" tab="Scene attributes" forceRender>
           <ChartEmpty v-if="!hasClassificationData" tip="No Classifications" class="py-80px" />
           <div v-else ref="plotClassificationRef" class="chartContainer__box"></div>
         </Tabs.TabPane>

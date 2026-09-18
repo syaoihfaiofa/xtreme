@@ -2,6 +2,7 @@ import {
   IClassificationData,
   IClassObject,
   IDataStatus,
+  IOverviewDetail,
   ISimilarRecord,
   ISimilarResult,
 } from './model/overviewModel';
@@ -15,6 +16,16 @@ enum Api {
 export const getDataStatusApi = (params: { datasetId: number }) =>
   defHttp.get<IDataStatus>({
     url: `${Api.DATASET}/${params.datasetId}/statistics/dataStatus`,
+    params,
+    headers: {
+      // @ts-ignore
+      ignoreCancelToken: true,
+    },
+  });
+
+export const getOverviewDetailApi = (params: { datasetId: number }) =>
+  defHttp.get<IOverviewDetail>({
+    url: `${Api.DATASET}/${params.datasetId}/statistics/overviewDetail`,
     params,
     headers: {
       // @ts-ignore

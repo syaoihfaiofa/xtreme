@@ -5,6 +5,7 @@
     </div>
     <div class="content">
       <TheProgress :datasetId="(id as unknown as number)" />
+      <TheDatasetInsights :datasetId="datasetId" />
       <TheSimilarity
         v-if="datasetType == datasetTypeEnum.IMAGE"
         :datasetId="id as unknown as number"
@@ -21,6 +22,7 @@
   import TheProgress from './components/TheProgress.vue';
   import TheSimilarity from './components/TheSimilarity.vue';
   import TheDistribution from './components/TheDistribution.vue';
+  import TheDatasetInsights from './components/TheDatasetInsights.vue';
   // icons
   import Scenario from '/@/assets/svg/tags/scenario.svg';
   import ScenarioActive from '/@/assets/svg/tags/scenarioActive.svg';

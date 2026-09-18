@@ -8,6 +8,15 @@ export interface IDataStatus {
   itemCount: number;
 }
 
+export interface IOverviewDetail {
+  sceneCount: number;
+  annotatedFrameCount: number;
+  totalFrameCount: number;
+  positionedObjectCount: number;
+  distanceUnits: Array<{ range: string; objectCount: number }>;
+  sceneUnits: Array<{ sceneId: number; name: string; frameCount: number }>;
+}
+
 export interface IClassObject {
   classUnits: IClassUnits[];
   toolTypeUnits: IToolTypeUnits[];

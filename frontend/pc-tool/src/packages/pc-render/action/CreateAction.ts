@@ -3,6 +3,7 @@ import * as _ from 'lodash';
 
 import { Event } from '../config';
 import MainRenderView from '../renderView/MainRenderView';
+import { selectHeightContinuousHit } from '../utils/groundPolylineSnap';
 import Action from './Action';
 import OrbitControlsAction from './OrbitControlsAction';
 
@@ -443,7 +444,22 @@ export default class CreateAction extends Action {
             const project = this.renderView.getProjectPos(canvasPoint);
             this.raycaster.setFromCamera(project, this.renderView.camera);
             this.raycaster.params.Points = { threshold: 0.25 };
-            const hit = this.raycaster.intersectObject(this.renderView.pointCloud.groupPoints, true)[0];
+            const hits = this.raycaster.intersectObject(this.renderView.pointCloud.groupPoints, true);
+            // The top boundary of an irregular curb is collected directly from
+            // the cloud.  A ray can pass through road, curb and vehicle points;
+            // taking its first hit lets one noisy/occluded sample jump onto a
+            // different surface and makes the whole top edge appear to fly.
+            // Once a boundary has started, retain the closest hit whose height
+            // continues smoothly from the preceding samples.
+            const anchor = this.worldPoints.at(-1);
+            const hit = anchor
+                ? selectHeightContinuousHit(hits, {
+                      anchorZ: anchor.z,
+                      neighborZs: this.worldPoints.length >= 2
+                          ? [this.worldPoints[this.worldPoints.length - 2].z]
+                          : [],
+                  })
+                : hits[0];
             if (hit?.point) this.worldPoints.push(hit.point.clone());
             return;
         }

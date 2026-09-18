@@ -46,6 +46,9 @@ public class DatasetController extends BaseDatasetController {
     private DataClassificationOptionUseCase dataClassificationOptionUseCase;
 
     @Autowired
+    private DatasetStatisticsUseCase datasetStatisticsUseCase;
+
+    @Autowired
     private ClassUseCase classUseCase;
 
     @Autowired
@@ -172,6 +175,11 @@ public class DatasetController extends BaseDatasetController {
     public List<DataClassificationOptionDTO> statisticsClassificationData(@PathVariable("datasetId") Long datasetId) {
         var results = dataClassificationOptionUseCase.statisticsDataByOption(datasetId);
         return DefaultConverter.convert(results, DataClassificationOptionDTO.class);
+    }
+
+    @GetMapping("{datasetId}/statistics/overviewDetail")
+    public DatasetOverviewDetailBO statisticsOverviewDetail(@PathVariable("datasetId") Long datasetId) {
+        return datasetStatisticsUseCase.overviewDetail(datasetId);
     }
 
     @PostMapping("createByScenario")
