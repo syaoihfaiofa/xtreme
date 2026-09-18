@@ -32,6 +32,8 @@ interface IStartOption {
     startMouseDown?: boolean;
     endOnDoubleClick?: boolean;
     pointSpace?: 'canvas' | 'ground' | 'point-cloud';
+    /** Bottom boundary used to anchor the first sampled irregular-wall top point. */
+    pointCloudBasePoints?: readonly THREE.Vector3[];
 }
 
 export default class CreateAction extends Action {
@@ -49,6 +51,7 @@ export default class CreateAction extends Action {
     callback: ICallback | undefined | null = null;
     onChange: ICallback | undefined | null = null;
     pointSpace: 'canvas' | 'ground' | 'point-cloud' = 'canvas';
+    pointCloudBasePoints: readonly THREE.Vector3[] = [];
     private pendingClick?: { event: MouseEvent; timer: number };
     private readonly worldPoints: THREE.Vector3[] = [];
     private lastPointer: Point | null = null;
@@ -131,6 +134,7 @@ export default class CreateAction extends Action {
             startMouseDown = false,
             endOnDoubleClick = false,
             pointSpace = 'canvas',
+            pointCloudBasePoints = [],
         } = option;
 
         this.drawType = type;
@@ -139,6 +143,7 @@ export default class CreateAction extends Action {
         this.startMouseDown = startMouseDown;
         this.endOnDoubleClick = endOnDoubleClick;
         this.pointSpace = pointSpace;
+        this.pointCloudBasePoints = pointCloudBasePoints;
         // this.toggle(true);
         this.callback = callback;
         this.onChange = onChange;
@@ -459,7 +464,7 @@ export default class CreateAction extends Action {
                           ? [this.worldPoints[this.worldPoints.length - 2].z]
                           : [],
                   })
-                : hits[0];
+                : this.selectInitialTopBoundaryHit(hits);
             if (hit?.point) this.worldPoints.push(hit.point.clone());
             return;
         }
@@ -479,5 +484,56 @@ export default class CreateAction extends Action {
 
     private getPointCount(): number {
         return this.pointSpace === 'ground' || this.pointSpace === 'point-cloud' ? this.worldPoints.length : this.points.length;
+    }
+
+    /**
+     * The first top-boundary point has no preceding top sample to stabilize it.
+     * Anchor it to the closest position on the already drawn bottom boundary:
+     * a curb top is normally just above that boundary, while a car roof or a
+     * far background point on the same ray is not.  Among plausible points use
+     * the highest one, so the actual curb top wins over the road surface.
+     */
+    private selectInitialTopBoundaryHit<T extends { point: THREE.Vector3 }>(
+        hits: readonly T[],
+    ): T | undefined {
+        if (this.pointCloudBasePoints.length < 2) return hits[0];
+        const MAX_CURB_HEIGHT_METERS = 0.8;
+        const MAX_BELOW_BASE_METERS = 0.1;
+        const candidates = hits.filter((hit) => {
+            const baseZ = this.nearestBaseZ(hit.point);
+            const height = hit.point.z - baseZ;
+            return height >= -MAX_BELOW_BASE_METERS && height <= MAX_CURB_HEIGHT_METERS;
+        });
+        return candidates.reduce<T | undefined>(
+            (selected, hit) => !selected || hit.point.z > selected.point.z ? hit : selected,
+            undefined,
+        );
+    }
+
+    private nearestBaseZ(point: THREE.Vector3): number {
+        let nearestZ = this.pointCloudBasePoints[0].z;
+        let nearestDistanceSquared = Infinity;
+        for (let index = 0; index + 1 < this.pointCloudBasePoints.length; index++) {
+            const start = this.pointCloudBasePoints[index];
+            const end = this.pointCloudBasePoints[index + 1];
+            const dx = end.x - start.x;
+            const dy = end.y - start.y;
+            const lengthSquared = dx * dx + dy * dy;
+            const ratio = lengthSquared <= 1e-8
+                ? 0
+                : THREE.MathUtils.clamp(
+                    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared,
+                    0,
+                    1,
+                );
+            const x = start.x + dx * ratio;
+            const y = start.y + dy * ratio;
+            const distanceSquared = (point.x - x) ** 2 + (point.y - y) ** 2;
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestDistanceSquared = distanceSquared;
+                nearestZ = start.z + (end.z - start.z) * ratio;
+            }
+        }
+        return nearestZ;
     }
 }

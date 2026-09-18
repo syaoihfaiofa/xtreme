@@ -1,6 +1,7 @@
 package ai.basic.x1.usecase;
 
 import org.junit.jupiter.api.Test;
+import cn.hutool.json.JSONArray;
 
 import java.util.List;
 
@@ -25,6 +26,26 @@ class ParkingSlotSceneInferenceUseCaseTest {
     @Test
     void footprintDistanceUsesNearestEdgeRatherThanCenter() {
         assertEquals(10.0, ParkingSlotSceneInferenceUseCase.distanceToFootprint(square(10, -1)), 1e-9);
+    }
+
+    @Test
+    void usesNearestCameraCenterForSyncDistance() {
+        assertEquals(0.0, ParkingSlotSceneInferenceUseCase.distanceToNearestCameraFootprint(
+                square(10, -1), List.of(new ParkingSlotSceneInferenceUseCase.Point(0, 0, 0),
+                        new ParkingSlotSceneInferenceUseCase.Point(10, 0, 0))), 1e-9);
+    }
+
+    @Test
+    void convertsColumnMajorLidarToCameraExtrinsicToCameraCenter() {
+        JSONArray external = new JSONArray();
+        double[] values = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -2, -3, -4, 1};
+        for (double value : values) external.add(value);
+
+        ParkingSlotSceneInferenceUseCase.Point center =
+                ParkingSlotSceneInferenceUseCase.cameraCenterInLidar(external, false);
+        assertEquals(2.0, center.x, 1e-9);
+        assertEquals(3.0, center.y, 1e-9);
+        assertEquals(4.0, center.z, 1e-9);
     }
 
     private static List<ParkingSlotSceneInferenceUseCase.Point> square(double x, double y) {

@@ -17,13 +17,16 @@ import ai.basic.x1.adapter.port.rpc.dto.ImageKeypointLiftedDetectionRespDTO;
 import ai.basic.x1.entity.DatasetInferenceConfig;
 import ai.basic.x1.entity.ImageKeypointLiftedObjectBO;
 import ai.basic.x1.entity.ModelMessageBO;
+import ai.basic.x1.entity.RelationFileBO;
 import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.entity.enums.ItemTypeEnum;
 import ai.basic.x1.entity.enums.InferenceMotionModeEnum;
 import ai.basic.x1.usecase.exception.UsecaseCode;
 import ai.basic.x1.usecase.exception.UsecaseException;
 import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import cn.hutool.http.HttpUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -70,6 +73,7 @@ public class ParkingSlotSceneInferenceUseCase {
             DatasetInferenceConfig.ClassMapping mapping = mappings.get(key(modelClass.getCode()));
             if (mapping != null && modelClass.getName() != null) mappings.put(key(modelClass.getName()), mapping);
         }
+        List<Point> cameraCenters = cameraCenters(dataInfoUseCase.findById(frames.get(0).getId()));
 
         List<Track> tracks = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
@@ -99,7 +103,7 @@ public class ParkingSlotSceneInferenceUseCase {
                 }
             }
         }
-        writeTracks(runId, datasetId, frames, poses, tracks, config.getAssociationIou());
+        writeTracks(runId, datasetId, frames, poses, tracks, config.getAssociationIou(), cameraCenters);
         return skipped;
     }
 
@@ -122,7 +126,7 @@ public class ParkingSlotSceneInferenceUseCase {
     }
 
     private void writeTracks(Long runId, Long datasetId, List<DataInfo> frames, Map<Long, SceneLocation> poses,
-                             List<Track> tracks, double protectedIou) {
+                             List<Track> tracks, double protectedIou, List<Point> cameraCenters) {
         List<Long> ids = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
         List<DataAnnotationObject> protectedObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .in(DataAnnotationObject::getDataId, ids).in(DataAnnotationObject::getSourceType,
@@ -137,7 +141,7 @@ public class ParkingSlotSceneInferenceUseCase {
                 List<Point> local = track.world.stream().map(p -> worldToLocal(p, pose)).collect(Collectors.toList());
                 // A static slot is only useful in frames where it is near the ego vehicle.
                 // This mirrors the editor's ground-polygon sync-radius behavior.
-                if (distanceToFootprint(local) > PARKING_SLOT_SYNC_DISTANCE_METERS) continue;
+                if (distanceToNearestCameraFootprint(local, cameraCenters) > PARKING_SLOT_SYNC_DISTANCE_METERS) continue;
                 if (overlapsProtected(local, track.classId, protectedObjects, frame.getId(), protectedIou)) continue;
                 inserts.add(DataAnnotationObject.builder().datasetId(datasetId).dataId(frame.getId()).classId(track.classId)
                         .sourceType(DataAnnotationObjectSourceTypeEnum.MODEL).sourceId(runId)
@@ -175,18 +179,69 @@ public class ParkingSlotSceneInferenceUseCase {
     private static Point localToWorld(ImageKeypointLiftedObjectBO.Point p, SceneLocation pose) { return localToWorld(new Point(p.getX().doubleValue(), p.getY().doubleValue(), p.getZ().doubleValue()), pose); }
     private static Point localToWorld(Point p, SceneLocation pose) { double c=Math.cos(pose.getYaw()), s=Math.sin(pose.getYaw()); return new Point(pose.getPosX()+c*p.x-s*p.y, pose.getPosY()+s*p.x+c*p.y, pose.getPosZ()+p.z); }
     private static Point worldToLocal(Point p, SceneLocation pose) { double c=Math.cos(pose.getYaw()), s=Math.sin(pose.getYaw()), x=p.x-pose.getPosX(), y=p.y-pose.getPosY(); return new Point(c*x+s*y, -s*x+c*y, p.z-pose.getPosZ()); }
+    private List<Point> cameraCenters(ai.basic.x1.entity.DataInfoBO frame) {
+        String url = findCameraConfigUrl(frame == null ? null : frame.getContent());
+        if (url == null) return List.of(new Point(0, 0, 0));
+        try {
+            JSONObject config = JSONUtil.parseObj(HttpUtil.get(url));
+            List<Point> centers = new ArrayList<>();
+            for (Object value : config.values()) {
+                if (!(value instanceof JSONObject)) continue;
+                JSONObject camera = (JSONObject) value;
+                JSONArray external = camera.getJSONArray("cameraExternal");
+                if (external == null) external = camera.getJSONArray("camera_external");
+                if (external == null || external.size() != 16) continue;
+                boolean rowMajor = Boolean.TRUE.equals(camera.getBool("rowMajor"));
+                centers.add(cameraCenterInLidar(external, rowMajor));
+            }
+            return centers.isEmpty() ? List.of(new Point(0, 0, 0)) : centers;
+        } catch (RuntimeException exception) {
+            return List.of(new Point(0, 0, 0));
+        }
+    }
+
+    private static String findCameraConfigUrl(List<ai.basic.x1.entity.DataInfoBO.FileNodeBO> nodes) {
+        if (nodes == null) return null;
+        for (ai.basic.x1.entity.DataInfoBO.FileNodeBO node : nodes) {
+            RelationFileBO file = node.getFile();
+            if (file != null && file.getPath() != null && file.getPath().replace('\\', '/').matches("(?:^|.*/)camera_config/[^/]+$")) {
+                return file.getInternalUrl() != null && !file.getInternalUrl().isEmpty() ? file.getInternalUrl() : file.getUrl();
+            }
+            String nested = findCameraConfigUrl(node.getFiles());
+            if (nested != null) return nested;
+        }
+        return null;
+    }
+
+    /** cameraExternal maps LiDAR coordinates into camera coordinates. */
+    static Point cameraCenterInLidar(JSONArray external, boolean rowMajor) {
+        double[][] matrix = new double[4][4];
+        for (int row = 0; row < 4; row++) for (int column = 0; column < 4; column++)
+            matrix[row][column] = external.getDouble(rowMajor ? row * 4 + column : column * 4 + row);
+        double tx = matrix[0][3], ty = matrix[1][3], tz = matrix[2][3];
+        return new Point(-(matrix[0][0] * tx + matrix[1][0] * ty + matrix[2][0] * tz),
+                -(matrix[0][1] * tx + matrix[1][1] * ty + matrix[2][1] * tz),
+                -(matrix[0][2] * tx + matrix[1][2] * ty + matrix[2][2] * tz));
+    }
+    static double distanceToNearestCameraFootprint(List<Point> footprint, List<Point> cameraCenters) {
+        return cameraCenters.stream().mapToDouble(camera -> distanceToFootprint(footprint, camera)).min()
+                .orElse(Double.POSITIVE_INFINITY);
+    }
     static double distanceToFootprint(List<Point> points) {
+        return distanceToFootprint(points, new Point(0, 0, 0));
+    }
+    static double distanceToFootprint(List<Point> points, Point origin) {
         if (points == null || points.isEmpty()) return Double.POSITIVE_INFINITY;
         double result = Double.POSITIVE_INFINITY;
         for (int index = 0; index < points.size(); index++) {
             Point end = points.get(index);
-            result = Math.min(result, Math.hypot(end.x, end.y));
+            result = Math.min(result, Math.hypot(end.x - origin.x, end.y - origin.y));
             Point start = points.get((index + points.size() - 1) % points.size());
             double dx = end.x - start.x, dy = end.y - start.y;
             double lengthSquared = dx * dx + dy * dy;
             if (lengthSquared > 0.0000001) {
-                double ratio = Math.max(0, Math.min(1, -(start.x * dx + start.y * dy) / lengthSquared));
-                result = Math.min(result, Math.hypot(start.x + ratio * dx, start.y + ratio * dy));
+                double ratio = Math.max(0, Math.min(1, ((origin.x - start.x) * dx + (origin.y - start.y) * dy) / lengthSquared));
+                result = Math.min(result, Math.hypot(start.x + ratio * dx - origin.x, start.y + ratio * dy - origin.y));
             }
         }
         return result;

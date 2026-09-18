@@ -394,16 +394,33 @@ export const createIrregularWall = define({
         const action = view.getAction('create-obj') as CreateAction;
         this.action = action;
         editor.state.status = StatusType.Create;
-        const collect = (message: string, pointSpace: 'ground' | 'point-cloud'): Promise<THREE.Vector3[] | null> => new Promise((resolve) => {
+        const collect = (
+            message: string,
+            pointSpace: 'ground' | 'point-cloud',
+            pointCloudBasePoints?: readonly THREE.Vector3[],
+        ): Promise<THREE.Vector3[] | null> => new Promise((resolve) => {
             editor.showMsg('info', message);
-            action.start({ type: 'polyline', startClick: true, endOnDoubleClick: true, pointSpace }, (points: THREE.Vector3[]) => resolve(points.map((point) => point.clone())));
+            action.start(
+                {
+                    type: 'polyline',
+                    startClick: true,
+                    endOnDoubleClick: true,
+                    pointSpace,
+                    pointCloudBasePoints,
+                },
+                (points: THREE.Vector3[]) => resolve(points.map((point) => point.clone())),
+            );
         });
 
         const selectedWall = editor.pc.selection.find(
             (object) => object instanceof IrregularWall && object.topPoints.length === 0,
         ) as IrregularWall | undefined;
         if (selectedWall) {
-            const topPoints = await collect('不规则的路沿：绘制顶边，双击完成', 'point-cloud');
+            const topPoints = await collect(
+                '不规则的路沿：绘制顶边，双击完成',
+                'point-cloud',
+                selectedWall.bottomPoints,
+            );
             if (!topPoints || topPoints.length < 2) {
                 editor.showMsg('warning', '顶部至少需要两个点');
                 return null;
