@@ -1,7 +1,6 @@
 import CmdBase from '../CmdBase';
 import * as THREE from 'three';
 import type { ICmdOption } from './index';
-import { refreshGroundPolylineBevDisplay } from '../../../utils/groundPolylineVisibility';
 
 interface IUndoData {
     points: THREE.Vector3[];
@@ -27,7 +26,6 @@ export default class UpdateGroundPolylineVisibilityRange extends CmdBase<
         this.editor.dataManager.setGroundPolygonPoints(object, points);
         object.setSegmentVisibleByView(byView);
         object.setSegmentForceVisibleByView(forceVisibleByView);
-        refreshGroundPolylineBevDisplay(this.editor, object);
         const frame = (object as { frame?: import('../../type').IFrame }).frame;
         this.editor.dataManager.onAnnotatesChange([object], frame, { type: 'userData' });
     }
@@ -37,7 +35,6 @@ export default class UpdateGroundPolylineVisibilityRange extends CmdBase<
         this.editor.dataManager.setGroundPolygonPoints(this.data.object, this.undoData.points);
         this.data.object.setSegmentVisibleByView(this.undoData.byView);
         this.data.object.setSegmentForceVisibleByView(this.undoData.forceVisibleByView);
-        refreshGroundPolylineBevDisplay(this.editor, this.data.object);
         const frame = (this.data.object as { frame?: import('../../type').IFrame }).frame;
         this.editor.dataManager.onAnnotatesChange([this.data.object], frame, { type: 'userData' });
     }

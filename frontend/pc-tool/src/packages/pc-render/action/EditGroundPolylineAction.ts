@@ -25,6 +25,7 @@ export default class EditGroundPolylineAction extends Action {
     onGroundPolylinePointsChange?: (
         object: GroundPolyline,
         points: THREE.Vector3[],
+        beforePoints?: THREE.Vector3[],
     ) => void;
     onGroundPolylineVertexSelect?: (object: GroundPolyline, index: number) => void;
     onGroundPolylineSegmentInsert?: (
@@ -496,6 +497,9 @@ export default class EditGroundPolylineAction extends Action {
         event.stopPropagation();
         this.clearDrag();
         this.handles[index].style.background = '#00e5ff';
+        const beforePoints = object.points3D.map((item) => item.clone());
+        let latestPoints = beforePoints;
+        let changed = false;
         const reference = this.createHeightReference(object, index);
         this.dragMove = (moveEvent: PointerEvent): void => {
             // Main-cloud vertex dragging is an XY edit.  Keep the existing height
@@ -505,12 +509,22 @@ export default class EditGroundPolylineAction extends Action {
             object.updateMatrixWorld();
             const points = object.points3D.map((item) => item.clone());
             points[index].copy(object.worldToLocal(point));
-            this.onGroundPolylinePointsChange?.(object, points);
+            latestPoints = points;
+            changed = true;
+            object.setPoints(points);
+            this.renderView.pointCloud.dispatchEvent({
+                type: Event.OBJECT_TRANSFORM,
+                data: { object, option: { pointsChanged: true } },
+            });
+            this.renderView.pointCloud.render();
         };
         this.dragUp = (): void => {
             const activeObject = this.getObject();
             if (activeObject && this.handles[index]) {
                 this.handles[index].style.background = '#10252a';
+            }
+            if (changed && activeObject === object) {
+                this.onGroundPolylinePointsChange?.(object, latestPoints, beforePoints);
             }
             this.clearDrag();
         };

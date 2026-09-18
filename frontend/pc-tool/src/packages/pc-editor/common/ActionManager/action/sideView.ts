@@ -6,6 +6,16 @@ import { define } from '../define';
 import * as THREE from 'three';
 
 let offset = 0.02;
+
+// Keyboard auto-repeat can produce 30+ events per second.  Updating a wall's
+// image projections and BEV visibility for every one of those events is much
+// more expensive than moving the geometry itself, especially for long walls.
+// Keep the canvas responsive with a local preview and commit once the key burst
+// has settled.  The original points are retained for a single correct undo.
+let groundPolylinePreview:
+    | { object: GroundPolyline; beforePoints: THREE.Vector3[]; timer: number }
+    | undefined;
+const GROUND_POLYLINE_KEYBOARD_COMMIT_DELAY = 120;
 export const translateXPlus = define({
     valid(editor: Editor) {
         return !!getSelectedObject(editor);
@@ -137,13 +147,11 @@ function translate(editor: Editor, offset: THREE.Vector3): void {
         } else {
             points.forEach((point) => point.add(offset));
         }
-        editor.cmdManager.execute(
-            object instanceof GroundPolygon ? 'update-ground-polygon-points' : 'update-ground-polyline-points',
-            {
-            object,
-            points,
-            },
-        );
+        if (object instanceof GroundPolyline) {
+            previewGroundPolylineKeyboardEdit(editor, object, points);
+        } else {
+            editor.cmdManager.execute('update-ground-polygon-points', { object, points });
+        }
         return;
     }
     if (object instanceof IrregularWall) {
@@ -175,13 +183,14 @@ function rotate(editor: Editor, angle: number): void {
             .reduce((sum, point) => sum.add(point), new THREE.Vector3())
             .multiplyScalar(1 / object.points3D.length);
         const rotation = new THREE.Matrix4().makeRotationZ(angle);
-        editor.cmdManager.execute(
-            object instanceof GroundPolygon ? 'update-ground-polygon-points' : 'update-ground-polyline-points',
-            {
-            object,
-            points: object.points3D.map((point) => point.clone().sub(center).applyMatrix4(rotation).add(center)),
-            },
+        const points = object.points3D.map((point) =>
+            point.clone().sub(center).applyMatrix4(rotation).add(center),
         );
+        if (object instanceof GroundPolyline) {
+            previewGroundPolylineKeyboardEdit(editor, object, points);
+        } else {
+            editor.cmdManager.execute('update-ground-polygon-points', { object, points });
+        }
         return;
     }
     if (object instanceof IrregularWall) {
@@ -202,6 +211,50 @@ function rotate(editor: Editor, angle: number): void {
 
     const rotation = getRotationZ(Math.abs(angle), Math.sign(angle), object);
     editor.cmdManager.execute('update-transform', { object, transform: { rotation } });
+}
+
+function previewGroundPolylineKeyboardEdit(
+    editor: Editor,
+    object: GroundPolyline,
+    points: THREE.Vector3[],
+): void {
+    if (groundPolylinePreview?.object !== object) {
+        if (groundPolylinePreview) {
+            window.clearTimeout(groundPolylinePreview.timer);
+            commitGroundPolylineKeyboardPreview(editor, groundPolylinePreview);
+        }
+        groundPolylinePreview = {
+            object,
+            beforePoints: object.points3D.map((point) => point.clone()),
+            timer: 0,
+        };
+    }
+    object.setPoints(points);
+    editor.pc.dispatchEvent({
+        type: 'object_transform',
+        data: { object, option: { pointsChanged: true } },
+    });
+    editor.pc.render();
+    if (groundPolylinePreview) {
+        window.clearTimeout(groundPolylinePreview.timer);
+        groundPolylinePreview.timer = window.setTimeout(() => {
+            if (!groundPolylinePreview || groundPolylinePreview.object !== object) return;
+            const preview = groundPolylinePreview;
+            groundPolylinePreview = undefined;
+            commitGroundPolylineKeyboardPreview(editor, preview);
+        }, GROUND_POLYLINE_KEYBOARD_COMMIT_DELAY);
+    }
+}
+
+function commitGroundPolylineKeyboardPreview(
+    editor: Editor,
+    preview: { object: GroundPolyline; beforePoints: THREE.Vector3[] },
+): void {
+    editor.cmdManager.execute('update-ground-polyline-points', {
+        object: preview.object,
+        points: preview.object.points3D.map((point) => point.clone()),
+        beforePoints: preview.beforePoints,
+    });
 }
 
 function updateIrregularWallPoints(

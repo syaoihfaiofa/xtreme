@@ -1,7 +1,6 @@
 import CmdBase from '../CmdBase';
 import { GroundPolyline } from 'pc-render';
 import type { ICmdOption } from './index';
-import { refreshGroundPolylineBevDisplay } from '../../../utils/groundPolylineVisibility';
 
 export default class UpdateGroundPolylineSegmentVisibility extends CmdBase<
     ICmdOption['update-ground-polyline-segment-visibility'],
@@ -13,7 +12,6 @@ export default class UpdateGroundPolylineSegmentVisibility extends CmdBase<
             this.undoData = JSON.parse(JSON.stringify(object.segmentVisibleByView));
         }
         object.setSegmentVisibleForView(viewKey, segmentVisible);
-        refreshGroundPolylineBevDisplay(this.editor, object);
         const frame = (object as { frame?: import('../../type').IFrame }).frame;
         this.editor.dataManager.onAnnotatesChange([object], frame, { type: 'userData' });
     }
@@ -21,7 +19,6 @@ export default class UpdateGroundPolylineSegmentVisibility extends CmdBase<
     undo(): void {
         if (!this.undoData) return;
         this.data.object.setSegmentVisibleByView(this.undoData);
-        refreshGroundPolylineBevDisplay(this.editor, this.data.object);
         const frame = (this.data.object as { frame?: import('../../type').IFrame }).frame;
         this.editor.dataManager.onAnnotatesChange([this.data.object], frame, { type: 'userData' });
     }

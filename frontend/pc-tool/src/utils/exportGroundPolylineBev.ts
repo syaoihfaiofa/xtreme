@@ -1,7 +1,5 @@
 import type { SegmentVisibilityByView, ISegmentVisibilityEntry } from '../packages/pc-editor/type';
 import {
-    deriveBevVisibility,
-    getImageViews,
     toBevExportSegmentVisibility,
 } from '../packages/pc-editor/utils/groundPolylineVisibility';
 import type Editor from '../packages/pc-editor/Editor';
@@ -20,7 +18,7 @@ export interface ITrainingBevPolylineExportInput {
 }
 
 export function toTrainingBevPolylineContour(
-    editor: Editor,
+    _editor: Editor,
     input: ITrainingBevPolylineExportInput,
 ): ITrainingBevPolylineContour {
     const points = input.points.map((point) => ({
@@ -28,47 +26,14 @@ export function toTrainingBevPolylineContour(
         y: point.y,
         z: point.z,
     }));
-    const views = getImageViews(editor);
-    const byView: Record<string, boolean[]> = {};
-    const raw = input.segmentVisibilityByView || {};
-    Object.entries(raw).forEach(([viewKey, entries]) => {
-        if (!Array.isArray(entries)) {
-            return;
-        }
-        const flags = Array.from({ length: Math.max(0, points.length - 1) }, () => true);
-        entries.forEach((entry) => {
-            if (
-                Number.isInteger(entry.index) &&
-                entry.index >= 0 &&
-                entry.index < flags.length
-            ) {
-                flags[entry.index] = entry.visible !== false;
-            }
-        });
-        byView[viewKey] = flags;
-    });
-    const forceVisibleByView: Record<string, boolean[]> = {};
-    Object.entries(input.segmentForceVisibleByView || {}).forEach(([viewKey, entries]) => {
-        const flags = Array.from({ length: Math.max(0, points.length - 1) }, () => false);
-        entries.forEach((entry) => {
-            if (Number.isInteger(entry.index) && entry.index >= 0 && entry.index < flags.length) {
-                flags[entry.index] = entry.visible === true;
-            }
-        });
-        forceVisibleByView[viewKey] = flags;
-    });
-    const vectorPoints = input.points.map(
-        (point) => point.clone() as THREE.Vector3,
-    );
-    const bevVisible = deriveBevVisibility(
-        byView,
-        vectorPoints,
-        views,
-        forceVisibleByView,
-    );
     return {
         points,
-        segmentVisibility: toBevExportSegmentVisibility(bevVisible),
+        // Camera/BEV visibility is no longer part of wall rendering or export.
+        // Keep this legacy field for downstream schema compatibility, with all
+        // segments present.
+        segmentVisibility: toBevExportSegmentVisibility(
+            Array.from({ length: Math.max(0, points.length - 1) }, () => true),
+        ),
     };
 }
 

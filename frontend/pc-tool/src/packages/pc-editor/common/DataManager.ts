@@ -23,9 +23,6 @@ import * as utils from '../utils';
 import { Const, ICmdName, IFilter, IUserData, SourceType } from '../type';
 import Event from '../config/event';
 import * as THREE from 'three';
-import {
-    refreshGroundPolylineBevDisplay,
-} from '../utils/groundPolylineVisibility';
 
 interface ITransform2DBox {
     positions2?: Record<number, THREE.Vector2>;
@@ -389,9 +386,6 @@ export default class DataManager {
         // Parking slots, curbs, and walls are static ground shapes. Any local
         // geometry edit must immediately advertise that it awaits propagation.
         this.editor.markSyncDirtyForGroundShape(object);
-        if (object instanceof GroundPolyline) {
-            refreshGroundPolylineBevDisplay(this.editor, object);
-        }
         this.updateGroundShapeProjections(object);
         // One P-annotation vertex is shared by the main cloud, all side views and
         // its image projections. Re-render every view after the canonical 3D point
@@ -571,12 +565,6 @@ export default class DataManager {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
         this.clearDisplayCache();
-        const polylines = objects.filter(
-            (object): object is GroundPolyline => object instanceof GroundPolyline,
-        );
-        if (polylines.length > 0) {
-            refreshGroundPolylineBevDisplay(this.editor, polylines);
-        }
         this.editor.pc.render();
         this.editor.trackManager.addTrackCount(objects, frame);
         this.editor.dispatchEvent({ type: Event.ANNOTATE_ADD, data: { objects, frame } });

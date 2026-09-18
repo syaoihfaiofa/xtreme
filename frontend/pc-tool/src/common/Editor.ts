@@ -22,7 +22,6 @@ import hotkeys from 'hotkeys-js';
 import * as api from '../api';
 import BusinessManager from './BusinessManager';
 import DataManager from './DataManager';
-import { refreshGroundPolylineBevDisplay } from '../packages/pc-editor/utils/groundPolylineVisibility';
 import { IQaIssue, QA_ISSUE_CODE_LABELS, QaIssueCode } from './qaIssue';
 import ParkingPointCloudDensityManager from './ParkingPointCloudDensityManager';
 
@@ -1095,17 +1094,6 @@ export default class Editor extends BaseEditor {
             frame.needSave = needSaveBeforeRefresh.get(String(frame.id)) === true;
         });
         this.invalidateTrackDisplayCaches();
-        // Only the source frame is mounted with the current camera configuration.  Refreshing
-        // target-frame polylines here would incorrectly render them through the source cameras
-        // before their one-time, frame-local auto-occlusion calculation runs on first open.
-        const syncedPolylines = (this.dataManager.getFrameObject(sourceFrameId) || []).filter(
-            (object): object is GroundPolyline =>
-                object instanceof GroundPolyline &&
-                matchesSyncedTrack(object.userData as IUserData, trackId, sourceClass),
-        );
-        if (syncedPolylines.length > 0) {
-            refreshGroundPolylineBevDisplay(this, syncedPolylines);
-        }
         this.selectByTrackId(trackId);
         // The selected track does not change during sync, so CURRENT_TRACK_CHANGE will not fire.
         // Use a dedicated event: normal ANNOTATE_CHANGE listeners require an objects array.

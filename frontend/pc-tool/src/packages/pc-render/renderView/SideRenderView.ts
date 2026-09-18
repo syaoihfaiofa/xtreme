@@ -70,7 +70,11 @@ export default class SideRenderView extends Render {
     cameraOffset: THREE.Vector3 = new THREE.Vector3();
     onGroundPolygonPointsChange?: (object: GroundPolygon, points: THREE.Vector3[]) => void;
     onGroundPolygonVertexSelect?: (object: GroundPolygon, index: number) => void;
-    onGroundPolylinePointsChange?: (object: GroundPolyline, points: THREE.Vector3[]) => void;
+    onGroundPolylinePointsChange?: (
+        object: GroundPolyline,
+        points: THREE.Vector3[],
+        beforePoints?: THREE.Vector3[],
+    ) => void;
     onIrregularWallPointsChange?: (
         object: IrregularWall,
         side: 'bottom' | 'top',
@@ -950,6 +954,7 @@ export default class SideRenderView extends Render {
             : object.points3D.map((point) => point.clone());
         let latestPoints = points.map((point) => point.clone());
         let irregularWallChanged = false;
+        let groundPolylineChanged = false;
         const right = new THREE.Vector3(1, 0, 0).transformDirection(this.camera.matrixWorld);
         const up = new THREE.Vector3(0, 1, 0).transformDirection(this.camera.matrixWorld);
         const worldPerPixelX = (this.camera.right - this.camera.left) / this.width;
@@ -973,13 +978,25 @@ export default class SideRenderView extends Render {
                 this.pointCloud.dispatchEvent({ type: Event.OBJECT_TRANSFORM, data: { object, option: { pointsChanged: true } } });
                 this.pointCloud.render();
             } else {
-                this.onGroundPolylinePointsChange?.(object, candidate);
+                // Do not run projection/BEV visibility and annotation-change work for
+                // every pointer event.  A long wall can have thousands of segments.
+                // Preview locally, then make one undoable canonical update on release.
+                latestPoints = candidate;
+                groundPolylineChanged = true;
+                object.setPoints(candidate);
+                this.pointCloud.dispatchEvent({
+                    type: Event.OBJECT_TRANSFORM,
+                    data: { object, option: { pointsChanged: true } },
+                });
+                this.pointCloud.render();
             }
         };
         const onUp = (): void => {
             this.enableFit = true;
             if (object instanceof IrregularWall && side && irregularWallChanged) {
                 this.onIrregularWallPointsChange?.(object, side, latestPoints, points);
+            } else if (object instanceof GroundPolyline && groundPolylineChanged) {
+                this.onGroundPolylinePointsChange?.(object, latestPoints, points);
             }
             document.removeEventListener('pointermove', onMove);
             document.removeEventListener('pointerup', onUp);

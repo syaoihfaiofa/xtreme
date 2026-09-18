@@ -71,8 +71,8 @@ function hackSideView(editor: Editor, view: SideRenderView) {
     view.onGroundPolygonPointsChange = (object: GroundPolygon, points: THREE.Vector3[]) => {
         editor.cmdManager.execute('update-ground-polygon-points', { object, points });
     };
-    view.onGroundPolylinePointsChange = (object: GroundPolyline, points: THREE.Vector3[]) => {
-        editor.cmdManager.execute('update-ground-polyline-points', { object, points });
+    view.onGroundPolylinePointsChange = (object: GroundPolyline, points: THREE.Vector3[], beforePoints?: THREE.Vector3[]) => {
+        editor.cmdManager.execute('update-ground-polyline-points', { object, points, beforePoints });
     };
     view.onIrregularWallPointsChange = (
         object: IrregularWall,
@@ -169,10 +169,12 @@ function hackMainView(editor: Editor, view: MainRenderView) {
         editGroundPolylineAction.onGroundPolylinePointsChange = (
             object: GroundPolyline,
             points: THREE.Vector3[],
+            beforePoints?: THREE.Vector3[],
         ): void => {
             editor.cmdManager.execute('update-ground-polyline-points', {
                 object,
                 points,
+                beforePoints,
             });
         };
         editGroundPolylineAction.onExtendHint = (message: string): void => {

@@ -38,6 +38,10 @@ export interface ICmdOption {
     'update-ground-polyline-points': {
         object: import('pc-render').GroundPolyline;
         points: THREE.Vector3[];
+        // A drag preview may already have applied `points` to the object. Keep
+        // the original shape explicitly so the eventual single command remains
+        // undoable.
+        beforePoints?: THREE.Vector3[];
     };
     'insert-ground-polyline-point': {
         object: import('pc-render').GroundPolyline;

@@ -8,9 +8,11 @@ export default class UpdateGroundPolylinePoints extends CmdBase<
     THREE.Vector3[]
 > {
     redo(): void {
-        const { object, points } = this.data;
+        const { object, points, beforePoints } = this.data;
         if (points.length < 2) throw new Error('GroundPolyline requires at least two points');
-        if (!this.undoData) this.undoData = object.points3D.map((point) => point.clone());
+        if (!this.undoData) {
+            this.undoData = (beforePoints || object.points3D).map((point) => point.clone());
+        }
         this.editor.markSyncDirtyForGroundShape(object);
         this.editor.dataManager.setGroundPolygonPoints(object, points);
     }

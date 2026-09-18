@@ -1,10 +1,6 @@
 import * as THREE from 'three';
 
 import type Image2DRenderView from '../../pc-render/renderView/Image2DRenderView';
-import {
-    getRelevantViewKeysForSegment,
-    isSegmentProjectedInView as isSegmentRelevantInCameraViews,
-} from '../../pc-render/utils/polylineProjection';
 
 export interface ISegmentVisibilityEntry {
     index: number;
@@ -14,8 +10,6 @@ export interface ISegmentVisibilityEntry {
 export type SegmentVisibilityByView = Record<string, ISegmentVisibilityEntry[]>;
 
 export const CAMERA_VIEW_KEYS: readonly string[] = ['0', '1', '2', '3'];
-
-const SEGMENT_VISIBILITY_SAMPLES = 33;
 
 export function isCameraViewKey(viewKey: string): boolean {
     return CAMERA_VIEW_KEYS.includes(viewKey);
@@ -192,87 +186,6 @@ export function isPointInsideImage(point: THREE.Vector2, imgSize: THREE.Vector2)
         point.y >= 0 &&
         point.y <= imgSize.y
     );
-}
-
-export function isSegmentProjectedInView(
-    points3D: THREE.Vector3[],
-    segmentIndex: number,
-    view: Image2DRenderView,
-    allViews: Image2DRenderView[] = [view],
-): boolean {
-    return isSegmentRelevantInCameraViews(points3D, segmentIndex, view, allViews);
-}
-
-function isSegmentAutoVisibleInView(
-    points3D: THREE.Vector3[],
-    segmentIndex: number,
-    view: Image2DRenderView,
-): boolean {
-    if (!isSegmentProjectedInView(points3D, segmentIndex, view, [view])) {
-        return false;
-    }
-    if (!view.hasOcclusionMask()) {
-        return true;
-    }
-    const start = points3D[segmentIndex];
-    const end = points3D[segmentIndex + 1];
-    for (let sampleIndex = 0; sampleIndex < SEGMENT_VISIBILITY_SAMPLES; sampleIndex++) {
-        const t = sampleIndex / (SEGMENT_VISIBILITY_SAMPLES - 1);
-        const projected = view.worldToImg(start.clone().lerp(end, t));
-        if (
-            view.isImagePointAutoVisible(
-                new THREE.Vector2(projected.x, projected.y),
-            )
-        ) {
-            return true;
-        }
-    }
-    return false;
-}
-
-export function resolveEffectiveVisibleForView(
-    manualFlags: boolean[] | undefined,
-    points3D: THREE.Vector3[],
-    view: Image2DRenderView,
-    forceVisibleFlags?: boolean[],
-): boolean[] {
-    const normalized = normalizeSegmentVisible(manualFlags, points3D.length);
-    const forceVisible = normalizeSegmentForceVisible(forceVisibleFlags, points3D.length);
-    return normalized.map((manualVisible, index) => {
-        return (
-            forceVisible[index] ||
-            (manualVisible && isSegmentAutoVisibleInView(points3D, index, view))
-        );
-    });
-}
-
-export function deriveBevVisibility(
-    byView: Record<string, boolean[]>,
-    points3D: THREE.Vector3[],
-    views: Image2DRenderView[],
-    forceVisibleByView: Record<string, boolean[]> = {},
-): boolean[] {
-    const segmentCount = Math.max(0, points3D.length - 1);
-    if (segmentCount === 0) {
-        return [];
-    }
-    const viewsByKey = new Map(
-        views.map((view) => [getViewKeyFromImageView(view), view] as const),
-    );
-    if (CAMERA_VIEW_KEYS.some((viewKey) => !viewsByKey.has(viewKey))) {
-        return Array.from({ length: segmentCount }, () => true);
-    }
-    const effectiveByView = CAMERA_VIEW_KEYS.map((viewKey) =>
-        resolveEffectiveVisibleForView(
-            byView[viewKey],
-            points3D,
-            viewsByKey.get(viewKey) as Image2DRenderView,
-            forceVisibleByView[viewKey],
-        ),
-    );
-    return Array.from({ length: segmentCount }, (_, index) => {
-        return effectiveByView.some((flags) => flags[index]);
-    });
 }
 
 export function toBevExportSegmentVisibility(flags: boolean[]): ISegmentVisibilityEntry[] {
