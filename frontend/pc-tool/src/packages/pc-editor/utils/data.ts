@@ -62,11 +62,13 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
                 updateData.dynamicSyncNextFrames = userData.dynamicSyncNextFrames;
                 updateData.syncPoseSegmentId = userData.syncPoseSegmentId;
                 updateData.syncPoseSegmentsInitialized = userData.syncPoseSegmentsInitialized;
+                updateData.syncSourceDataId = userData.syncSourceDataId;
                 updateData.syncUseZ = userData.syncUseZ;
                 updateData.syncYawOffsetDeg = userData.syncYawOffsetDeg;
                 updateData.syncXOffsetM = userData.syncXOffsetM;
                 updateData.syncYOffsetM = userData.syncYOffsetM;
                 updateData.pendingSyncQuarterTurns = userData.pendingSyncQuarterTurns;
+                updateData.cKeyOrientationOnly = userData.cKeyOrientationOnly === true;
                 updateData.occluded = userData.occluded === true;
                 // updateData.resultType = userData.resultType;
                 // updateData.isStandard = userData.isStandard;

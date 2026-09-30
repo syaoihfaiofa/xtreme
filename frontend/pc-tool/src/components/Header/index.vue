@@ -135,6 +135,17 @@
                 <template #icon><UnorderedListOutlined /></template>
                 <div class="title">{{ $$('btn-qa-list') }}</div>
             </a-button>
+            <a-button
+                v-if="canExportLocations"
+                class="basic-btn"
+                :disabled="blocking"
+                size="large"
+                title="导出原始与校正后的 Location CSV"
+                @click="onExportLocations"
+            >
+                <template #icon><DownloadOutlined /></template>
+                <div class="title">导出 Location</div>
+            </a-button>
             <!-- shortcut -->
             <a-button class="basic-btn" size="large" :disabled="blocking" @click="onHelp">
                 <template #icon
@@ -218,6 +229,7 @@
         MergeCellsOutlined,
         AuditOutlined,
         UnorderedListOutlined,
+        DownloadOutlined,
     } from '@ant-design/icons-vue';
     import { useInjectEditor } from '../../state';
     import useHeader from './useHeader';
@@ -251,6 +263,8 @@
         onMarkTrackCorrect,
         onMergeModelRunsToGt,
         canMergeModelRuns,
+        onExportLocations,
+        canExportLocations,
     } = useHeader();
     let { has, canEdit } = useUI();
     let { init } = useFlow();

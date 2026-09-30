@@ -6,7 +6,7 @@ const en = {
     'track-id': 'Tracking ID',
     'group-id': 'Group ID',
     occluded: 'Fully Occluded',
-    'sensor-distance': 'Sensor distance (nearest Box point, XY plane)',
+    'sensor-distance': 'Sensor distance (nearest annotation point, XY plane)',
     'model-info': 'Model Info',
     'predict-class': 'Predict Class',
     'inference-source': 'Model inference label',

@@ -16,6 +16,11 @@ const EXTEND_HANDLE_OFFSET_PX = 14;
 // A segment insertion handle sits at the midpoint.  Keep it hidden until it
 // has enough room to stay clear of both vertex handles; zooming in reveals it.
 const MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX = 36;
+// Dense curb/wall traces can contain thousands of points. Keep their HTML edit
+// overlay bounded while orbiting; endpoints and an actively selected vertex
+// are added even when they are between sampled controls.
+const MAX_VISIBLE_VERTEX_HANDLES = 160;
+const MAX_VISIBLE_SEGMENT_HANDLES = 160;
 
 type ExtendEnd = 'start' | 'end';
 
@@ -73,12 +78,22 @@ export default class EditGroundPolylineAction extends Action {
             return;
         }
 
-        this.ensureHandles(object.points3D.length);
-        this.ensureSegmentHandles(object.points3D.length - 1);
+        const selectedVertex = this.getSelectedGroundPolylineVertex?.();
+        const vertexIndexes = this.sampleIndices(
+            object.points3D.length,
+            MAX_VISIBLE_VERTEX_HANDLES,
+            selectedVertex?.object === object ? selectedVertex.index : undefined,
+        );
+        const segmentIndexes = this.sampleIndices(
+            object.points3D.length - 1,
+            MAX_VISIBLE_SEGMENT_HANDLES,
+        );
+        this.ensureHandles(vertexIndexes.length);
+        this.ensureSegmentHandles(segmentIndexes.length);
         this.layer.style.display = 'block';
         object.updateMatrixWorld();
         const screenPoints: Array<{ x: number; y: number; visible: boolean }> = [];
-        object.points3D.forEach((point, index) => {
+        object.points3D.forEach((point) => {
             const projected = point
                 .clone()
                 .applyMatrix4(object.matrixWorld)
@@ -91,12 +106,15 @@ export default class EditGroundPolylineAction extends Action {
             const screenX = ((projected.x + 1) / 2) * this.renderView.width;
             const screenY = (1 - (projected.y + 1) / 2) * this.renderView.height;
             screenPoints.push({ x: screenX, y: screenY, visible });
-            const handle = this.handles[index];
+        });
+        vertexIndexes.forEach((index, handleIndex) => {
+            const handle = this.handles[handleIndex];
+            const { x: screenX, y: screenY, visible } = screenPoints[index];
             handle.style.display =
                 visible && !object.isVisibilityBoundaryPoint(index) ? 'block' : 'none';
             handle.style.left = `${screenX}px`;
             handle.style.top = `${screenY}px`;
-            const selectedVertex = this.getSelectedGroundPolylineVertex?.();
+            handle.dataset.index = String(index);
             handle.style.background =
                 this.extendEnd === 'start' && index === 0
                     ? '#00e5ff'
@@ -106,13 +124,13 @@ export default class EditGroundPolylineAction extends Action {
                         ? '#00e5ff'
                       : '#10252a';
         });
-        this.handles.slice(object.points3D.length).forEach((handle) => {
+        this.handles.slice(vertexIndexes.length).forEach((handle) => {
             handle.style.display = 'none';
         });
-        for (let index = 0; index < object.points3D.length - 1; index++) {
+        segmentIndexes.forEach((index, handleIndex) => {
             const start = screenPoints[index];
             const end = screenPoints[index + 1];
-            const handle = this.segmentHandles[index];
+            const handle = this.segmentHandles[handleIndex];
             const canInsert =
                 !this.extendEnd &&
                 start.visible &&
@@ -122,8 +140,9 @@ export default class EditGroundPolylineAction extends Action {
             handle.style.display = canInsert ? 'block' : 'none';
             handle.style.left = `${(start.x + end.x) / 2}px`;
             handle.style.top = `${(start.y + end.y) / 2}px`;
-        }
-        this.segmentHandles.slice(object.points3D.length - 1).forEach((handle) => {
+            handle.dataset.index = String(index);
+        });
+        this.segmentHandles.slice(segmentIndexes.length).forEach((handle) => {
             handle.style.display = 'none';
         });
         this.positionExtendHandle(this.extendStartHandle, screenPoints, 0);
@@ -247,9 +266,6 @@ export default class EditGroundPolylineAction extends Action {
             this.layer.appendChild(handle);
             this.handles.push(handle);
         }
-        this.handles.forEach((handle, index) => {
-            handle.dataset.index = String(index);
-        });
     }
 
     private ensureSegmentHandles(count: number): void {
@@ -269,9 +285,6 @@ export default class EditGroundPolylineAction extends Action {
             this.layer.appendChild(handle);
             this.segmentHandles.push(handle);
         }
-        this.segmentHandles.forEach((handle, index) => {
-            handle.dataset.index = String(index);
-        });
     }
 
     private onVertexPointerDown(event: PointerEvent, index: number): void {
@@ -496,7 +509,7 @@ export default class EditGroundPolylineAction extends Action {
         event.preventDefault();
         event.stopPropagation();
         this.clearDrag();
-        this.handles[index].style.background = '#00e5ff';
+        this.getVertexHandle(index)?.style.setProperty('background', '#00e5ff');
         const beforePoints = object.points3D.map((item) => item.clone());
         let latestPoints = beforePoints;
         let changed = false;
@@ -520,8 +533,9 @@ export default class EditGroundPolylineAction extends Action {
         };
         this.dragUp = (): void => {
             const activeObject = this.getObject();
-            if (activeObject && this.handles[index]) {
-                this.handles[index].style.background = '#10252a';
+            const handle = this.getVertexHandle(index);
+            if (activeObject && handle) {
+                handle.style.background = '#10252a';
             }
             if (changed && activeObject === object) {
                 this.onGroundPolylinePointsChange?.(object, latestPoints, beforePoints);
@@ -530,6 +544,20 @@ export default class EditGroundPolylineAction extends Action {
         };
         document.addEventListener('pointermove', this.dragMove);
         document.addEventListener('pointerup', this.dragUp);
+    }
+
+    private sampleIndices(count: number, maximum: number, requiredIndex?: number): number[] {
+        if (count <= 0) return [];
+        const indexes = new Set<number>();
+        const step = Math.max(1, Math.ceil(count / maximum));
+        for (let index = 0; index < count; index += step) indexes.add(index);
+        indexes.add(count - 1);
+        if (requiredIndex != null && requiredIndex >= 0 && requiredIndex < count) indexes.add(requiredIndex);
+        return Array.from(indexes).sort((a, b) => a - b);
+    }
+
+    private getVertexHandle(index: number): HTMLDivElement | undefined {
+        return this.handles.find((handle) => Number(handle.dataset.index) === index);
     }
 
     private createHeightReference(

@@ -46,6 +46,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -137,6 +138,9 @@ public class DataInfoUseCase {
     private SceneLocationSampleDAO sceneLocationSampleDAO;
 
     @Autowired
+    private SceneLocationOverrideDAO sceneLocationOverrideDAO;
+
+    @Autowired
     private UploadDataUseCase uploadDataUseCase;
 
     @Value("${file.tempPath:/tmp/xtreme1/}")
@@ -153,6 +157,8 @@ public class DataInfoUseCase {
     private static final Long GROUND_TRUTH = -1L;
 
     private static final String GROUND_TRUTH_NAME = "Ground Truth";
+
+    private static final String STATIC_GLOBAL_MAP_TEMPLATE = loadStaticGlobalMapTemplate();
 
     /**
      * Data split
@@ -284,7 +290,7 @@ public class DataInfoUseCase {
                 .pitch(e.getPitch())
                 .build()));
         if (poses.size() == dataIds.size()) {
-            return poses;
+            return applyLocationOverrides(dataIds, poses);
         }
 
         // Older scenes may have location samples but no per-frame scene_location
@@ -299,7 +305,7 @@ public class DataInfoUseCase {
                 .filter(frame -> !poses.containsKey(frame.getId()) && frame.getParentId() != null)
                 .collect(Collectors.groupingBy(DataInfo::getParentId));
         if (framesByScene.isEmpty()) {
-            return poses;
+            return applyLocationOverrides(dataIds, poses);
         }
         List<SceneLocationSample> samples = sceneLocationSampleDAO.list(Wrappers.lambdaQuery(SceneLocationSample.class)
                 .in(SceneLocationSample::getSceneId, framesByScene.keySet())
@@ -333,7 +339,74 @@ public class DataInfoUseCase {
                         .build());
             }
         });
+        return applyLocationOverrides(dataIds, poses);
+    }
+
+    private Map<Long, SceneLocationBO> applyLocationOverrides(
+            Collection<Long> dataIds, Map<Long, SceneLocationBO> poses) {
+        // Ctrl+Y location corrections are stored separately from imported samples. The editor
+        // must receive that effective pose too; otherwise neighbouring-frame registration and
+        // any newly created annotation still appear to use the stale imported location.
+        List<SceneLocationOverride> overrides = sceneLocationOverrideDAO.list(
+                Wrappers.lambdaQuery(SceneLocationOverride.class).in(SceneLocationOverride::getDataId, dataIds));
+        overrides.forEach(override -> poses.put(override.getDataId(), SceneLocationBO.builder()
+                .dataId(override.getDataId())
+                .posX(override.getPosX())
+                .posY(override.getPosY())
+                .posZ(override.getPosZ())
+                .yaw(override.getYaw())
+                .roll(override.getRoll())
+                .pitch(override.getPitch())
+                .build()));
         return poses;
+    }
+
+    /**
+     * Produces a human-readable audit export.  Original imported pose and the effective pose
+     * are kept side by side so a location correction never destroys its source evidence.
+     */
+    public String exportSceneLocationCsv(Long sceneId) {
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sceneId)
+                .eq(DataInfo::getIsDeleted, false)
+                .orderByAsc(DataInfo::getOrderName));
+        if (frames.isEmpty()) {
+            throw new UsecaseException("Scene has no frames: sceneId=" + sceneId);
+        }
+        List<Long> dataIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        Map<Long, SceneLocation> originals = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
+                        .in(SceneLocation::getDataId, dataIds))
+                .stream().collect(Collectors.toMap(SceneLocation::getDataId, item -> item, (first, ignored) -> first));
+        Map<Long, SceneLocationOverride> overrides = sceneLocationOverrideDAO.list(
+                        Wrappers.lambdaQuery(SceneLocationOverride.class).in(SceneLocationOverride::getDataId, dataIds))
+                .stream().collect(Collectors.toMap(SceneLocationOverride::getDataId, item -> item, (first, ignored) -> first));
+        Map<Long, SceneLocationBO> effective = findPoseByDataIds(dataIds);
+        StringBuilder csv = new StringBuilder("data_id,frame_name,corrected,original_x,original_y,original_z,original_yaw,original_pitch,original_roll,effective_x,effective_y,effective_z,effective_yaw,effective_pitch,effective_roll\n");
+        for (DataInfo frame : frames) {
+            SceneLocation original = originals.get(frame.getId());
+            SceneLocationBO pose = effective.get(frame.getId());
+            csv.append(frame.getId()).append(',').append(csvValue(frame.getName())).append(',')
+                    .append(overrides.containsKey(frame.getId())).append(',')
+                    .append(csvValue(original == null ? null : original.getPosX())).append(',')
+                    .append(csvValue(original == null ? null : original.getPosY())).append(',')
+                    .append(csvValue(original == null ? null : original.getPosZ())).append(',')
+                    .append(csvValue(original == null ? null : original.getYaw())).append(',')
+                    .append(csvValue(original == null ? null : original.getPitch())).append(',')
+                    .append(csvValue(original == null ? null : original.getRoll())).append(',')
+                    .append(csvValue(pose == null ? null : pose.getPosX())).append(',')
+                    .append(csvValue(pose == null ? null : pose.getPosY())).append(',')
+                    .append(csvValue(pose == null ? null : pose.getPosZ())).append(',')
+                    .append(csvValue(pose == null ? null : pose.getYaw())).append(',')
+                    .append(csvValue(pose == null ? null : pose.getPitch())).append(',')
+                    .append(csvValue(pose == null ? null : pose.getRoll())).append('\n');
+        }
+        return csv.toString();
+    }
+
+    private static String csvValue(Object value) {
+        if (value == null) return "";
+        String text = String.valueOf(value);
+        return '"' + text.replace("\"", "\"\"") + '"';
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -412,28 +485,74 @@ public class DataInfoUseCase {
                 || !ItemTypeEnum.SCENE.equals(scene.getType())) {
             throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
         }
+        return STATIC_GLOBAL_MAP_TEMPLATE
+                .replace("__SCENE_NAME__", htmlEscape(scene.getName()))
+                .replace("__SCENE_ID__", String.valueOf(sceneId));
+    }
+
+    public JSONObject buildStaticGlobalMapData(Long sceneId) {
+        DataInfo scene = dataInfoDAO.getById(sceneId);
+        if (ObjectUtil.isNull(scene) || Boolean.TRUE.equals(scene.getIsDeleted())
+                || !ItemTypeEnum.SCENE.equals(scene.getType())) {
+            throw new UsecaseException(UsecaseCode.DATA_NOT_FOUND);
+        }
         List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
                 .eq(DataInfo::getParentId, sceneId)
-                .eq(DataInfo::getIsDeleted, false));
+                .eq(DataInfo::getIsDeleted, false)
+                .orderByAsc(DataInfo::getOrderName));
         if (CollUtil.isEmpty(frames)) {
-            return renderStaticGlobalMap(scene.getName(), new JSONArray(), new JSONArray());
+            return staticGlobalMapData(scene.getName(), new JSONArray(), new JSONArray(), new JSONArray());
         }
         List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
         Map<Long, String> frameNameById = frames.stream()
                 .collect(Collectors.toMap(DataInfo::getId, DataInfo::getName));
         List<SceneLocation> locations = sceneLocationDAO.list(Wrappers.lambdaQuery(SceneLocation.class)
                 .in(SceneLocation::getDataId, frameIds));
-        Map<Long, SceneLocation> poseByDataId = locations.stream()
+        Map<Long, SceneLocation> originalPoseByDataId = locations.stream()
                 .collect(Collectors.toMap(SceneLocation::getDataId, l -> l, (a, b) -> a));
+        Map<Long, SceneLocationOverride> overridesByDataId = sceneLocationOverrideDAO.list(
+                        Wrappers.lambdaQuery(SceneLocationOverride.class).in(SceneLocationOverride::getDataId, frameIds))
+                .stream().collect(Collectors.toMap(SceneLocationOverride::getDataId, l -> l, (a, b) -> a));
+        Map<Long, SceneLocationBO> effectivePoseByDataId = findPoseByDataIds(frameIds);
         JSONArray posesJson = new JSONArray();
-        locations.forEach(location -> {
+        JSONArray poseSeriesJson = new JSONArray();
+        List<Long> timestampsNs = frames.stream().map(frame -> SceneLocationImportService.parseTimestampNs(frame.getName()))
+                .collect(Collectors.toList());
+        boolean hasTimelineTimestamp = timestampsNs.stream().allMatch(Objects::nonNull);
+        long firstTimestampNs = hasTimelineTimestamp ? timestampsNs.get(0) : 0L;
+        for (int index = 0; index < frames.size(); index++) {
+            DataInfo frame = frames.get(index);
+            SceneLocation original = originalPoseByDataId.get(frame.getId());
+            SceneLocationBO effective = effectivePoseByDataId.get(frame.getId());
+            if (effective == null) {
+                continue;
+            }
             JSONObject pose = new JSONObject();
-            pose.set("frame", frameNameById.get(location.getDataId()));
-            pose.set("x", valueOrZero(location.getPosX()));
-            pose.set("y", valueOrZero(location.getPosY()));
-            pose.set("yaw", valueOrZero(location.getYaw()));
+            pose.set("frame", frame.getName());
+            pose.set("x", valueOrZero(effective.getPosX()));
+            pose.set("y", valueOrZero(effective.getPosY()));
+            pose.set("yaw", valueOrZero(effective.getYaw()));
             posesJson.add(pose);
-        });
+            JSONObject point = new JSONObject();
+            point.set("frame", frame.getName());
+            point.set("frameIndex", index);
+            point.set("t", hasTimelineTimestamp ? (timestampsNs.get(index) - firstTimestampNs) / 1_000_000_000.0 : index);
+            point.set("timeUnit", hasTimelineTimestamp ? "s" : "frame");
+            point.set("corrected", overridesByDataId.containsKey(frame.getId()));
+            point.set("original", locationJson(original));
+            point.set("effective", locationJson(effective));
+            poseSeriesJson.add(point);
+        }
+        for (int index = 1; index < poseSeriesJson.size(); index++) {
+            JSONObject previous = poseSeriesJson.getJSONObject(index - 1);
+            JSONObject current = poseSeriesJson.getJSONObject(index);
+            double deltaTime = current.getDouble("t") - previous.getDouble("t");
+            if (deltaTime <= 0) {
+                continue;
+            }
+            current.set("originalSpeed", locationSpeed(previous.getJSONObject("original"), current.getJSONObject("original"), deltaTime));
+            current.set("effectiveSpeed", locationSpeed(previous.getJSONObject("effective"), current.getJSONObject("effective"), deltaTime));
+        }
         List<DataAnnotationObject> objects = dataAnnotationObjectDAO.list(
                 Wrappers.lambdaQuery(DataAnnotationObject.class).in(DataAnnotationObject::getDataId, frameIds));
         JSONArray boxesJson = new JSONArray();
@@ -443,7 +562,7 @@ public class DataInfoUseCase {
             if (ObjectUtil.isNull(attrs) || !"STATIC".equals(attrs.getStr("motionMode"))) {
                 continue;
             }
-            SceneLocation location = poseByDataId.get(object.getDataId());
+            SceneLocationBO location = effectivePoseByDataId.get(object.getDataId());
             if (ObjectUtil.isNull(location)) {
                 continue;
             }
@@ -489,7 +608,68 @@ public class DataInfoUseCase {
                     .max().orElse(0.0);
             boxes.forEach(b -> b.set("drift", drift));
         });
-        return renderStaticGlobalMap(scene.getName(), posesJson, boxesJson);
+        return staticGlobalMapData(scene.getName(), posesJson, boxesJson, poseSeriesJson);
+    }
+
+    private static JSONObject staticGlobalMapData(String sceneName, JSONArray poses, JSONArray boxes, JSONArray poseSeries) {
+        JSONObject data = new JSONObject();
+        data.set("sceneName", sceneName);
+        data.set("poses", poses);
+        data.set("boxes", boxes);
+        data.set("poseSeries", poseSeries);
+        return data;
+    }
+
+    private static String loadStaticGlobalMapTemplate() {
+        try (InputStream stream = DataInfoUseCase.class.getResourceAsStream("/static-global-map.html")) {
+            if (stream == null) {
+                throw new IllegalStateException("Missing static-global-map.html resource");
+            }
+            return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to load static global map template", e);
+        }
+    }
+
+    private static JSONObject locationJson(SceneLocation location) {
+        JSONObject pose = new JSONObject();
+        if (location != null) {
+            pose.set("x", location.getPosX());
+            pose.set("y", location.getPosY());
+            pose.set("z", location.getPosZ());
+            pose.set("yaw", location.getYaw());
+            pose.set("pitch", location.getPitch());
+            pose.set("roll", location.getRoll());
+        }
+        return pose;
+    }
+
+    private static JSONObject locationJson(SceneLocationBO location) {
+        JSONObject pose = new JSONObject();
+        if (location != null) {
+            pose.set("x", location.getPosX());
+            pose.set("y", location.getPosY());
+            pose.set("z", location.getPosZ());
+            pose.set("yaw", location.getYaw());
+            pose.set("pitch", location.getPitch());
+            pose.set("roll", location.getRoll());
+        }
+        return pose;
+    }
+
+    private static Double locationSpeed(JSONObject previous, JSONObject current, double deltaTime) {
+        Double previousX = jsonNullableDouble(previous, "x");
+        Double previousY = jsonNullableDouble(previous, "y");
+        Double previousZ = jsonNullableDouble(previous, "z");
+        Double currentX = jsonNullableDouble(current, "x");
+        Double currentY = jsonNullableDouble(current, "y");
+        Double currentZ = jsonNullableDouble(current, "z");
+        if (previousX == null || previousY == null || previousZ == null
+                || currentX == null || currentY == null || currentZ == null) {
+            return null;
+        }
+        return Math.sqrt(Math.pow(currentX - previousX, 2) + Math.pow(currentY - previousY, 2)
+                + Math.pow(currentZ - previousZ, 2)) / deltaTime;
     }
 
     private String renderStaticGlobalMap(String sceneName, JSONArray poses, JSONArray boxes) {
@@ -505,6 +685,11 @@ public class DataInfoUseCase {
     private static double jsonDouble(JSONObject obj, String key) {
         Object value = obj.get(key);
         return value instanceof Number ? ((Number) value).doubleValue() : 0.0;
+    }
+
+    private static Double jsonNullableDouble(JSONObject obj, String key) {
+        Object value = obj.get(key);
+        return value instanceof Number ? ((Number) value).doubleValue() : null;
     }
 
     private static String htmlEscape(String value) {

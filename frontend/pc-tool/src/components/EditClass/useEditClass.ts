@@ -261,7 +261,7 @@ export default function useEditClass() {
         state.reviewedCorrect = objects.every(
             (object) => object.userData?.reviewedCorrect === true,
         );
-        state.sensorDistance = object instanceof Box ? getSensorDistance(object) : 0;
+        state.sensorDistance = getSensorDistance(object);
         state.motionMode =
             (object.userData as IUserData).motionMode ||
             utils.getDefaultMotionMode((object.userData as IUserData).classType);
@@ -342,7 +342,7 @@ export default function useEditClass() {
         state.sourceType = userData.sourceType || '';
         state.occluded = userData.occluded === true;
         state.reviewedCorrect = userData.reviewedCorrect === true;
-        state.sensorDistance = object instanceof Box ? getSensorDistance(object as Box) : 0;
+        state.sensorDistance = getSensorDistance(object);
         state.motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
         state.syncDistance = getSyncDistance(userData, object);
         state.syncMaxDisappearGap = getSyncMaxDisappearGap(userData);
@@ -547,7 +547,14 @@ export default function useEditClass() {
         return Number.isFinite(value) ? value : 0;
     }
 
-    function getSensorDistance(object: Box) {
+    function getSensorDistance(object: AnnotateObject) {
+        if (object instanceof GroundPolygon) {
+            object.updateMatrixWorld();
+            const points = object.points3D.map((point) => point.clone().applyMatrix4(object.matrixWorld));
+            return getDistanceToPolygonXY(points);
+        }
+        if (!(object instanceof Box)) return 0;
+
         const halfX = Math.max(Math.abs(object.scale.x) / 2, 0);
         const halfY = Math.max(Math.abs(object.scale.y) / 2, 0);
         const dx = -object.position.x;
@@ -558,6 +565,39 @@ export default function useEditClass() {
         const outsideX = Math.max(Math.abs(localX) - halfX, 0);
         const outsideY = Math.max(Math.abs(localY) - halfY, 0);
         return Math.sqrt(outsideX * outsideX + outsideY * outsideY);
+    }
+
+    /** Distance from the sensor origin to a parking footprint in the XY plane. */
+    function getDistanceToPolygonXY(points: THREE.Vector3[]): number {
+        if (points.length < 3) return 0;
+        const origin = new THREE.Vector2();
+        const polygon = points.map((point) => new THREE.Vector2(point.x, point.y));
+        if (isPointInPolygonXY(origin, polygon)) return 0;
+
+        let nearestDistance = Infinity;
+        polygon.forEach((start, index) => {
+            const end = polygon[(index + 1) % polygon.length];
+            const edge = end.clone().sub(start);
+            const lengthSquared = edge.lengthSq();
+            const ratio = lengthSquared === 0
+                ? 0
+                : THREE.MathUtils.clamp(origin.clone().sub(start).dot(edge) / lengthSquared, 0, 1);
+            nearestDistance = Math.min(nearestDistance, origin.distanceTo(start.addScaledVector(edge, ratio)));
+        });
+        return Number.isFinite(nearestDistance) ? nearestDistance : 0;
+    }
+
+    function isPointInPolygonXY(point: THREE.Vector2, polygon: THREE.Vector2[]): boolean {
+        let inside = false;
+        for (let current = 0, previous = polygon.length - 1; current < polygon.length; previous = current++) {
+            const a = polygon[current];
+            const b = polygon[previous];
+            const intersects =
+                (a.y > point.y) !== (b.y > point.y) &&
+                point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
+            if (intersects) inside = !inside;
+        }
+        return inside;
     }
 
     function onGroupIdChange() {

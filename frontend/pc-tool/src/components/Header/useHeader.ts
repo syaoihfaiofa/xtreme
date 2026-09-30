@@ -86,6 +86,22 @@ export default function useHeader() {
         editor.showMsg('success', bsState.reviewMode ? '已开启审阅模式' : '已关闭审阅模式');
     }
 
+    const canExportLocations = computed(() => !!editor.getCurrentFrame()?.sceneId);
+
+    function onExportLocations() {
+        const sceneId = editor.getCurrentFrame()?.sceneId;
+        if (!sceneId) {
+            editor.showMsg('warning', '当前帧不属于场景，无法导出 location');
+            return;
+        }
+        const link = document.createElement('a');
+        link.href = `/api/data/exportSceneLocations/${encodeURIComponent(String(sceneId))}`;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    }
+
     const canMergeModelRuns = computed(() => {
         const frame = editor.getCurrentFrame();
         return !editor.state.config.showSingleImgView && !!frame?.sceneId;
@@ -434,5 +450,7 @@ export default function useHeader() {
         onMarkTrackCorrect,
         onMergeModelRunsToGt,
         canMergeModelRuns,
+        onExportLocations,
+        canExportLocations,
     };
 }

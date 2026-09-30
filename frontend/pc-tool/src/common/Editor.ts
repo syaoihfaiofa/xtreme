@@ -78,13 +78,20 @@ function buildSyncedUserDataPatch(
         dynamicSyncNextFrames: fresh.dynamicSyncNextFrames,
         syncPoseSegmentId: fresh.syncPoseSegmentId,
         syncPoseSegmentsInitialized: fresh.syncPoseSegmentsInitialized,
+        syncSourceDataId: fresh.syncSourceDataId,
         syncUseZ: fresh.syncUseZ,
         syncYawOffsetDeg: fresh.syncYawOffsetDeg,
         syncXOffsetM: fresh.syncXOffsetM,
         syncYOffsetM: fresh.syncYOffsetM,
+        // These backend-maintained fields must survive a track refresh. Otherwise the next
+        // Ctrl+Y treats an already corrected box as a first sync and cannot detect its edit.
+        locationCorrectionAnchor: fresh.locationCorrectionAnchor,
+        locationCorrectionBaseline: fresh.locationCorrectionBaseline,
+        locationCorrectionConstraint: fresh.locationCorrectionConstraint,
         // A C-key orientation change is consumed by the backend during fixed-size sync.
         // Explicitly clear any local one-shot marker after the server refresh.
         pendingSyncQuarterTurns: undefined,
+        cKeyOrientationOnly: undefined,
         occluded: fresh.occluded === true,
         syncDirty: fresh.syncDirty === true,
         reviewedCorrect: fresh.reviewedCorrect === true,
@@ -686,7 +693,7 @@ export default class Editor extends BaseEditor {
 
         this.showLoading({ type: 'loading', content: '正在同步到其他帧…' });
         try {
-            await this.runWithSyncLock(() =>
+            const syncResult = await this.runWithSyncLock(() =>
                 this.syncMotionMode(
                     trackId,
                     motionMode,
@@ -698,7 +705,9 @@ export default class Editor extends BaseEditor {
             );
             this.showMsg(
                 'success',
-                dynamicRangeSyncEnabled
+                syncResult?.locationCorrected
+                    ? '已校正当前帧 location 并同步到全场景'
+                    : dynamicRangeSyncEnabled
                     ? `已向前同步 ${normalizedPreviousFrames} 帧，向后同步 ${normalizedNextFrames} 帧`
                     : '已同步到全场景',
             );
@@ -721,7 +730,7 @@ export default class Editor extends BaseEditor {
         classId?: string | number,
         classType?: string,
         sourceObject?: Box | SyncableGroundShape,
-    ) {
+    ): Promise<api.ISyncObjectResult | undefined> {
         if (this.dataManager.isInferenceRunning()) {
             this.showMsg(
                 'warning',
@@ -762,6 +771,15 @@ export default class Editor extends BaseEditor {
                 classType,
                 syncResult.affectedDataIds,
             );
+            // A location correction also reprojects every other static annotation in this
+            // frame (parking slots, curbs, walls and static boxes). Refresh the whole frame,
+            // not merely the selected track, so those server-side geometry updates appear
+            // immediately in the point-cloud editor.
+            if (syncResult.locationCorrected) {
+                this.dataManager.invalidateFrameObjects([sourceFrame.id]);
+                await this.loadFrame(this.state.frameIndex, true, true);
+            }
+            return syncResult;
         } finally {
             // The selected track was persisted through the partial sync-save endpoint.
             // Keep only dirty state that existed before sync so a later normal save does not

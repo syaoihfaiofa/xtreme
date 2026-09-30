@@ -33,6 +33,24 @@
         <div class="item">
             <span class="title">Speed：</span>{{ state.speed }}
         </div>
+        <div class="item">
+            <span class="title">Location：</span>
+            x: {{ state.location.x }}, y: {{ state.location.y }}, z: {{ state.location.z }}
+        </div>
+        <div class="item location-rotation">
+            yaw: {{ state.location.yaw }}, pitch: {{ state.location.pitch }}, roll: {{ state.location.roll }}
+        </div>
+        <div v-if="editor.bsState.syncMode" class="item nearest-static-target">
+            <span class="title">Location 校正目标：</span>
+            <template v-if="state.nearestStaticTrackId">
+                <span>
+                    最近非源 · {{ state.nearestStaticName }} · {{ state.nearestStaticTrackId }}
+                    · {{ state.nearestStaticDistance }} m
+                </span>
+                <button type="button" @click="selectNearestStaticTarget">选中</button>
+            </template>
+            <span v-else>当前帧没有可用的非源静态框</span>
+        </div>
         <Setting />
     </div>
 </template>
@@ -47,7 +65,7 @@
     import { utils } from 'pc-editor';
     import * as api from '../../api';
     // import { CloseCircleOutlined } from '@ant-design/icons-vue';
-    import { IUserData, StatusType, Event as EditorEvent } from 'pc-editor';
+    import { IUserData, MotionMode, StatusType, Event as EditorEvent } from 'pc-editor';
     import * as locale from './lang';
     import Setting from './setting.vue';
 
@@ -72,11 +90,67 @@
         wMax: '' as any,
         hMax: '' as any,
         speed: '--',
+        location: {
+            x: '--',
+            y: '--',
+            z: '--',
+            yaw: '--',
+            pitch: '--',
+            roll: '--',
+        },
+        nearestStaticName: '',
+        nearestStaticTrackId: '',
+        nearestStaticDistance: '--',
     });
 
     const poseCache = new Map<string, api.IScenePose>();
     let speedRequestVersion = 0;
+    let nearestStaticTarget: Box | undefined;
 
+    function sensorDistance(object: Box): number {
+        const halfX = Math.max(Math.abs(object.scale.x) / 2, 0);
+        const halfY = Math.max(Math.abs(object.scale.y) / 2, 0);
+        const dx = -object.position.x;
+        const dy = -object.position.y;
+        const yaw = object.rotation.z || 0;
+        const localX = dx * Math.cos(yaw) + dy * Math.sin(yaw);
+        const localY = -dx * Math.sin(yaw) + dy * Math.cos(yaw);
+        return Math.hypot(
+            Math.max(Math.abs(localX) - halfX, 0),
+            Math.max(Math.abs(localY) - halfY, 0),
+        );
+    }
+
+    function updateNearestStaticTarget() {
+        const currentFrameId = String(editor.getCurrentFrame()?.id || '');
+        const nearest = (pc.getAnnotate3D().filter((object) => {
+            if (!(object instanceof Box)) return false;
+            const userData = object.userData as IUserData;
+            const motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
+            // A box on the current source frame is local annotation evidence only. Its edits
+            // drive propagation, not this frame's location correction, so never offer it here.
+            return motionMode === MotionMode.STATIC
+                && !!userData.trackId
+                && String(userData.syncSourceDataId || '') !== currentFrameId;
+        }) as Box[]).sort((left, right) => sensorDistance(left) - sensorDistance(right))[0];
+        nearestStaticTarget = nearest;
+        if (!nearest) {
+            state.nearestStaticName = '';
+            state.nearestStaticTrackId = '';
+            state.nearestStaticDistance = '--';
+            return;
+        }
+        const userData = nearest.userData as IUserData;
+        state.nearestStaticName = userData.trackName || userData.classType || '未命名目标';
+        state.nearestStaticTrackId = userData.trackId || '无 Track ID';
+        state.nearestStaticDistance = formatNumber(sensorDistance(nearest));
+    }
+
+    function selectNearestStaticTarget() {
+        if (!nearestStaticTarget) return;
+        editor.selectObject(nearestStaticTarget);
+        editor.focusObject(nearestStaticTarget);
+    }
     let update = _.throttle(() => {
         let obj = pc.selection.find((item) => item instanceof Box) as Box;
         if (!obj || pc.groupPoints.children.length === 0) {
@@ -174,20 +248,31 @@
         return undefined;
     }
 
+    function updateLocation(pose?: api.IScenePose): void {
+        const formatPoseValue = (value?: number): string =>
+            Number.isFinite(Number(value)) ? formatNumber(Number(value)) : '--';
+        state.location.x = formatPoseValue(pose?.posX);
+        state.location.y = formatPoseValue(pose?.posY);
+        state.location.z = formatPoseValue(pose?.posZ);
+        state.location.yaw = formatPoseValue(pose?.yaw);
+        state.location.pitch = formatPoseValue(pose?.pitch);
+        state.location.roll = formatPoseValue(pose?.roll);
+    }
+
     async function updateSpeed() {
         const requestVersion = ++speedRequestVersion;
         const { frames, frameIndex } = editor.state;
         const current = frames[frameIndex];
         const previous = frames[frameIndex - 1];
         const next = frames[frameIndex + 1];
-        if (!current || getFrameTimestampMs(current.name) === undefined) {
+        if (!current) {
             state.speed = '--';
+            updateLocation();
             return;
         }
 
         const candidates = [previous, current, next].filter(
-            (frame): frame is NonNullable<typeof frame> =>
-                !!frame && getFrameTimestampMs(frame.name) !== undefined,
+            (frame): frame is NonNullable<typeof frame> => !!frame,
         );
         try {
             const missingIds = candidates
@@ -202,6 +287,7 @@
 
             const currentPose = poseCache.get(String(current.id));
             const currentTime = getFrameTimestampMs(current.name);
+            updateLocation(currentPose);
             if (!currentPose || currentTime === undefined) {
                 state.speed = '--';
                 return;
@@ -236,28 +322,49 @@
             const kmh = (Math.hypot(dx, dy) / elapsedSeconds) * 3.6;
             state.speed = Number.isFinite(kmh) ? `${formatNumber(kmh)} km/h` : '--';
         } catch (error) {
-            if (requestVersion === speedRequestVersion) state.speed = '--';
+            if (requestVersion === speedRequestVersion) {
+                state.speed = '--';
+                updateLocation();
+            }
         }
     }
 
     function onFrameChange() {
         update();
+        updateNearestStaticTarget();
+        updateSpeed();
+    }
+
+    function onAnnotateChange() {
+        update();
+        updateNearestStaticTarget();
+    }
+
+    // Location correction is persisted by track sync and may reload the same
+    // frame. Drop the cached pose before refreshing so the overlay does not
+    // briefly keep the pre-correction x/y/z/yaw/pitch/roll values.
+    function onTrackSyncComplete() {
+        const current = editor.state.frames[editor.state.frameIndex];
+        if (current) poseCache.delete(String(current.id));
         updateSpeed();
     }
 
     onMounted(() => {
-        editor.pc.addEventListener(Event.OBJECT_TRANSFORM, update);
+        editor.pc.addEventListener(Event.OBJECT_TRANSFORM, onAnnotateChange);
         editor.pc.addEventListener(Event.SELECT, onSelect);
-        editor.addEventListener(EditorEvent.ANNOTATE_CHANGE, update);
+        editor.addEventListener(EditorEvent.ANNOTATE_CHANGE, onAnnotateChange);
         editor.addEventListener(EditorEvent.FRAME_CHANGE, onFrameChange);
+        editor.addEventListener(EditorEvent.TRACK_SYNC_COMPLETE, onTrackSyncComplete);
+        updateNearestStaticTarget();
         updateSpeed();
     });
 
     onBeforeUnmount(() => {
-        editor.pc.removeEventListener(Event.OBJECT_TRANSFORM, update);
+        editor.pc.removeEventListener(Event.OBJECT_TRANSFORM, onAnnotateChange);
         editor.pc.removeEventListener(Event.SELECT, onSelect);
-        editor.removeEventListener(EditorEvent.ANNOTATE_CHANGE, update);
+        editor.removeEventListener(EditorEvent.ANNOTATE_CHANGE, onAnnotateChange);
         editor.removeEventListener(EditorEvent.FRAME_CHANGE, onFrameChange);
+        editor.removeEventListener(EditorEvent.TRACK_SYNC_COMPLETE, onTrackSyncComplete);
     });
 </script>
 
@@ -275,5 +382,25 @@
             text-align: left;
             line-height: 20px;
         }
+
+        .location-rotation {
+            padding-left: 54px;
+        }
+
+        .nearest-static-target {
+            color: #ffd666;
+
+            button {
+                margin-left: 6px;
+                padding: 0 4px;
+                color: #ffd666;
+                background: rgba(255, 214, 102, 0.12);
+                border: 1px solid rgba(255, 214, 102, 0.6);
+                border-radius: 2px;
+                cursor: pointer;
+                pointer-events: auto;
+            }
+        }
+
     }
 </style>

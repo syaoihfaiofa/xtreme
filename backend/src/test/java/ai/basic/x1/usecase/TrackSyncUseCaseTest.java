@@ -123,6 +123,56 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void locationCorrection_reconstructsPoseFromStaticWorldAnchor() {
+        TrackSyncUseCase.Pose original = new TrackSyncUseCase.Pose(10D, -4D, 2D, 0.4, -0.1, 0.2);
+        JSONObject center = point(3, -2, 1);
+        JSONObject rotation = point(0.15, -0.05, 0.3);
+
+        JSONObject anchor = TrackSyncUseCase.makeWorldAnchor(center, rotation, original);
+        TrackSyncUseCase.Pose reconstructed = TrackSyncUseCase.poseForAnchor(anchor, center, rotation);
+
+        assertEquals(original.x, reconstructed.x, 0.000000001);
+        assertEquals(original.y, reconstructed.y, 0.000000001);
+        assertEquals(original.z, reconstructed.z, 0.000000001);
+        assertEquals(original.yaw, reconstructed.yaw, 0.000000001);
+        assertEquals(original.roll, reconstructed.roll, 0.000000001);
+        assertEquals(original.pitch, reconstructed.pitch, 0.000000001);
+    }
+
+    @Test
+    void locationCorrection_centerOnlyPreservesCurrentOrientation() {
+        TrackSyncUseCase.Pose original = new TrackSyncUseCase.Pose(10D, -4D, 2D, 0.4, -0.1, 0.2);
+        JSONObject center = point(3, -2, 1);
+        JSONObject anchor = TrackSyncUseCase.makeWorldAnchor(center, point(0, 0, 0), original);
+        TrackSyncUseCase.Pose current = new TrackSyncUseCase.Pose(8D, -3D, 2.5, -0.7, 0.3, -0.2);
+
+        TrackSyncUseCase.Pose corrected = TrackSyncUseCase.poseForAnchorCenter(anchor, center, current);
+
+        assertEquals(current.yaw, corrected.yaw, 0.000000001);
+        assertEquals(current.roll, corrected.roll, 0.000000001);
+        assertEquals(current.pitch, corrected.pitch, 0.000000001);
+    }
+
+    @Test
+    void locationCorrection_rejectsIncompatibleStaticConstraints() {
+        TrackSyncUseCase.Pose first = new TrackSyncUseCase.Pose(0D, 0D, 0D, 0D, 0D, 0D);
+        TrackSyncUseCase.Pose nearby = new TrackSyncUseCase.Pose(0.05, 0D, 0D, Math.toRadians(1), 0D, 0D);
+        TrackSyncUseCase.Pose conflicting = new TrackSyncUseCase.Pose(0.11, 0D, 0D, 0D, 0D, 0D);
+
+        assertTrue(TrackSyncUseCase.compatibleLocationCorrections(first, nearby));
+        assertFalse(TrackSyncUseCase.compatibleLocationCorrections(first, conflicting));
+    }
+
+    @Test
+    void locationCorrection_treatsLegacyObjectsWithoutMotionModeAsStatic() {
+        assertTrue(TrackSyncUseCase.isStaticForFramePoseCorrection(new JSONObject()));
+        assertTrue(TrackSyncUseCase.isStaticForFramePoseCorrection(
+                new JSONObject().set("motionMode", "STATIC")));
+        assertFalse(TrackSyncUseCase.isStaticForFramePoseCorrection(
+                new JSONObject().set("motionMode", "DYNAMIC_VARIABLE_SIZE")));
+    }
+
+    @Test
     void sameTrackId_matchesTrackAfterClassChange() {
         JSONObject oldClassAttributes = new JSONObject()
                 .set("trackId", "track-1")

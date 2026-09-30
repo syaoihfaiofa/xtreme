@@ -26,15 +26,19 @@ import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
+import javax.servlet.http.HttpServletResponse;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -233,6 +237,17 @@ public class DataInfoController extends BaseDatasetController {
         return dataInfoUsecase.findPoseByDataIds(dataIds);
     }
 
+    @GetMapping("exportSceneLocations/{sceneId}")
+    public void exportSceneLocations(@PathVariable Long sceneId, HttpServletResponse response) throws IOException {
+        String filename = "scene_" + sceneId + "_locations.csv";
+        response.setContentType("text/csv;charset=UTF-8");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.setHeader("Content-Disposition", "attachment;filename=" + URLEncoder.encode(filename, "UTF-8")
+                + ";filename*=UTF-8''" + URLEncoder.encode(filename, "UTF-8"));
+        response.getOutputStream().write(new byte[]{(byte) 0xEF, (byte) 0xBB, (byte) 0xBF});
+        response.getOutputStream().write(dataInfoUsecase.exportSceneLocationCsv(sceneId).getBytes(StandardCharsets.UTF_8));
+    }
+
     @PostMapping("importSceneResult/{sceneId}")
     public SceneResultImportResultDTO importSceneResult(@PathVariable Long sceneId,
                                                         @RequestParam("file") MultipartFile file,
@@ -243,8 +258,27 @@ public class DataInfoController extends BaseDatasetController {
     }
 
     @GetMapping(value = "staticGlobalMap/{sceneId}", produces = "text/html;charset=UTF-8")
-    public String staticGlobalMap(@PathVariable Long sceneId) {
-        return dataInfoUsecase.buildStaticGlobalMapHtml(sceneId);
+    public void staticGlobalMap(@PathVariable Long sceneId, HttpServletResponse response) throws IOException {
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        response.setContentType("text/html;charset=UTF-8");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        response.getWriter().write(dataInfoUsecase.buildStaticGlobalMapHtml(sceneId));
+    }
+
+    @GetMapping("staticGlobalMapData/{sceneId}")
+    public JSONObject staticGlobalMapData(@PathVariable Long sceneId, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        return dataInfoUsecase.buildStaticGlobalMapData(sceneId);
+    }
+
+    @GetMapping(value = "staticGlobalMapScript", produces = "application/javascript")
+    public void staticGlobalMapScript(HttpServletResponse response) throws IOException {
+        response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+        response.setContentType("application/javascript;charset=UTF-8");
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        try (var script = new ClassPathResource("static/static-global-map.js").getInputStream()) {
+            response.getOutputStream().write(script.readAllBytes());
+        }
     }
 
     @GetMapping("generatePresignedUrl")

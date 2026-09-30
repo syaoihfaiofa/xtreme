@@ -7,7 +7,7 @@ const zh: ILocale = {
     'track-id': '追踪ID',
     'group-id': '组ID',
     occluded: '完全遮挡',
-    'sensor-distance': '传感器距离（到Box最近点，XY平面）',
+    'sensor-distance': '传感器距离（到标注最近点，XY平面）',
     'model-info': '模型信息',
     'predict-class': '模型标签',
     'inference-source': '模型推理标签',

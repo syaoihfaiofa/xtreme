@@ -141,12 +141,19 @@ export interface IObjectV2 {
     dynamicSyncNextFrames?: number;
     syncPoseSegmentId?: string | number;
     syncPoseSegmentsInitialized?: boolean;
+    /** Frame id currently used as the propagation source for this track. */
+    syncSourceDataId?: string | number;
     syncUseZ?: boolean;
     syncYawOffsetDeg?: number;
     syncXOffsetM?: number;
     syncYOffsetM?: number;
+    locationCorrectionAnchor?: Record<string, any>;
+    locationCorrectionBaseline?: Record<string, any>;
+    locationCorrectionConstraint?: Record<string, any>;
     /** One-shot C-key rotation delta consumed by fixed-size track sync. */
     pendingSyncQuarterTurns?: number;
+    /** One-shot static C-key orientation edit; do not correct location yaw/pitch/roll. */
+    cKeyOrientationOnly?: boolean;
     autoCurbOcclusionPending?: boolean;
     autoCurbOcclusionPointCloudPending?: boolean;
     occluded?: boolean;
@@ -196,12 +203,18 @@ export interface IUserData {
     dynamicSyncNextFrames?: number;
     syncPoseSegmentId?: string | number;
     syncPoseSegmentsInitialized?: boolean;
+    syncSourceDataId?: string | number;
     syncUseZ?: boolean;
     syncYawOffsetDeg?: number;
     syncXOffsetM?: number;
     syncYOffsetM?: number;
+    locationCorrectionAnchor?: Record<string, any>;
+    locationCorrectionBaseline?: Record<string, any>;
+    locationCorrectionConstraint?: Record<string, any>;
     /** One-shot C-key rotation delta consumed by fixed-size track sync. */
     pendingSyncQuarterTurns?: number;
+    /** One-shot static C-key orientation edit; do not correct location yaw/pitch/roll. */
+    cKeyOrientationOnly?: boolean;
     autoCurbOcclusionPending?: boolean;
     autoCurbOcclusionPointCloudPending?: boolean;
     occluded?: boolean;

@@ -6,10 +6,12 @@ import ai.basic.x1.adapter.port.dao.DataInfoDAO;
 import ai.basic.x1.adapter.port.dao.DatasetDAO;
 import ai.basic.x1.adapter.port.dao.SceneLocationDAO;
 import ai.basic.x1.adapter.port.dao.SceneLocationSampleDAO;
+import ai.basic.x1.adapter.port.dao.SceneLocationOverrideDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataAnnotationObject;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
 import ai.basic.x1.adapter.port.dao.mybatis.model.SceneLocation;
 import ai.basic.x1.adapter.port.dao.mybatis.model.SceneLocationSample;
+import ai.basic.x1.adapter.port.dao.mybatis.model.SceneLocationOverride;
 import ai.basic.x1.entity.DataAnnotationObjectBO;
 import ai.basic.x1.entity.SceneLocationBO;
 import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
@@ -36,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -70,12 +73,18 @@ public class TrackSyncUseCase {
     private static final int DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES = 1;
     private static final double POLYLINE_OVERLAP_SNAP_M = 0.2;
     private static final double GEOMETRY_EPSILON = 0.000000001;
+    // TransformControls serializes unchanged box dimensions with small floating-point noise.
+    // A dimension edit is meaningful at millimetre scale, not nanometre scale.
+    private static final double SIZE_CHANGE_EPSILON_M = 0.001;
+    private static final double LOCATION_CORRECTION_POSITION_TOLERANCE_M = 0.10;
+    private static final double LOCATION_CORRECTION_ANGLE_TOLERANCE_RAD = Math.toRadians(2);
     private static final List<String> CAMERA_VIEW_KEYS = List.of("0", "1", "2", "3");
 
     private static final String MOTION_STATIC = "STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
     private static final String MOTION_DYNAMIC_VARIABLE_SIZE = "DYNAMIC_VARIABLE_SIZE";
     private static final String PENDING_SYNC_QUARTER_TURNS = "pendingSyncQuarterTurns";
+    private static final String C_KEY_ORIENTATION_ONLY = "cKeyOrientationOnly";
     private static final String GROUND_POLYGON = "GROUND_POLYGON";
     private static final String GROUND_POLYLINE = "GROUND_POLYLINE";
     private static final String IRREGULAR_WALL = "IRREGULAR_WALL";
@@ -95,6 +104,9 @@ public class TrackSyncUseCase {
 
     @Autowired
     private SceneLocationSampleDAO sceneLocationSampleDAO;
+
+    @Autowired
+    private SceneLocationOverrideDAO sceneLocationOverrideDAO;
 
     @Autowired
     private DatasetDAO datasetDAO;
@@ -941,13 +953,13 @@ public class TrackSyncUseCase {
         // issue a second identical query after poses had already been loaded.
         var existingObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .in(DataAnnotationObject::getDataId, frameIds));
-
         Map<Long, Pose> poseByDataId = buildPoseByDataId(sceneId, frames, frameIds);
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
         Map<Long, Integer> segmentByDataId = buildSegmentByDataId(sceneId, frames, locationGapMs);
 
         boolean syncWorldVertical = useWorldVerticalSync(attrs);
         if (isGroundPolygon(attrs) && MOTION_STATIC.equals(motionMode)) {
+            markTrackSyncSource(existingObjects, source);
             requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M);
             return syncGroundPolygon(
@@ -955,6 +967,7 @@ public class TrackSyncUseCase {
         }
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
+                markTrackSyncSource(existingObjects, source);
                 requireScenePose(poseByDataId, source.getDataId());
                 double syncRadius = getPositiveDouble(
                         attrs, "syncDistance", DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M);
@@ -964,6 +977,7 @@ public class TrackSyncUseCase {
             return SyncResult.empty();
         }
         if (isIrregularWall(attrs) && MOTION_STATIC.equals(motionMode)) {
+            markTrackSyncSource(existingObjects, source);
             requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(
                     attrs, "syncDistance", DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M);
@@ -997,6 +1011,7 @@ public class TrackSyncUseCase {
                 DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES);
 
         if (MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode) && !dynamicRangeSyncEnabled) {
+            markTrackSyncSource(existingObjects, source);
             return syncMotionModeOnly(
                     source,
                     motionMode,
@@ -1019,6 +1034,46 @@ public class TrackSyncUseCase {
 
         if (MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
+            Long activeSourceDataId = attrs.getLong("syncSourceDataId");
+            boolean sourceFrameChanged = activeSourceDataId != null
+                    && !source.getDataId().equals(activeSourceDataId);
+            if (sourceFrameChanged) {
+                Pose poseBeforeCorrection = poseByDataId.get(source.getDataId());
+                boolean locationCorrected = prepareStaticLocationCorrection(source, poseByDataId, existingObjects);
+                if (locationCorrected) {
+                    reprojectOtherStaticObjectsInCorrectedFrame(
+                            source, poseBeforeCorrection, poseByDataId.get(source.getDataId()), existingObjects);
+                    // The manually edited target is the correction source. Keep its local
+                    // coordinates exactly as adjusted; only the other static targets in this
+                    // frame are reprojected into the corrected location.
+                    stampLocationCorrectionBaseline(
+                            attrs, center3D, contour.getJSONObject("rotation3D"), size3D);
+                    clearLocationCorrectionConstraints(
+                            existingObjects, source.getDataId(), source.getClassAttributes());
+                    persistLocationCorrectionSource(existingObjects, source);
+                    // Propagate only Track A from this corrected frame. Other static tracks
+                    // (b/c) remain local to this location correction, and the blue source
+                    // marker remains on the existing source frame.
+                    SyncResult result = syncStatic(source, trackId, center3D, size3D,
+                            contour.getJSONObject("rotation3D"),
+                            getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M),
+                            getBoolean(attrs, "syncUseZ", true), syncWorldVertical,
+                            Math.toRadians(getDouble(attrs, "syncYawOffsetDeg")),
+                            getDouble(attrs, "syncXOffsetM"), getDouble(attrs, "syncYOffsetM"), frames,
+                            poseByDataId, existingByDataId, existingRows.duplicateObjectIds, reachableFrameIds,
+                            maxDisappearGap, segmentByDataId, locationGapMs, segmentsInitialized);
+                    return result.withLocationCorrected(source.getDataId());
+                }
+            } else {
+                // The first source establishes a world anchor only. Its local box may be
+                // perfectly aligned to a point cloud whose location is still unknown, so this
+                // bootstrap step must never itself alter location. syncStatic persists the
+                // matching baseline on the source and every generated target below.
+                ensureLocationCorrectionAnchor(source, poseByDataId);
+            }
+            // A size-only edit has no location evidence. It is an intentional propagation
+            // operation, so this frame becomes the new source before we copy its geometry.
+            markTrackSyncSource(existingObjects, source);
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
             double syncYawOffset = Math.toRadians(getDouble(attrs, "syncYawOffsetDeg"));
@@ -1029,6 +1084,7 @@ public class TrackSyncUseCase {
                     poseByDataId, existingByDataId, existingRows.duplicateObjectIds, reachableFrameIds,
                     maxDisappearGap, segmentByDataId, locationGapMs, segmentsInitialized);
         } else if (dynamicRangeSyncEnabled) {
+            markTrackSyncSource(existingObjects, source);
             requireScenePose(poseByDataId, source.getDataId());
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
             return syncDynamicRange(
@@ -1051,6 +1107,7 @@ public class TrackSyncUseCase {
                     syncWorldVertical
             );
         } else {
+            markTrackSyncSource(existingObjects, source);
             return syncFixedSize(
                     source,
                     size3D,
@@ -1062,6 +1119,70 @@ public class TrackSyncUseCase {
                     locationGapMs,
                     getPendingSyncQuarterTurns(attrs)
             );
+        }
+    }
+
+    private void markTrackSyncSource(List<DataAnnotationObject> sceneObjects, DataAnnotationObjectBO source) {
+        source.getClassAttributes().set("syncSourceDataId", source.getDataId());
+        String trackId = source.getClassAttributes().getStr("trackId");
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataAnnotationObject object : sceneObjects) {
+            JSONObject objectAttrs = object.getClassAttributes();
+            if (objectAttrs == null || !trackId.equals(objectAttrs.getStr("trackId"))) continue;
+            objectAttrs.set("syncSourceDataId", source.getDataId());
+            object.setClassAttributes(objectAttrs);
+            updates.add(object);
+        }
+        if (!updates.isEmpty()) dataAnnotationObjectDAO.updateBatchById(updates);
+    }
+
+    private static void ensureLocationCorrectionAnchor(
+            DataAnnotationObjectBO source, Map<Long, Pose> poses) {
+        JSONObject attrs = source.getClassAttributes();
+        JSONObject anchor = attrs.getJSONObject("locationCorrectionAnchor");
+        if (anchor != null && anchor.get("referenceSelectionVersion") != null) return;
+        JSONObject contour = attrs.getJSONObject("contour");
+        JSONObject center = contour == null ? null : contour.getJSONObject("center3D");
+        Pose pose = poses.get(source.getDataId());
+        if (center == null || pose == null || !pose.complete) return;
+        JSONObject rotation = contour.getJSONObject("rotation3D");
+        anchor = anchor == null
+                ? makeAnchorAtNearestRearAxleFrame(source, poses, center, rotation, pose)
+                : updateAnchorReferenceFrame(anchor, poses);
+        attrs.set("locationCorrectionAnchor", anchor);
+    }
+
+    /**
+     * A successful frame-pose update establishes a new coordinate-system epoch. Constraints
+     * from the old epoch cannot be mixed with a later manual edit: their proposal was inferred
+     * before every static box in this frame was reprojected. Keep the new baselines instead;
+     * the next explicit user edit will create fresh evidence.
+     */
+    private void clearLocationCorrectionConstraints(
+            List<DataAnnotationObject> sceneObjects, Long dataId, JSONObject sourceAttrs) {
+        sourceAttrs.remove("locationCorrectionConstraint");
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataAnnotationObject object : sceneObjects) {
+            if (!dataId.equals(object.getDataId())) continue;
+            JSONObject attrs = object.getClassAttributes();
+            if (!isStaticForFramePoseCorrection(attrs)) continue;
+            if (attrs.remove("locationCorrectionConstraint") == null) continue;
+            object.setClassAttributes(attrs);
+            updates.add(object);
+        }
+        if (!updates.isEmpty()) dataAnnotationObjectDAO.updateBatchById(updates);
+    }
+
+    private void persistLocationCorrectionSource(
+            List<DataAnnotationObject> sceneObjects, DataAnnotationObjectBO source) {
+        String trackId = source.getClassAttributes().getStr("trackId");
+        for (DataAnnotationObject object : sceneObjects) {
+            JSONObject attrs = object.getClassAttributes();
+            if (!source.getDataId().equals(object.getDataId()) || attrs == null
+                    || !trackId.equals(attrs.getStr("trackId"))) continue;
+            object.setClassAttributes(JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes())));
+            dataAnnotationObjectDAO.updateById(object);
+            return;
         }
     }
 
@@ -2053,6 +2174,344 @@ public class TrackSyncUseCase {
         return Math.hypot(pointX - (startX + ratio * deltaX), pointY - (startY + ratio * deltaY));
     }
 
+    /**
+     * A static box defines a world-fixed object.  The first Ctrl+Y stores that object pose; a
+     * later source-frame edit can therefore be inverted into the ego pose for that one frame.
+     * The override table is deliberately separate from imported samples so re-opening a scene
+     * never makes interpolation silently undo an annotator correction.
+     */
+    private boolean prepareStaticLocationCorrection(
+            DataAnnotationObjectBO source, Map<Long, Pose> poses, List<DataAnnotationObject> sceneObjects) {
+        JSONObject attrs = source.getClassAttributes();
+        JSONObject contour = attrs.getJSONObject("contour");
+        JSONObject center = contour == null ? null : contour.getJSONObject("center3D");
+        if (center == null) return false;
+        JSONObject rotation = contour.getJSONObject("rotation3D");
+        JSONObject size = contour.getJSONObject("size3D");
+        Pose current = poses.get(source.getDataId());
+        if (current == null || !current.complete) return false;
+        JSONObject anchor = attrs.getJSONObject("locationCorrectionAnchor");
+        JSONObject baseline = attrs.getJSONObject("locationCorrectionBaseline");
+        // C is an explicit object-heading operation. It is one-shot, so it must never leak to
+        // a later Ctrl+Y after this request has refreshed the source row.
+        boolean cKeyOrientationOnly = getBoolean(attrs, C_KEY_ORIENTATION_ONLY, false);
+        attrs.remove(C_KEY_ORIENTATION_ONLY);
+        // Do not let the first frame that happened to be synchronized define the object.
+        // The local coordinate origin is the rear-axle centre, so the closest observed box is
+        // the most reliable frame from which to establish this track's world anchor.
+        if (anchor == null || anchor.get("referenceSelectionVersion") == null) {
+            anchor = anchor == null
+                    ? makeAnchorAtNearestRearAxleFrame(source, poses, center, rotation, current)
+                    : updateAnchorReferenceFrame(anchor, poses);
+            attrs.set("locationCorrectionAnchor", anchor);
+            return false; // anchor establishment never changes location.
+        }
+        if (baseline == null) return false;
+
+        boolean sizeChanged = sizeChangedSinceBaseline(size, baseline);
+        boolean rotationChanged = rotationChangedSinceBaseline(rotation, baseline);
+        boolean positionChanged = positionChangedSinceBaseline(center, baseline);
+
+        // C is the explicit exception: update the object's heading in the fixed scene/world
+        // anchor, while retaining this frame's location yaw/pitch/roll. Other Box rotations
+        // continue to be location-orientation correction evidence.
+        if (rotationChanged && cKeyOrientationOnly) {
+            updateWorldAnchorRotation(anchor, rotation, current);
+            attrs.set("locationCorrectionAnchor", anchor);
+        }
+
+        // A size-only edit (or resize plus center movement) is label-only. A normal rotation is
+        // intentionally excluded: it corrects the complete pose, as before. C rotation is
+        // excluded too because its dimension swap must only update object heading.
+        if ((!rotationChanged && (sizeChanged || !positionChanged || isLegacyResizeLikeEdit(center, rotation, baseline)))
+                || (cKeyOrientationOnly && (sizeChanged || !positionChanged))) return false;
+
+        Pose rawCandidate = rotationChanged && !cKeyOrientationOnly
+                // Ordinary box-direction edits remain full six-degree-of-freedom location fixes.
+                ? poseForAnchor(anchor, center, rotation)
+                // Center movement (and C plus a real center move) corrects XYZ only.
+                : poseForAnchorCenter(anchor, center, current);
+        if (rawCandidate == null) return false;
+        // Keep each manually edited static box's own proposal.  A later edit in this frame
+        // combines independent proposals rather than treating a prior fused location as if it
+        // had been proposed by every other box.
+        JSONObject proposal = poseToJson(rawCandidate);
+        proposal.set("proposal", true);
+        attrs.set("locationCorrectionConstraint", proposal);
+        Pose candidate = blendLocationCorrections(source, rawCandidate, sceneObjects);
+        upsertLocationOverride(source.getDataId(), candidate);
+        poses.put(source.getDataId(), candidate);
+        return true;
+    }
+
+    private static Pose blendLocationCorrections(
+            DataAnnotationObjectBO source, Pose currentProposal, List<DataAnnotationObject> sceneObjects) {
+        List<WeightedPose> proposals = new ArrayList<>();
+        JSONObject sourceContour = source.getClassAttributes().getJSONObject("contour");
+        proposals.add(new WeightedPose(currentProposal,
+                correctionWeight(sourceContour == null ? null : sourceContour.getJSONObject("center3D"))));
+        String sourceTrackId = source.getClassAttributes().getStr("trackId");
+        for (DataAnnotationObject object : sceneObjects) {
+            JSONObject attrs = object.getClassAttributes();
+            if (attrs == null || !source.getDataId().equals(object.getDataId())
+                    || sourceTrackId.equals(attrs.getStr("trackId")) || !hasSyncableBox(object)) continue;
+            JSONObject proposal = attrs.getJSONObject("locationCorrectionConstraint");
+            // Constraints written before weighted fusion have no proposal flag. They were
+            // frame-wide results, not an independent observation, so do not count them.
+            if (proposal == null || !Boolean.TRUE.equals(proposal.getBool("proposal"))) continue;
+            Pose pose = poseFromJson(proposal);
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (pose != null) proposals.add(new WeightedPose(pose,
+                    correctionWeight(contour == null ? null : contour.getJSONObject("center3D"))));
+        }
+        if (proposals.size() == 1) return currentProposal;
+        double totalWeight = proposals.stream().mapToDouble(item -> item.weight).sum();
+        double x = proposals.stream().mapToDouble(item -> item.pose.x * item.weight).sum() / totalWeight;
+        double y = proposals.stream().mapToDouble(item -> item.pose.y * item.weight).sum() / totalWeight;
+        double z = proposals.stream().mapToDouble(item -> item.pose.z * item.weight).sum() / totalWeight;
+        return new Pose(x, y, z,
+                weightedAngle(proposals, pose -> pose.yaw, totalWeight),
+                weightedAngle(proposals, pose -> pose.roll, totalWeight),
+                weightedAngle(proposals, pose -> pose.pitch, totalWeight));
+    }
+
+    private static double correctionWeight(JSONObject center) {
+        // The rear-axle centre is the local origin. Cap the near-field weight to avoid a
+        // point almost at the origin dominating numerically, then apply inverse-square decay.
+        double distance = Math.max(1D, rearAxleDistance(center));
+        return 1D / (distance * distance);
+    }
+
+    private static double weightedAngle(List<WeightedPose> proposals, Function<Pose, Double> getter, double totalWeight) {
+        double sin = proposals.stream().mapToDouble(item -> Math.sin(getter.apply(item.pose)) * item.weight).sum();
+        double cos = proposals.stream().mapToDouble(item -> Math.cos(getter.apply(item.pose)) * item.weight).sum();
+        return Math.atan2(sin / totalWeight, cos / totalWeight);
+    }
+
+    private static JSONObject makeAnchorAtNearestRearAxleFrame(
+            DataAnnotationObjectBO source, Map<Long, Pose> poses,
+            JSONObject sourceCenter, JSONObject sourceRotation, Pose sourcePose) {
+        return updateAnchorReferenceFrame(makeWorldAnchor(sourceCenter, sourceRotation, sourcePose), poses);
+    }
+
+    private static JSONObject updateAnchorReferenceFrame(JSONObject anchor, Map<Long, Pose> poses) {
+        JSONObject worldCenter = anchor.getJSONObject("center");
+        if (worldCenter == null) return anchor;
+        Long referenceDataId = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        for (Map.Entry<Long, Pose> entry : poses.entrySet()) {
+            Pose pose = entry.getValue();
+            if (pose == null || !pose.complete) continue;
+            double[] localCenter = worldToLocal(
+                    getDouble(worldCenter, "x"), getDouble(worldCenter, "y"), getDouble(worldCenter, "z"), pose, true);
+            double distance = Math.hypot(localCenter[0], localCenter[1]);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                referenceDataId = entry.getKey();
+            }
+        }
+        if (referenceDataId != null) anchor.set("referenceDataId", referenceDataId);
+        anchor.set("referenceSelectionVersion", 2);
+        return anchor;
+    }
+
+    private static double rearAxleDistance(JSONObject center) {
+        return center == null ? Double.POSITIVE_INFINITY
+                : Math.hypot(getDouble(center, "x"), getDouble(center, "y"));
+    }
+
+    private void upsertLocationOverride(Long dataId, Pose pose) {
+        SceneLocationOverride override = sceneLocationOverrideDAO.list(
+                        Wrappers.lambdaQuery(SceneLocationOverride.class)
+                                .eq(SceneLocationOverride::getDataId, dataId))
+                .stream().findFirst().orElse(SceneLocationOverride.builder().dataId(dataId).build());
+        override.setPosX(pose.x); override.setPosY(pose.y); override.setPosZ(pose.z);
+        override.setYaw(pose.yaw); override.setRoll(pose.roll); override.setPitch(pose.pitch);
+        if (override.getId() == null) sceneLocationOverrideDAO.save(override);
+        else sceneLocationOverrideDAO.updateById(override);
+    }
+
+    /**
+     * Location is a frame-level pose. Once a static box corrects it, every other static
+     * geometry in that frame must be expressed in the new local LiDAR coordinates to retain
+     * the same world position. This intentionally excludes dynamic annotations: their world
+     * position is not a fixed constraint and moving them would rewrite a valid observation.
+     */
+    private void reprojectOtherStaticObjectsInCorrectedFrame(
+            DataAnnotationObjectBO source, Pose oldPose, Pose newPose, List<DataAnnotationObject> sceneObjects) {
+        if (oldPose == null || newPose == null || !oldPose.complete || !newPose.complete) return;
+        String sourceTrackId = source.getClassAttributes().getStr("trackId");
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataAnnotationObject object : sceneObjects) {
+            if (!source.getDataId().equals(object.getDataId()) || object.getClassAttributes() == null) continue;
+            JSONObject attrs = object.getClassAttributes();
+            if (!isStaticForFramePoseCorrection(attrs)
+                    || ObjectUtil.equal(sourceTrackId, attrs.getStr("trackId"))) continue;
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (contour == null) continue;
+            if (hasSyncableBox(object)) {
+                reprojectStaticBoxContour(contour, oldPose, newPose);
+                // This movement is caused by the frame pose correction, not by an annotator
+                // edit. Stamp the new local box as the baseline so a later Ctrl+Y on this
+                // track does not attempt to correct the same location a second time.
+                stampLocationCorrectionBaseline(
+                        attrs, contour.getJSONObject("center3D"), contour.getJSONObject("rotation3D"),
+                        contour.getJSONObject("size3D"));
+            } else if (isGroundPolygon(attrs) || isGroundPolyline(attrs)) {
+                contour.set("points", reprojectPoints(contour.getJSONArray("points"), oldPose, newPose));
+            } else if (isIrregularWall(attrs)) {
+                JSONArray bottom = reprojectPoints(contour.getJSONArray("bottomPoints"), oldPose, newPose);
+                JSONArray top = contour.getJSONArray("topPoints");
+                contour.set("bottomPoints", bottom);
+                contour.set("topPoints", top == null || top.isEmpty()
+                        ? new JSONArray() : reprojectPoints(top, oldPose, newPose));
+                contour.set("points", bottom);
+            } else {
+                continue;
+            }
+            object.setClassAttributes(attrs);
+            updates.add(object);
+        }
+        if (!updates.isEmpty()) dataAnnotationObjectDAO.updateBatchById(updates);
+    }
+
+    /**
+     * Motion mode was introduced after scenes already contained annotations.  The editor treats
+     * an omitted value as STATIC (except for classes for which it explicitly writes a dynamic
+     * mode), so frame-pose correction must preserve that same world-fixed geometry instead of
+     * leaving legacy boxes behind in the old local coordinate system.
+     */
+    static boolean isStaticForFramePoseCorrection(JSONObject attrs) {
+        return attrs != null && (StrUtil.isBlank(attrs.getStr("motionMode"))
+                || MOTION_STATIC.equals(attrs.getStr("motionMode")));
+    }
+
+    private static JSONArray reprojectPoints(JSONArray localPoints, Pose oldPose, Pose newPose) {
+        return polylineToLocal(polylineToWorld(localPoints, oldPose, true), newPose, true);
+    }
+
+    private static void reprojectStaticBoxContour(JSONObject contour, Pose oldPose, Pose newPose) {
+        JSONObject center = contour.getJSONObject("center3D");
+        if (center == null) return;
+        JSONObject rotation = contour.getJSONObject("rotation3D");
+        double[] worldCenter = localToWorld(
+                getDouble(center, "x"), getDouble(center, "y"), getDouble(center, "z"), oldPose, true);
+        double[] localCenter = worldToLocal(worldCenter[0], worldCenter[1], worldCenter[2], newPose, true);
+        center.set("x", localCenter[0]);
+        center.set("y", localCenter[1]);
+        center.set("z", localCenter[2]);
+        if (rotation == null) return;
+        double[][] worldRotation = multiply(rotationMatrix(oldPose.yaw, oldPose.pitch, oldPose.roll),
+                rotationMatrix(getDouble(rotation, "z"), getDouble(rotation, "y"), getDouble(rotation, "x")));
+        double[] euler = eulerFromRotation(multiply(
+                transpose(rotationMatrix(newPose.yaw, newPose.pitch, newPose.roll)), worldRotation));
+        rotation.set("x", euler[2]);
+        rotation.set("y", euler[1]);
+        rotation.set("z", euler[0]);
+    }
+
+    static JSONObject makeWorldAnchor(JSONObject center, JSONObject rotation, Pose pose) {
+        double[] world = localToWorld(getDouble(center, "x"), getDouble(center, "y"), getDouble(center, "z"), pose, true);
+        double[][] worldRotation = multiply(rotationMatrix(pose.yaw, pose.pitch, pose.roll),
+                rotationMatrix(getDouble(rotation, "z"), getDouble(rotation, "y"), getDouble(rotation, "x")));
+        double[] euler = eulerFromRotation(worldRotation);
+        return new JSONObject().set("center", point3D(world[0], world[1], world[2]))
+                .set("rotation", point3D(euler[2], euler[1], euler[0]));
+    }
+
+    private static void updateWorldAnchorRotation(JSONObject anchor, JSONObject localRotation, Pose pose) {
+        if (anchor == null || anchor.getJSONObject("center") == null) return;
+        JSONObject rotation = localRotation == null ? point3D(0, 0, 0) : localRotation;
+        double[][] worldRotation = multiply(rotationMatrix(pose.yaw, pose.pitch, pose.roll),
+                rotationMatrix(getDouble(rotation, "z"), getDouble(rotation, "y"), getDouble(rotation, "x")));
+        double[] euler = eulerFromRotation(worldRotation);
+        anchor.set("rotation", point3D(euler[2], euler[1], euler[0]));
+    }
+
+    static Pose poseForAnchorCenter(JSONObject anchor, JSONObject localCenter, Pose currentPose) {
+        JSONObject worldCenter = anchor == null ? null : anchor.getJSONObject("center");
+        if (worldCenter == null || currentPose == null || !currentPose.complete) return null;
+        double[] local = new double[]{getDouble(localCenter, "x"), getDouble(localCenter, "y"), getDouble(localCenter, "z")};
+        double[] rotated = multiply(rotationMatrix(currentPose.yaw, currentPose.pitch, currentPose.roll), local);
+        return new Pose(getDouble(worldCenter, "x") - rotated[0], getDouble(worldCenter, "y") - rotated[1],
+                getDouble(worldCenter, "z") - rotated[2], currentPose.yaw, currentPose.roll, currentPose.pitch);
+    }
+
+    static Pose poseForAnchor(JSONObject anchor, JSONObject localCenter, JSONObject localRotation) {
+        JSONObject worldCenter = anchor.getJSONObject("center"); JSONObject worldRotation = anchor.getJSONObject("rotation");
+        if (worldCenter == null || worldRotation == null) return null;
+        double[][] egoRotation = multiply(rotationMatrix(getDouble(worldRotation, "z"), getDouble(worldRotation, "y"), getDouble(worldRotation, "x")),
+                transpose(rotationMatrix(getDouble(localRotation, "z"), getDouble(localRotation, "y"), getDouble(localRotation, "x"))));
+        double[] euler = eulerFromRotation(egoRotation);
+        double[] local = new double[]{getDouble(localCenter, "x"), getDouble(localCenter, "y"), getDouble(localCenter, "z")};
+        double[] rotated = multiply(egoRotation, local);
+        return new Pose(getDouble(worldCenter, "x") - rotated[0], getDouble(worldCenter, "y") - rotated[1],
+                getDouble(worldCenter, "z") - rotated[2], euler[0], euler[2], euler[1]);
+    }
+
+    private static boolean sameBoxPose(JSONObject center, JSONObject rotation, JSONObject baseline) {
+        JSONObject oldCenter = baseline.getJSONObject("center"); JSONObject oldRotation = baseline.getJSONObject("rotation");
+        return oldCenter != null && oldRotation != null
+                && Math.abs(getDouble(center, "x") - getDouble(oldCenter, "x")) < GEOMETRY_EPSILON
+                && Math.abs(getDouble(center, "y") - getDouble(oldCenter, "y")) < GEOMETRY_EPSILON
+                && Math.abs(getDouble(center, "z") - getDouble(oldCenter, "z")) < GEOMETRY_EPSILON
+                && Math.abs(normalizeAngle(getDouble(rotation, "x") - getDouble(oldRotation, "x"))) < GEOMETRY_EPSILON
+                && Math.abs(normalizeAngle(getDouble(rotation, "y") - getDouble(oldRotation, "y"))) < GEOMETRY_EPSILON
+                && Math.abs(normalizeAngle(getDouble(rotation, "z") - getDouble(oldRotation, "z"))) < GEOMETRY_EPSILON;
+    }
+
+    private static boolean sizeChangedSinceBaseline(JSONObject size, JSONObject baseline) {
+        JSONObject oldSize = baseline.getJSONObject("size");
+        if (size == null || oldSize == null) return false;
+        return Math.abs(getDouble(size, "x") - getDouble(oldSize, "x")) >= SIZE_CHANGE_EPSILON_M
+                || Math.abs(getDouble(size, "y") - getDouble(oldSize, "y")) >= SIZE_CHANGE_EPSILON_M
+                || Math.abs(getDouble(size, "z") - getDouble(oldSize, "z")) >= SIZE_CHANGE_EPSILON_M;
+    }
+
+    private static boolean rotationChangedSinceBaseline(JSONObject rotation, JSONObject baseline) {
+        JSONObject oldRotation = baseline.getJSONObject("rotation");
+        JSONObject currentRotation = rotation == null ? point3D(0, 0, 0) : rotation;
+        return oldRotation != null
+                && (Math.abs(normalizeAngle(getDouble(currentRotation, "x") - getDouble(oldRotation, "x"))) >= GEOMETRY_EPSILON
+                || Math.abs(normalizeAngle(getDouble(currentRotation, "y") - getDouble(oldRotation, "y"))) >= GEOMETRY_EPSILON
+                || Math.abs(normalizeAngle(getDouble(currentRotation, "z") - getDouble(oldRotation, "z"))) >= GEOMETRY_EPSILON);
+    }
+
+    private static boolean positionChangedSinceBaseline(JSONObject center, JSONObject baseline) {
+        JSONObject oldCenter = baseline.getJSONObject("center");
+        return oldCenter != null
+                && (Math.abs(getDouble(center, "x") - getDouble(oldCenter, "x")) >= GEOMETRY_EPSILON
+                || Math.abs(getDouble(center, "y") - getDouble(oldCenter, "y")) >= GEOMETRY_EPSILON
+                || Math.abs(getDouble(center, "z") - getDouble(oldCenter, "z")) >= GEOMETRY_EPSILON);
+    }
+
+    private static boolean isLegacyResizeLikeEdit(JSONObject center, JSONObject rotation, JSONObject baseline) {
+        if (baseline.getJSONObject("size") != null) return false;
+        JSONObject oldCenter = baseline.getJSONObject("center");
+        JSONObject oldRotation = baseline.getJSONObject("rotation");
+        return oldCenter != null && oldRotation != null
+                && Math.abs(getDouble(center, "x") - getDouble(oldCenter, "x")) < GEOMETRY_EPSILON
+                && Math.abs(getDouble(center, "y") - getDouble(oldCenter, "y")) < GEOMETRY_EPSILON
+                && Math.abs(normalizeAngle(getDouble(rotation, "x") - getDouble(oldRotation, "x"))) < GEOMETRY_EPSILON
+                && Math.abs(normalizeAngle(getDouble(rotation, "y") - getDouble(oldRotation, "y"))) < GEOMETRY_EPSILON
+                && Math.abs(normalizeAngle(getDouble(rotation, "z") - getDouble(oldRotation, "z"))) < GEOMETRY_EPSILON;
+    }
+
+    private static JSONObject poseToJson(Pose pose) { return new JSONObject().set("x", pose.x).set("y", pose.y).set("z", pose.z).set("yaw", pose.yaw).set("roll", pose.roll).set("pitch", pose.pitch); }
+    private static Pose poseFromJson(JSONObject json) { return json == null ? null : new Pose(getDouble(json, "x"), getDouble(json, "y"), getDouble(json, "z"), getDouble(json, "yaw"), getDouble(json, "roll"), getDouble(json, "pitch")); }
+    static boolean compatibleLocationCorrections(Pose a, Pose b) {
+        return Math.sqrt(Math.pow(a.x-b.x,2)+Math.pow(a.y-b.y,2)+Math.pow(a.z-b.z,2)) <= LOCATION_CORRECTION_POSITION_TOLERANCE_M
+                && Math.abs(normalizeAngle(a.yaw-b.yaw)) <= LOCATION_CORRECTION_ANGLE_TOLERANCE_RAD
+                && Math.abs(normalizeAngle(a.roll-b.roll)) <= LOCATION_CORRECTION_ANGLE_TOLERANCE_RAD
+                && Math.abs(normalizeAngle(a.pitch-b.pitch)) <= LOCATION_CORRECTION_ANGLE_TOLERANCE_RAD;
+    }
+    private static double normalizeAngle(double value) { return Math.atan2(Math.sin(value), Math.cos(value)); }
+    private static double[][] rotationMatrix(double yaw, double pitch, double roll) { double cy=Math.cos(yaw),sy=Math.sin(yaw),cp=Math.cos(pitch),sp=Math.sin(pitch),cr=Math.cos(roll),sr=Math.sin(roll); return new double[][]{{cy*cp,cy*sp*sr-sy*cr,cy*sp*cr+sy*sr},{sy*cp,sy*sp*sr+cy*cr,sy*sp*cr-cy*sr},{-sp,cp*sr,cp*cr}}; }
+    private static double[][] multiply(double[][] a, double[][] b) { double[][] r=new double[3][3]; for(int i=0;i<3;i++) for(int j=0;j<3;j++) for(int k=0;k<3;k++) r[i][j]+=a[i][k]*b[k][j]; return r; }
+    private static double[] multiply(double[][] a, double[] b) { return new double[]{a[0][0]*b[0]+a[0][1]*b[1]+a[0][2]*b[2],a[1][0]*b[0]+a[1][1]*b[1]+a[1][2]*b[2],a[2][0]*b[0]+a[2][1]*b[1]+a[2][2]*b[2]}; }
+    private static double[][] transpose(double[][] a) { return new double[][]{{a[0][0],a[1][0],a[2][0]},{a[0][1],a[1][1],a[2][1]},{a[0][2],a[1][2],a[2][2]}}; }
+    private static double[] eulerFromRotation(double[][] r) { double pitch=Math.asin(Math.max(-1,Math.min(1,-r[2][0]))); return new double[]{Math.atan2(r[1][0],r[0][0]), pitch, Math.atan2(r[2][1],r[2][2])}; }
+
     private SyncResult syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,
                              JSONObject rotation3D, double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
                              double syncYawOffset, double syncXOffset, double syncYOffset, List<DataInfo> frames,
@@ -2075,7 +2534,10 @@ public class TrackSyncUseCase {
         double worldX = worldPoint[0];
         double worldY = worldPoint[1];
         double worldZ = worldPoint[2];
-        double worldYaw = effectiveSourcePose == null ? 0 : localYaw + effectiveSourcePose.yaw;
+        double[][] worldRotation = effectiveSourcePose == null
+                ? rotationMatrix(localYaw, rotY, rotX)
+                : multiply(rotationMatrix(effectiveSourcePose.yaw, effectiveSourcePose.pitch, effectiveSourcePose.roll),
+                        rotationMatrix(localYaw, rotY, rotX));
         Integer sourceSegmentId = segmentByDataId.get(source.getDataId());
 
         var toInsert = new ArrayList<DataAnnotationObject>();
@@ -2113,6 +2575,7 @@ public class TrackSyncUseCase {
                     JSONObject sourceAttrs = JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes()));
                     updateStaticMetadata(sourceAttrs, source, size3D, syncRadius, syncUseZ, syncWorldVertical,
                             syncYawOffset, syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
+                    stampLocationCorrectionBaseline(sourceAttrs, center3D, rotation3D, size3D);
                     existing.setClassId(source.getClassId());
                     existing.setClassAttributes(sourceAttrs);
                     toUpdate.add(existing);
@@ -2126,13 +2589,16 @@ public class TrackSyncUseCase {
             double tgtLocalX = targetLocal[0] + syncXOffset;
             double tgtLocalY = targetLocal[1] + syncYOffset;
             double tgtLocalZ = syncUseZ ? targetLocal[2] : localZ;
-            double tgtLocalYaw = worldYaw - effectiveTargetPose.yaw;
+            double[] targetEuler = eulerFromRotation(multiply(
+                    transpose(rotationMatrix(effectiveTargetPose.yaw, effectiveTargetPose.pitch, effectiveTargetPose.roll)),
+                    worldRotation));
+            double tgtLocalYaw = targetEuler[0];
             // Gate by the closest point of the oriented 3D box footprint in the XY plane, not by
             // the box center. A large static object should still be considered nearby if its
             // visible/physical edge is within the configured distance.
             double distance = distanceToBoxFootprint(tgtLocalX, tgtLocalY, tgtLocalYaw, size3D);
 
-            if (!isWithinStaticSyncRange(distance, syncRadius, worldZ, pose.z, syncUseZ)) {
+            if (!isWithinStaticSyncRange(distance, syncRadius, srcPose.z, pose.z, syncUseZ)) {
                 if (existing != null && !frame.getId().equals(source.getDataId())) {
                     toDeleteIds.add(existing.getId());
                 }
@@ -2142,6 +2608,19 @@ public class TrackSyncUseCase {
             JSONObject newAttrs = existing != null
                     ? JSONUtil.parseObj(JSONUtil.toJsonStr(existing.getClassAttributes()))
                     : JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes()));
+            // A correction constraint belongs to the frame in which the annotator edited the
+            // box.  A newly projected target must inherit the anchor/baseline, never the source
+            // frame's pose constraint.
+            if (existing == null) {
+                newAttrs.remove("locationCorrectionConstraint");
+            }
+            // The anchor is a track-wide world pose, not a per-frame property.  In particular
+            // this upgrades pre-existing annotations that may have acquired an anchor while
+            // Ctrl+Y was pressed in different frames before all rows had been initialized.
+            JSONObject sourceAnchor = source.getClassAttributes().getJSONObject("locationCorrectionAnchor");
+            if (sourceAnchor != null) {
+                newAttrs.set("locationCorrectionAnchor", JSONUtil.parseObj(JSONUtil.toJsonStr(sourceAnchor)));
+            }
             stripFrameLocalVisibilityAttrs(newAttrs, existing != null);
             JSONObject newContour = newAttrs.getJSONObject("contour");
             if (newContour == null) {
@@ -2154,13 +2633,14 @@ public class TrackSyncUseCase {
             newCenter.set("z", tgtLocalZ);
             newContour.set("center3D", newCenter);
             JSONObject newRotation = new JSONObject();
-            newRotation.set("x", rotX);
-            newRotation.set("y", rotY);
+            newRotation.set("x", targetEuler[2]);
+            newRotation.set("y", targetEuler[1]);
             newRotation.set("z", tgtLocalYaw);
             newContour.set("rotation3D", newRotation);
             newAttrs.set("trackId", trackId);
             updateStaticMetadata(newAttrs, source, size3D, syncRadius, syncUseZ, syncWorldVertical, syncYawOffset,
                     syncXOffset, syncYOffset, maxDisappearGap, targetSegmentId, locationGapMs);
+            stampLocationCorrectionBaseline(newAttrs, newCenter, newRotation, size3D);
 
             if (existing != null) {
                 existing.setClassId(source.getClassId());
@@ -2186,12 +2666,15 @@ public class TrackSyncUseCase {
     static boolean isWithinStaticSyncRange(
             double horizontalDistance,
             double horizontalRadius,
-            double objectWorldZ,
+            double sourceSensorWorldZ,
             double targetSensorWorldZ,
             boolean syncUseZ) {
         if (horizontalDistance > horizontalRadius) return false;
         return !syncUseZ
-                || Math.abs(objectWorldZ - targetSensorWorldZ) <= STATIC_SYNC_VERTICAL_TOLERANCE_M;
+                // This is a road-level guard, not an object-height guard. Comparing a box
+                // center (for example, a 4m pillar) to the sensor height rejects perfectly
+                // valid same-road frames merely because the object is tall.
+                || Math.abs(sourceSensorWorldZ - targetSensorWorldZ) <= STATIC_SYNC_VERTICAL_TOLERANCE_M;
     }
 
     private void updateStaticMetadata(JSONObject attrs, DataAnnotationObjectBO source, JSONObject size3D,
@@ -2211,6 +2694,16 @@ public class TrackSyncUseCase {
         attrs.set("syncXOffsetM", syncXOffset);
         attrs.set("syncYOffsetM", syncYOffset);
         updateSyncMetadata(attrs, maxDisappearGap, segmentId, locationGapMs);
+    }
+
+    private static void stampLocationCorrectionBaseline(
+            JSONObject attrs, JSONObject center, JSONObject rotation, JSONObject size) {
+        JSONObject anchor = attrs.getJSONObject("locationCorrectionAnchor");
+        if (anchor == null) return;
+        attrs.set("locationCorrectionBaseline", new JSONObject()
+                .set("center", JSONUtil.parseObj(JSONUtil.toJsonStr(center)))
+                .set("rotation", JSONUtil.parseObj(JSONUtil.toJsonStr(rotation == null ? point3D(0, 0, 0) : rotation)))
+                .set("size", JSONUtil.parseObj(JSONUtil.toJsonStr(size == null ? point3D(0, 0, 0) : size))));
     }
 
     private void stripFrameLocalVisibilityAttrs(JSONObject attrs, boolean keepExistingAttrs) {
@@ -2411,6 +2904,7 @@ public class TrackSyncUseCase {
             logData.put("samplePoses", samplePoses);
             SyncPoseDebugLog.log("H1", "buildPoseByDataId from samples", logData);
             // #endregion
+            applyLocationOverrides(frameIds, poseByDataId);
             return poseByDataId;
         }
 
@@ -2427,6 +2921,7 @@ public class TrackSyncUseCase {
                         location.getRoll(),
                         location.getPitch())));
         poseByDataId.putAll(tablePoseByDataId);
+        applyLocationOverrides(frameIds, poseByDataId);
         // #region agent log
         Map<String, Object> logData = new HashMap<>();
         logData.put("sceneId", sceneId);
@@ -2435,6 +2930,15 @@ public class TrackSyncUseCase {
         SyncPoseDebugLog.log("H2", "buildPoseByDataId fallback to table", logData);
         // #endregion
         return poseByDataId;
+    }
+
+    private void applyLocationOverrides(List<Long> frameIds, Map<Long, Pose> poses) {
+        if (CollUtil.isEmpty(frameIds)) return;
+        sceneLocationOverrideDAO.list(Wrappers.lambdaQuery(SceneLocationOverride.class)
+                        .in(SceneLocationOverride::getDataId, frameIds))
+                .forEach(override -> poses.put(override.getDataId(), new Pose(
+                        override.getPosX(), override.getPosY(), override.getPosZ(), override.getYaw(),
+                        override.getRoll(), override.getPitch())));
     }
 
     private static Double toOptionalAngle(double value) {
@@ -2958,10 +3462,18 @@ public class TrackSyncUseCase {
     public static class SyncResult {
         private final List<Long> affectedDataIds;
         private final long syncVersion;
+        private final boolean locationCorrected;
+        private final Long locationCorrectedDataId;
 
         SyncResult(Set<Long> affectedDataIds) {
+            this(affectedDataIds, false, null);
+        }
+
+        private SyncResult(Set<Long> affectedDataIds, boolean locationCorrected, Long locationCorrectedDataId) {
             this.affectedDataIds = affectedDataIds.stream().sorted().collect(Collectors.toList());
             this.syncVersion = System.currentTimeMillis();
+            this.locationCorrected = locationCorrected;
+            this.locationCorrectedDataId = locationCorrectedDataId;
         }
 
         static SyncResult empty() {
@@ -2975,6 +3487,13 @@ public class TrackSyncUseCase {
         public long getSyncVersion() {
             return syncVersion;
         }
+
+        SyncResult withLocationCorrected(Long dataId) {
+            return new SyncResult(new HashSet<>(affectedDataIds), true, dataId);
+        }
+
+        public boolean getLocationCorrected() { return locationCorrected; }
+        public Long getLocationCorrectedDataId() { return locationCorrectedDataId; }
     }
 
     private static double getDouble(JSONObject obj, String key) {
@@ -3040,6 +3559,16 @@ public class TrackSyncUseCase {
             this.byDataId = byDataId;
             this.duplicateObjectIds = duplicateObjectIds;
             this.duplicateDataIdByObjectId = duplicateDataIdByObjectId;
+        }
+    }
+
+    private static class WeightedPose {
+        final Pose pose;
+        final double weight;
+
+        private WeightedPose(Pose pose, double weight) {
+            this.pose = pose;
+            this.weight = weight;
         }
     }
 

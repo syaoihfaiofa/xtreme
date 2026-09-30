@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <title>Static Global Map</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,"Microsoft YaHei",sans-serif;background:#f5f7fb;color:#172033}.app{display:grid;grid-template-columns:320px minmax(0,1fr);min-height:100vh}aside{background:#fff;border-right:1px solid #e5eaf2;padding:18px;overflow:auto}.content{padding:16px;min-width:0}.viewport{background:#10192b;border:1px solid #1e2a42;border-radius:14px;overflow:hidden;height:min(56vh,680px);box-shadow:0 8px 24px rgba(15,23,42,.14)}svg{width:100%;height:100%;cursor:grab}.muted{color:#64748b;font-size:12px;line-height:1.55}.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}.card,.chart-card{background:#fff;border:1px solid #e4e9f1;border-radius:12px;padding:12px}.card{background:#f8fafc}.card strong{display:block;font-size:21px;color:#0f172a}input,select,button{width:100%;margin:4px 0;border:1px solid #d4dbe7;border-radius:8px;padding:8px;background:#fff}.info{margin:12px 0;padding:10px;border-radius:9px;background:#eff6ff;border:1px solid #bfdbfe;font-size:12px;white-space:pre-wrap}.legend-item{display:grid;grid-template-columns:14px 1fr auto;gap:8px;align-items:center;font-size:12px;padding:4px 0}.swatch{width:12px;height:12px;border-radius:3px}.box{cursor:pointer}.box:hover{stroke-width:4}.label{pointer-events:none;paint-order:stroke;stroke:#10192b;stroke-width:3px}.dimmed,.track-muted{opacity:.08}.track-selected{opacity:1;filter:drop-shadow(0 0 4px #facc15)}.box.track-selected{stroke:#facc15;stroke-width:4;fill-opacity:.38}.label.track-selected{fill:#facc15;font-weight:700}.trajectory{fill:none;stroke:#d8e0ec;stroke-width:2.4;stroke-dasharray:7 7}table{width:100%;border-collapse:collapse;font-size:11px}td,th{border-bottom:1px solid #e9edf3;padding:6px 3px;text-align:left}.bad{color:#dc2626;font-weight:700}.warn{color:#d97706;font-weight:700}.charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:16px}.chart-card{min-width:0;box-shadow:0 2px 8px rgba(15,23,42,.035)}.chart-card.wide{grid-column:1/-1}.chart-title{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:13px;font-weight:700;margin-bottom:4px}.chart-note{font-size:11px;color:#64748b;font-weight:400}.chart{display:block;width:100%;height:164px}.chart-card.wide .chart{height:230px}.delta-label{display:flex;justify-content:space-between;margin-top:8px;color:#64748b;font-size:10px}.delta-chart{display:block;width:100%;height:62px}.chart-legend{display:flex;flex-wrap:wrap;gap:5px 11px;font-size:10px;color:#475569}.chart-legend span{display:inline-flex;align-items:center;gap:4px}.chart-legend i{width:16px;height:0;border-top:2px solid currentColor;display:inline-block}.chart-legend .old i{border-top-style:dashed;opacity:.55}@media(max-width:1120px){.charts{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:760px){.app{display:block}aside{border-right:0;border-bottom:1px solid #e5eaf2}.content{padding:10px}.charts{grid-template-columns:1fr}.chart-card.wide{grid-column:auto}}
+  </style>
+</head>
+<body data-scene-id="__SCENE_ID__">
+<div class="app">
+  <aside>
+    <h2>__SCENE_NAME__ Static Global Map</h2>
+    <div class="muted">滚轮缩放，拖拽平移。点击 box 查看详情。地图和轨迹按校正后的有效 location 绘制。</div>
+    <div class="stats"><div class="card"><span>Frames</span><strong id="frameCount">-</strong></div><div class="card"><span>Static Boxes</span><strong id="boxCount">-</strong></div></div>
+    <input id="search" placeholder="搜索类别 / trackId / frame">
+    <select id="trackSelect"><option value="">选择漂移 track</option></select>
+    <button id="reset">重置视图</button><button id="clear">清除搜索</button><button id="exportHtml">导出当前报告 HTML</button>
+    <div id="info" class="info">正在加载 location 数据…</div><h3>Class Legend</h3><div id="legend"></div>
+    <h3>Drift Summary</h3><table><thead><tr><th>class</th><th>trackId</th><th>frames</th><th>drift</th></tr></thead><tbody id="summary"></tbody></table>
+  </aside>
+  <main class="content">
+    <div class="viewport"><svg id="map"><g id="layer"></g></svg></div>
+    <section class="charts">
+      <article class="chart-card"><div class="chart-title">X 位置 <span class="chart-note">m</span></div><canvas id="xChart" class="chart"></canvas><div id="xLegend" class="chart-legend"></div><div class="delta-label"><span>Δ 校正差值</span><span>校正后 − 原始</span></div><canvas id="xDelta" class="delta-chart"></canvas></article>
+      <article class="chart-card"><div class="chart-title">Y 位置 <span class="chart-note">m</span></div><canvas id="yChart" class="chart"></canvas><div id="yLegend" class="chart-legend"></div><div class="delta-label"><span>Δ 校正差值</span><span>校正后 − 原始</span></div><canvas id="yDelta" class="delta-chart"></canvas></article>
+      <article class="chart-card"><div class="chart-title">Z 位置 <span class="chart-note">m</span></div><canvas id="zChart" class="chart"></canvas><div id="zLegend" class="chart-legend"></div><div class="delta-label"><span>Δ 校正差值</span><span>校正后 − 原始</span></div><canvas id="zDelta" class="delta-chart"></canvas></article>
+      <article class="chart-card"><div class="chart-title">Yaw <span class="chart-note">rad</span></div><canvas id="yawChart" class="chart"></canvas><div id="yawLegend" class="chart-legend"></div><div class="delta-label"><span>Δ 校正差值</span><span>校正后 − 原始</span></div><canvas id="yawDelta" class="delta-chart"></canvas></article>
+      <article class="chart-card"><div class="chart-title">Pitch <span class="chart-note">rad</span></div><canvas id="pitchChart" class="chart"></canvas><div id="pitchLegend" class="chart-legend"></div><div class="delta-label"><span>Δ 校正差值</span><span>校正后 − 原始</span></div><canvas id="pitchDelta" class="delta-chart"></canvas></article>
+      <article class="chart-card"><div class="chart-title">Roll <span class="chart-note">rad</span></div><canvas id="rollChart" class="chart"></canvas><div id="rollLegend" class="chart-legend"></div><div class="delta-label"><span>Δ 校正差值</span><span>校正后 − 原始</span></div><canvas id="rollDelta" class="delta-chart"></canvas></article>
+      <article class="chart-card wide"><div class="chart-title">速度 <span id="speedUnit" class="chart-note"></span></div><canvas id="speedChart" class="chart"></canvas><div id="speedLegend" class="chart-legend"></div></article>
+    </section>
+  </main>
+</div>
+<script src="/api/data/staticGlobalMapScript"></script>
+</body>
+</html>

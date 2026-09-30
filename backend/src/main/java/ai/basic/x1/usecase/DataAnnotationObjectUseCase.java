@@ -170,7 +170,12 @@ public class DataAnnotationObjectUseCase {
                 object.setSourceId(oldInfoMap.get(object.getId()).getSourceId());
                 object.setSourceType(oldInfoMap.get(object.getId()).getSourceType());
                 needUpdateObjectBOs.add(object);
-            } else if (ObjectUtil.isNull(object.getId())) {
+            } else {
+                // A sync target may have been removed after falling outside its propagation
+                // radius while the editor still holds its local box and old database id.  The
+                // partial Ctrl+Y save must restore that selected source as a new row; silently
+                // dropping it makes the following /sync request report no syncable object.
+                object.setId(null);
                 object.setCreatedAt(OffsetDateTime.now());
                 object.setCreatedBy(RequestContextHolder.getContext().getUserInfo().getId());
                 object.setSourceId(-1L);

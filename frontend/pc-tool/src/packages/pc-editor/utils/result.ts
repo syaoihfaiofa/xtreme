@@ -186,11 +186,16 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         dynamicSyncNextFrames: object.dynamicSyncNextFrames,
         syncPoseSegmentId: object.syncPoseSegmentId,
         syncPoseSegmentsInitialized: object.syncPoseSegmentsInitialized,
+        syncSourceDataId: object.syncSourceDataId,
         syncUseZ: object.syncUseZ,
         syncYawOffsetDeg: object.syncYawOffsetDeg,
         syncXOffsetM: object.syncXOffsetM,
         syncYOffsetM: object.syncYOffsetM,
+        locationCorrectionAnchor: object.locationCorrectionAnchor,
+        locationCorrectionBaseline: object.locationCorrectionBaseline,
+        locationCorrectionConstraint: object.locationCorrectionConstraint,
         pendingSyncQuarterTurns: object.pendingSyncQuarterTurns,
+        cKeyOrientationOnly: object.cKeyOrientationOnly === true,
         autoCurbOcclusionPending: object.autoCurbOcclusionPending === true,
         autoCurbOcclusionPointCloudPending: object.autoCurbOcclusionPointCloudPending === true,
         occluded: object.occluded === true,
@@ -306,11 +311,16 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.dynamicSyncNextFrames = obj.dynamicSyncNextFrames;
         userData.syncPoseSegmentId = obj.syncPoseSegmentId;
         userData.syncPoseSegmentsInitialized = obj.syncPoseSegmentsInitialized;
+        userData.syncSourceDataId = obj.syncSourceDataId;
         userData.syncUseZ = obj.syncUseZ;
         userData.syncYawOffsetDeg = obj.syncYawOffsetDeg;
         userData.syncXOffsetM = obj.syncXOffsetM;
         userData.syncYOffsetM = obj.syncYOffsetM;
+        userData.locationCorrectionAnchor = obj.locationCorrectionAnchor;
+        userData.locationCorrectionBaseline = obj.locationCorrectionBaseline;
+        userData.locationCorrectionConstraint = obj.locationCorrectionConstraint;
         userData.pendingSyncQuarterTurns = obj.pendingSyncQuarterTurns;
+        userData.cKeyOrientationOnly = obj.cKeyOrientationOnly === true;
         userData.autoCurbOcclusionPending = obj.autoCurbOcclusionPending === true;
         userData.autoCurbOcclusionPointCloudPending = obj.autoCurbOcclusionPointCloudPending === true;
         userData.occluded = obj.occluded === true;
@@ -578,11 +588,16 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             dynamicSyncNextFrames: userData.dynamicSyncNextFrames,
             syncPoseSegmentId: userData.syncPoseSegmentId,
             syncPoseSegmentsInitialized: userData.syncPoseSegmentsInitialized,
+            syncSourceDataId: userData.syncSourceDataId,
             syncUseZ: userData.syncUseZ,
             syncYawOffsetDeg: userData.syncYawOffsetDeg,
             syncXOffsetM: userData.syncXOffsetM,
             syncYOffsetM: userData.syncYOffsetM,
+            locationCorrectionAnchor: userData.locationCorrectionAnchor,
+            locationCorrectionBaseline: userData.locationCorrectionBaseline,
+            locationCorrectionConstraint: userData.locationCorrectionConstraint,
             pendingSyncQuarterTurns: userData.pendingSyncQuarterTurns,
+            cKeyOrientationOnly: userData.cKeyOrientationOnly === true,
             autoCurbOcclusionPending: userData.autoCurbOcclusionPending === true,
             autoCurbOcclusionPointCloudPending: userData.autoCurbOcclusionPointCloudPending === true,
             occluded: userData.occluded === true,

@@ -19,6 +19,7 @@
                     :class="['i-tool-span', _status_color(item)]"
                     :style="_style_track(item, index)"
                 >
+                    <span v-if="isLocationReference(item, index)" class="location-reference" title="location 基准帧">c</span>
                     <template v-if="showStatus">
                         <!-- <div class="status-context miss" v-if="isMiss(item)"></div> -->
                         <!-- <div class="status-context invalid" v-if="invalid(item, index)"></div> -->
@@ -56,6 +57,7 @@
         emptyColor: '#303036', //'#c5c8cd',
         errorColor: '#ff3653',
         syncedColor: '#ff9f00',
+        syncSourceColor: '#1677ff',
         defaultColor: '#4f556c',
         noclassColor: 'grey',
     };
@@ -136,6 +138,11 @@
             style.backgroundColor = colorConfig.errorColor;
         } else if (userData?.syncDirty === true) {
             style.backgroundColor = utils.SYNC_DIRTY_OBJECT_COLOR;
+        } else if (
+            String(userData?.syncSourceDataId || '') ===
+            String(editor.state.frames[index]?.id || '')
+        ) {
+            style.backgroundColor = colorConfig.syncSourceColor;
         } else if (userData) {
             style.backgroundColor = colorConfig.syncedColor;
         }
@@ -225,6 +232,11 @@
     function marked(index: number) {
         return props.annotates && props.annotates[index];
     }
+    function isLocationReference(item: IUserData, index: number) {
+        const referenceDataId = item?.locationCorrectionAnchor?.referenceDataId;
+        return referenceDataId != null
+            && String(referenceDataId) === String(editor.state.frames[index]?.id);
+    }
     function onCurTrackClick(event: MouseEvent) {
         if (props.click !== true) return;
         const beforeIndex = editor.state.frameIndex;
@@ -297,7 +309,8 @@
 
             .segment-boundary {
                 position: absolute;
-                top: 0;
+                top: auto;
+                bottom: 0;
                 left: -2px;
                 z-index: 8;
                 width: 3px;
@@ -305,6 +318,20 @@
                 background: #ffe58f;
                 box-shadow: 0 0 2px #000000;
                 pointer-events: none;
+            }
+
+            .location-reference {
+                position: absolute;
+                inset: 0;
+                z-index: 9;
+                color: #36cfc9;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 16px;
+                font-weight: 700;
+                line-height: 1;
+                pointer-events: auto;
             }
 
             &.truth-value::after {

@@ -76,6 +76,8 @@ export async function saveSyncObjects(config: any) {
 export interface ISyncObjectResult {
     affectedDataIds: Array<string | number>;
     syncVersion: number;
+    locationCorrected: boolean;
+    locationCorrectedDataId?: string | number;
 }
 
 export async function syncObject(
@@ -90,6 +92,8 @@ export async function syncObject(
     return {
         affectedDataIds: Array.isArray(result.affectedDataIds) ? result.affectedDataIds : [],
         syncVersion: Number(result.syncVersion) || Date.now(),
+        locationCorrected: result.locationCorrected === true,
+        locationCorrectedDataId: result.locationCorrectedDataId,
     };
 }
 

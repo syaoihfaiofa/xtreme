@@ -4,6 +4,13 @@ import IrregularWall from '../objects/IrregularWall';
 import MainRenderView from '../renderView/MainRenderView';
 import Action from './Action';
 
+// A wall can be sampled from a dense point cloud and contain thousands of
+// vertices. Updating one DOM control per vertex (and per segment) on every
+// orbit frame makes the WebGL view appear to stutter.  Keep the edit overlay
+// bounded; the endpoints and the actively selected vertex are always present.
+const MAX_VISIBLE_VERTEX_HANDLES = 160;
+const MAX_VISIBLE_SEGMENT_HANDLES = 160;
+
 /** Main-view editing controls for the two independent IrregularWall boundaries. */
 export default class EditIrregularWallAction extends Action {
     static actionName = 'edit-irregular-wall';
@@ -52,15 +59,21 @@ export default class EditIrregularWallAction extends Action {
         const object = this.getObject();
         if (!this.isEnable() || !object?.visible) { this.layer.style.display = 'none'; return; }
         this.layer.style.display = 'block';
-        const entries = (['bottom', 'top'] as const).flatMap((side) => (side === 'bottom' ? object.bottomPoints : object.topPoints).map((point, index) => ({ side, index, point })));
+        const selected = this.getSelectedVertex?.();
+        const entries = (['bottom', 'top'] as const).flatMap((side) => {
+            const points = side === 'bottom' ? object.bottomPoints : object.topPoints;
+            const selectedIndex = selected?.object === object && selected.side === side ? selected.index : undefined;
+            return this.sampleIndices(points.length, MAX_VISIBLE_VERTEX_HANDLES / 2, selectedIndex)
+                .map((index) => ({ side, index, point: points[index] }));
+        });
         const segments = (['bottom', 'top'] as const).flatMap((side) => {
             const points = side === 'bottom' ? object.bottomPoints : object.topPoints;
-            return points.slice(0, -1).map((point, index) => ({ side, index, start: point, end: points[index + 1] }));
+            return this.sampleIndices(points.length - 1, MAX_VISIBLE_SEGMENT_HANDLES / 2)
+                .map((index) => ({ side, index, start: points[index], end: points[index + 1] }));
         });
         this.ensure(this.vertexHandles, entries.length, false);
         this.ensure(this.segmentHandles, segments.length, true);
         this.ensureEndpointHandles();
-        const selected = this.getSelectedVertex?.();
         entries.forEach((entry, handleIndex) => {
             const screen = this.project(entry.point);
             const handle = this.vertexHandles[handleIndex];
@@ -99,6 +112,15 @@ export default class EditIrregularWallAction extends Action {
             });
         });
     };
+    private sampleIndices(count: number, maximum: number, requiredIndex?: number): number[] {
+        if (count <= 0) return [];
+        const indexes = new Set<number>();
+        const step = Math.max(1, Math.ceil(count / maximum));
+        for (let index = 0; index < count; index += step) indexes.add(index);
+        indexes.add(count - 1);
+        if (requiredIndex != null && requiredIndex >= 0 && requiredIndex < count) indexes.add(requiredIndex);
+        return Array.from(indexes).sort((a, b) => a - b);
+    }
     private ensure(handles: HTMLDivElement[], count: number, segment: boolean): void {
         while (handles.length < count) {
             const handle = document.createElement('div');

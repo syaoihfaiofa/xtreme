@@ -118,6 +118,13 @@ export const rotationZRight90 = define({
                     objects: object,
                     data: { pendingSyncQuarterTurns: previous - 1 },
                 });
+            } else if (motionMode === MotionMode.STATIC) {
+                // C means "change the object's heading".  Ctrl+Y consumes this one-shot
+                // marker and must not infer a location yaw/pitch/roll correction from it.
+                editor.cmdManager.execute('update-object-user-data', {
+                    objects: object,
+                    data: { cKeyOrientationOnly: true },
+                });
             }
         });
     },
