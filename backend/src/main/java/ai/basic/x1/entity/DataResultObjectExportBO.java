@@ -61,6 +61,11 @@ public class DataResultObjectExportBO {
     private String modelClass;
 
     /**
+     * Wall height for ground-polyline annotations.
+     */
+    private BigDecimal wallHeight;
+
+    /**
      * Original image-view indexes returned with an image-keypoint-lifted model result.
      * These are retained for the source frame so its image overlay is not regenerated
      * from the lifted 3D contour.

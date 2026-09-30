@@ -24,6 +24,8 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.core.util.ZipUtil;
 import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONConfig;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
 import com.alibaba.ttl.TtlRunnable;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -281,9 +283,26 @@ public class ExportUseCase {
                 var resultPath = String.format("%s/%s/%s.json", zipPath,
                         Constants.RESULT,
                         dataExportBaseBO.getName());
-                FileUtil.writeString(JSONUtil.toJsonStr(dataExportBO.getResult(), jsonConfig), resultPath, StandardCharsets.UTF_8);
+                FileUtil.writeString(serializeResultForExport(dataExportBO.getResult(), jsonConfig), resultPath, StandardCharsets.UTF_8);
             }
         });
+    }
+
+    private static String serializeResultForExport(List<DataResultExportBO> results, JSONConfig config) {
+        JSONArray resultJson = JSONUtil.parseArray(JSONUtil.toJsonStr(results, config));
+        resultJson.forEach(result -> {
+            JSONArray objects = ((JSONObject) result).getJSONArray("objects");
+            if (objects == null) {
+                return;
+            }
+            objects.forEach(object -> {
+                JSONObject annotation = (JSONObject) object;
+                if (!"GROUND_POLYLINE".equals(annotation.getStr("type"))) {
+                    annotation.remove("wallHeight");
+                }
+            });
+        });
+        return resultJson.toString();
     }
 
     /**

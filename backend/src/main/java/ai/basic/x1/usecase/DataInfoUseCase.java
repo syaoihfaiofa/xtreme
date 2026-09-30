@@ -67,6 +67,34 @@ import static ai.basic.x1.util.Constants.*;
 @Slf4j
 public class DataInfoUseCase {
 
+    private static final Map<String, String> EXPORTED_CLASS_NAME_MAP = Map.ofEntries(
+            Map.entry("Barrel_barrier", "barrel_barrier"),
+            Map.entry("Barrier", "barrier"),
+            Map.entry("Bicycle", "bicycle"),
+            Map.entry("Bus", "bus"),
+            Map.entry("Car", "car"),
+            Map.entry("Car_other", "car_other"),
+            Map.entry("Concrete_ball", "concrete_ball"),
+            Map.entry("Cone", "cone"),
+            Map.entry("curb", "curb"),
+            Map.entry("Ev_charger", "ev_charger"),
+            Map.entry("fence", "fence"),
+            Map.entry("Handcart", "handcart"),
+            Map.entry("Motorcycle", "motorcycle"),
+            Map.entry("No Parking Board", "board_no_parking"),
+            Map.entry("Parking Lock (Locked)", "parkinglock_locked"),
+            Map.entry("Parking Lock (UnLocked)", "parkinglock_unlocked"),
+            Map.entry("Person", "person"),
+            Map.entry("Pillar", "pillar"),
+            Map.entry("Pole", "pole"),
+            Map.entry("Tricycle", "tricycle"),
+            Map.entry("Truck", "truck"),
+            Map.entry("Vehicle_other", "vehicle_other"),
+            Map.entry("wall", "wall"),
+            Map.entry("wall_other", "wall_other"),
+            Map.entry("Wheel Stopper", "wheel_stopper")
+    );
+
     @Autowired
     private DataInfoDAO dataInfoDAO;
 
@@ -1410,7 +1438,9 @@ public class DataInfoUseCase {
                     var objects = new ArrayList<DataResultObjectExportBO>();
                     objectSourceList.forEach(o -> {
                         var dataResultObjectExportBO = DefaultConverter.convert(o.getClassAttributes(), DataResultObjectExportBO.class);
-                        dataResultObjectExportBO.setClassName(classMap.get(o.getClassId()));
+                        dataResultObjectExportBO.setClassName(exportClassName(classMap.get(o.getClassId())));
+                        dataResultObjectExportBO.setModelClass(exportClassName(dataResultObjectExportBO.getModelClass()));
+                        normalizeExportWallHeight(dataResultObjectExportBO);
                         dataResultObjectExportBO.setClassId(o.getClassId());
                         objects.add(dataResultObjectExportBO);
                     });
@@ -1583,7 +1613,9 @@ public class DataInfoUseCase {
                 var objects = new ArrayList<DataResultObjectExportBO>();
                 objectList.forEach(o -> {
                     var dataResultObjectExportBO = DefaultConverter.convert(o.getClassAttributes(), DataResultObjectExportBO.class);
-                    dataResultObjectExportBO.setClassName(classMap.get(o.getClassId()));
+                    dataResultObjectExportBO.setClassName(exportClassName(classMap.get(o.getClassId())));
+                    dataResultObjectExportBO.setModelClass(exportClassName(dataResultObjectExportBO.getModelClass()));
+                    normalizeExportWallHeight(dataResultObjectExportBO);
                     objects.add(dataResultObjectExportBO);
                 });
                 dataResultExportBO.setObjects(objects);
@@ -1595,6 +1627,21 @@ public class DataInfoUseCase {
             dataInfoExportBOList.add(dataInfoExportBO);
         });
         return dataInfoExportBOList;
+    }
+
+    static String exportClassName(String className) {
+        if (StrUtil.isBlank(className)) {
+            return className;
+        }
+        return EXPORTED_CLASS_NAME_MAP.getOrDefault(className, className);
+    }
+
+    private static void normalizeExportWallHeight(DataResultObjectExportBO object) {
+        if (!"GROUND_POLYLINE".equals(object.getType())) {
+            return;
+        }
+        BigDecimal wallHeight = object.getWallHeight();
+        object.setWallHeight(wallHeight == null ? BigDecimal.ZERO : wallHeight.max(BigDecimal.ZERO));
     }
 
     public DataResultBO getDataAndResult(Long datasetId, List<Long> dataIds) {

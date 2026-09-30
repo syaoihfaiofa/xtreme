@@ -567,7 +567,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             trackName: userData.trackName || '',
             groupId: userData.groupId || '',
             motionMode: userData.motionMode,
-            wallHeight: userData.wallHeight,
+            wallHeight: obj instanceof GroundPolyline ? obj.wallHeight : userData.wallHeight,
             syncDistance: userData.syncDistance,
             syncMaxDisappearGap: userData.syncMaxDisappearGap,
             syncLocationGapMs: userData.syncLocationGapMs,
