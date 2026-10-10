@@ -166,6 +166,20 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void semiStaticSync_updatesPositionDuringInitialSyncOrInsideDedicatedRange() {
+        assertTrue(TrackSyncUseCase.shouldSyncSemiStaticPosition(false, 20, 5));
+        assertTrue(TrackSyncUseCase.shouldSyncSemiStaticPosition(true, 5, 5));
+        assertFalse(TrackSyncUseCase.shouldSyncSemiStaticPosition(true, 5.1, 5));
+    }
+
+    @Test
+    void semiStaticSync_limitsAllUpdatesToInitialStaticRange() {
+        assertTrue(TrackSyncUseCase.isWithinSemiStaticTrackRange(12, 12, 0, 0, true));
+        assertFalse(TrackSyncUseCase.isWithinSemiStaticTrackRange(12.1, 12, 0, 0, true));
+        assertFalse(TrackSyncUseCase.isWithinSemiStaticTrackRange(5, 12, 3, 0, true));
+    }
+
+    @Test
     void projectGroundPoints_preservesPolylineOrderAcrossPoses() {
         JSONArray sourcePoints = new JSONArray();
         sourcePoints.add(point(1, 2, 3));
@@ -432,6 +446,39 @@ class TrackSyncUseCaseTest {
         JSONObject migrated = TrackSyncUseCase.buildDistanceVisibility(
                 existing, oldPoints, targetPoints, List.of(false, true));
         assertVisibility(migrated, "bev", true, false);
+    }
+
+    @Test
+    void applyFixedPolygonShape_keepsTargetPoseAndCopiesSourceFootprint() {
+        JSONArray source = new JSONArray();
+        source.add(point(-1, 0, 0));
+        source.add(point(-1, 4, 1));
+        source.add(point(1, 4, 1));
+        source.add(point(1, 0, 0));
+        JSONArray target = new JSONArray();
+        target.add(point(6, 22, 5));
+        target.add(point(14, 22, 5));
+        target.add(point(14, 18, 5));
+        target.add(point(6, 18, 5));
+
+        JSONArray applied = TrackSyncUseCase.applyFixedPolygonShape(source, target);
+        TrackSyncUseCase.PolygonPose pose = TrackSyncUseCase.polygonPose(applied);
+
+        assertEquals(10, pose.centerX, 0.000001);
+        assertEquals(20, pose.centerY, 0.000001);
+        assertEquals(5, pose.centerZ, 0.000001);
+        assertEquals(0, pose.yaw, 0.000001);
+        assertPoint(applied.getJSONObject(0), 8, 21, 4.5);
+        assertPoint(applied.getJSONObject(1), 12, 21, 5.5);
+        assertPoint(applied.getJSONObject(2), 12, 19, 5.5);
+        assertPoint(applied.getJSONObject(3), 8, 19, 4.5);
+    }
+
+    @Test
+    void dynamicWindowIndexes_excludesFramesOutsideTheRequestedRange() {
+        assertEquals(List.of(3, 4, 5, 6), TrackSyncUseCase.dynamicWindowIndexes(10, 4, 1, 2));
+        assertEquals(List.of(0, 1), TrackSyncUseCase.dynamicWindowIndexes(5, 0, 3, 1));
+        assertEquals(List.of(), TrackSyncUseCase.dynamicWindowIndexes(5, 5, 1, 1));
     }
 
     @Test

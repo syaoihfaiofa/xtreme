@@ -26,6 +26,9 @@ export enum MotionMode {
     // size + position + rotation identical/locked across all frames of the Scene
     // (auto propagated to every frame within range of the object).
     STATIC = 'STATIC',
+    // the initial sync uses the static range; later position updates use a dedicated range
+    // while size updates continue across the reachable track.
+    SEMI_STATIC = 'SEMI_STATIC',
     // size locked across frames that already have a box for this track; position/rotation
     // stay independent per frame (annotator still places/tracks it frame by frame).
     DYNAMIC_FIXED_SIZE = 'DYNAMIC_FIXED_SIZE',
@@ -131,6 +134,8 @@ export interface IObjectV2 {
     bottomPoints?: THREE.Vector3[];
     topPoints?: THREE.Vector3[];
     syncDistance?: number;
+    semiStaticSyncDistance?: number;
+    semiStaticSyncInitialized?: boolean;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
     showSyncLocationBoundaries?: boolean;
@@ -186,6 +191,8 @@ export interface IUserData {
     motionMode?: MotionMode;
     wallHeight?: number;
     syncDistance?: number;
+    semiStaticSyncDistance?: number;
+    semiStaticSyncInitialized?: boolean;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
     showSyncLocationBoundaries?: boolean;

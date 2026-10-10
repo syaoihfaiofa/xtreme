@@ -111,8 +111,20 @@
                             />
                         </div>
                     </template>
-                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
-                        <span class="sync-distance-label">{{ $$('sync-distance') }}</span>
+                    <div
+                        v-if="
+                            state.motionMode === MotionMode.STATIC ||
+                            state.motionMode === MotionMode.SEMI_STATIC
+                        "
+                        class="sync-distance-row"
+                    >
+                        <span class="sync-distance-label">
+                            {{
+                                state.motionMode === MotionMode.SEMI_STATIC
+                                    ? $$('semi-static-initial-sync-distance')
+                                    : $$('sync-distance')
+                            }}
+                        </span>
                         <a-input-number
                             v-model:value="state.syncDistance"
                             :min="0.1"
@@ -123,9 +135,22 @@
                             @change="onSyncDistanceChange"
                         />
                     </div>
+                    <div v-if="isSemiStaticMotionMode" class="sync-distance-row">
+                        <span class="sync-distance-label">{{ $$('semi-static-sync-distance') }}</span>
+                        <a-input-number
+                            v-model:value="state.semiStaticSyncDistance"
+                            :min="0.1"
+                            :step="1"
+                            :precision="1"
+                            addon-after="m"
+                            style="width: 100%"
+                            @change="onSemiStaticSyncDistanceChange"
+                        />
+                    </div>
                     <a-checkbox
                         v-if="
-                            state.motionMode === 'STATIC' ||
+                            state.motionMode === MotionMode.STATIC ||
+                            state.motionMode === MotionMode.SEMI_STATIC ||
                             (isDynamicMotionMode && state.dynamicRangeSyncEnabled)
                         "
                         v-model:checked="state.syncUseZ"
@@ -134,7 +159,13 @@
                     >
                         {{ $$('sync-use-z') }}
                     </a-checkbox>
-                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                    <div
+                        v-if="
+                            state.motionMode === MotionMode.STATIC ||
+                            state.motionMode === MotionMode.SEMI_STATIC
+                        "
+                        class="sync-distance-row"
+                    >
                         <span class="sync-distance-label">{{ $$('sync-yaw-offset') }}</span>
                         <a-input-number
                             v-model:value="state.syncYawOffsetDeg"
@@ -145,7 +176,13 @@
                             @change="onSyncYawOffsetChange"
                         />
                     </div>
-                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                    <div
+                        v-if="
+                            state.motionMode === MotionMode.STATIC ||
+                            state.motionMode === MotionMode.SEMI_STATIC
+                        "
+                        class="sync-distance-row"
+                    >
                         <span class="sync-distance-label">{{ $$('sync-x-offset') }}</span>
                         <a-input-number
                             v-model:value="state.syncXOffsetM"
@@ -156,7 +193,13 @@
                             @change="(value) => onSyncXYOffsetChange('x', value)"
                         />
                     </div>
-                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
+                    <div
+                        v-if="
+                            state.motionMode === MotionMode.STATIC ||
+                            state.motionMode === MotionMode.SEMI_STATIC
+                        "
+                        class="sync-distance-row"
+                    >
                         <span class="sync-distance-label">{{ $$('sync-y-offset') }}</span>
                         <a-input-number
                             v-model:value="state.syncYOffsetM"
@@ -306,8 +349,6 @@
         ];
         return data;
     });
-    let motionModeOptions = computed(() => utils.getMotionModeOptions($$));
-
     // function onStatusChange(e: any) {
     //     editor.blurPage();
     //     onObjectStatusChange(e.target.value);
@@ -329,6 +370,7 @@
         onReviewedCorrectChange,
         onMotionModeChange,
         onSyncDistanceChange,
+        onSemiStaticSyncDistanceChange,
         onSyncMaxDisappearGapChange,
         onSyncLocationGapMsChange,
         onShowSyncLocationBoundariesChange,
@@ -348,11 +390,17 @@
         onToggleTrackVisible,
         // toggleStandard,
     } = useEditClass();
+    let motionModeOptions = computed(() => {
+        const options = utils.getMotionModeOptions($$);
+        if (!state.isGroundPolygon && !state.isGroundPolyline) return options;
+        return options.filter((option) => option.value !== MotionMode.SEMI_STATIC);
+    });
     let isDynamicMotionMode = computed(
         () =>
             state.motionMode === MotionMode.DYNAMIC_FIXED_SIZE ||
             state.motionMode === MotionMode.DYNAMIC_VARIABLE_SIZE,
     );
+    let isSemiStaticMotionMode = computed(() => state.motionMode === MotionMode.SEMI_STATIC);
     defineExpose({
         update,
     });

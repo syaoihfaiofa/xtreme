@@ -17,9 +17,9 @@ export default class CmdGroup extends CmdBase {
     }
     undo() {
         try {
-            this.cmds.forEach((e) => {
-                e.undo();
-            });
+            for (let index = this.cmds.length - 1; index >= 0; index--) {
+                this.cmds[index].undo();
+            }
         } catch (error) {
             console.error(error);
         }

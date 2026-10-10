@@ -51,7 +51,9 @@ import java.util.stream.Collectors;
  *     configured sync distance of that frame's ego position, and removing any previously
  *     auto-synced row once it falls out of range.</li>
  *     <li>{@code DYNAMIC_FIXED_SIZE} - by default, only {@code size3D} is kept in sync across
- *     existing rows. Optional dynamic range sync projects complete geometry into a frame window.</li>
+ *     existing rows. Optional dynamic range sync projects complete geometry into a frame window.
+ *     A ground polygon keeps each existing frame's center and heading, and replaces the relative
+ *     footprint with the source shape. Range sync projects the four points into the frame window.</li>
  *     <li>{@code DYNAMIC_VARIABLE_SIZE} - by default, geometry stays independent per frame.
  *     Optional dynamic range sync projects complete geometry into a frame window.</li>
  * </ul>
@@ -60,6 +62,7 @@ import java.util.stream.Collectors;
 public class TrackSyncUseCase {
 
     private static final double DEFAULT_STATIC_SYNC_RADIUS_M = 12.0;
+    private static final double DEFAULT_SEMI_STATIC_SYNC_RADIUS_M = 5.0;
     private static final double DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M = 10.0;
     /** Do not propagate a static target between vertically separated road levels. */
     private static final double STATIC_SYNC_VERTICAL_TOLERANCE_M = 2.0;
@@ -73,6 +76,7 @@ public class TrackSyncUseCase {
     private static final List<String> CAMERA_VIEW_KEYS = List.of("0", "1", "2", "3");
 
     private static final String MOTION_STATIC = "STATIC";
+    private static final String MOTION_SEMI_STATIC = "SEMI_STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
     private static final String MOTION_DYNAMIC_VARIABLE_SIZE = "DYNAMIC_VARIABLE_SIZE";
     private static final String PENDING_SYNC_QUARTER_TURNS = "pendingSyncQuarterTurns";
@@ -913,6 +917,7 @@ public class TrackSyncUseCase {
             return SyncResult.empty();
         }
         if (!MOTION_STATIC.equals(motionMode)
+                && !MOTION_SEMI_STATIC.equals(motionMode)
                 && !MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)
                 && !MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)) {
             return SyncResult.empty();
@@ -952,6 +957,11 @@ public class TrackSyncUseCase {
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M);
             return syncGroundPolygon(
                     source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
+        }
+        if (isGroundPolygon(attrs) && MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)) {
+            return syncGroundPolygonDynamicFixedSize(
+                    source, trackId, frames, poseByDataId, syncWorldVertical, existingObjects,
+                    segmentByDataId, locationGapMs);
         }
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
@@ -1028,6 +1038,44 @@ public class TrackSyncUseCase {
                     syncRadius, syncUseZ, syncWorldVertical, syncYawOffset, syncXOffset, syncYOffset, frames,
                     poseByDataId, existingByDataId, existingRows.duplicateObjectIds, reachableFrameIds,
                     maxDisappearGap, segmentByDataId, locationGapMs, segmentsInitialized);
+        } else if (MOTION_SEMI_STATIC.equals(motionMode)) {
+            requireScenePose(poseByDataId, source.getDataId());
+            double initialSyncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_STATIC_SYNC_RADIUS_M);
+            double semiStaticSyncRadius = getPositiveDouble(
+                    attrs, "semiStaticSyncDistance", DEFAULT_SEMI_STATIC_SYNC_RADIUS_M);
+            boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
+            double syncYawOffset = Math.toRadians(getDouble(attrs, "syncYawOffsetDeg"));
+            double syncXOffset = getDouble(attrs, "syncXOffsetM");
+            double syncYOffset = getDouble(attrs, "syncYOffsetM");
+            boolean initialized = getBoolean(attrs, "semiStaticSyncInitialized", false)
+                    || existingByDataId.values().stream()
+                    .map(DataAnnotationObject::getClassAttributes)
+                    .filter(ObjectUtil::isNotNull)
+                    .anyMatch(existingAttrs -> getBoolean(existingAttrs, "semiStaticSyncInitialized", false));
+            return syncSemiStatic(
+                    source,
+                    trackId,
+                    center3D,
+                    size3D,
+                    contour.getJSONObject("rotation3D"),
+                    initialSyncRadius,
+                    semiStaticSyncRadius,
+                    initialized,
+                    syncUseZ,
+                    syncWorldVertical,
+                    syncYawOffset,
+                    syncXOffset,
+                    syncYOffset,
+                    frames,
+                    poseByDataId,
+                    existingByDataId,
+                    existingRows.duplicateObjectIds,
+                    reachableFrameIds,
+                    maxDisappearGap,
+                    segmentByDataId,
+                    locationGapMs,
+                    segmentsInitialized
+            );
         } else if (dynamicRangeSyncEnabled) {
             requireScenePose(poseByDataId, source.getDataId());
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
@@ -1306,6 +1354,198 @@ public class TrackSyncUseCase {
             }
         }
         return applyChanges(inserts, updates, deleteIds);
+    }
+
+    private SyncResult syncGroundPolygonDynamicFixedSize(
+            DataAnnotationObjectBO source,
+            String trackId,
+            List<DataInfo> frames,
+            Map<Long, Pose> poseByDataId,
+            boolean syncWorldVertical,
+            List<DataAnnotationObject> existingObjects,
+            Map<Long, Integer> segmentByDataId,
+            int locationGapMs) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        int maxDisappearGap = getNonNegativeInt(
+                sourceAttrs, "syncMaxDisappearGap", DEFAULT_SYNC_MAX_DISAPPEAR_GAP);
+        if (getBoolean(sourceAttrs, "dynamicRangeSyncEnabled", false)) {
+            requireScenePose(poseByDataId, source.getDataId());
+            int previousFrames = getNonNegativeInt(
+                    sourceAttrs, "dynamicSyncPreviousFrames", DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES);
+            int nextFrames = getNonNegativeInt(
+                    sourceAttrs, "dynamicSyncNextFrames", DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES);
+            return syncGroundPolygonDynamicRange(
+                    source,
+                    trackId,
+                    frames,
+                    poseByDataId,
+                    syncWorldVertical,
+                    existingObjects,
+                    previousFrames,
+                    nextFrames,
+                    maxDisappearGap,
+                    segmentByDataId,
+                    locationGapMs);
+        }
+        return syncGroundPolygonFixedShape(
+                source, trackId, existingObjects, maxDisappearGap, segmentByDataId, locationGapMs);
+    }
+
+    /**
+     * Copy the source parking-slot footprint onto polygons that already exist for this track.
+     * Each target keeps its own center and heading.
+     */
+    private SyncResult syncGroundPolygonFixedShape(
+            DataAnnotationObjectBO source,
+            String trackId,
+            List<DataAnnotationObject> existingObjects,
+            int maxDisappearGap,
+            Map<Long, Integer> segmentByDataId,
+            int locationGapMs) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        JSONArray sourcePoints = groundPolygonPoints(sourceAttrs, source.getDataId(), trackId);
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataAnnotationObject existing : groundPolygonsByTrack(existingObjects, trackId).values()) {
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(existing.getClassAttributes()));
+            JSONObject contour = attrs.getJSONObject("contour");
+            contour.set("points", applyFixedPolygonShape(sourcePoints, contour.getJSONArray("points")));
+            copyClassId(attrs, source.getClassId());
+            attrs.set("type", GROUND_POLYGON);
+            attrs.set("trackId", trackId);
+            attrs.set("motionMode", MOTION_DYNAMIC_FIXED_SIZE);
+            attrs.set("parkingOpeningEdge", "P3_P0");
+            copyDynamicSyncConfiguration(attrs, sourceAttrs);
+            updateSyncMetadata(
+                    attrs, maxDisappearGap, segmentByDataId.get(existing.getDataId()), locationGapMs);
+            existing.setClassId(source.getClassId());
+            existing.setClassAttributes(attrs);
+            updates.add(existing);
+        }
+        return applyChanges(new ArrayList<>(), updates, new ArrayList<>());
+    }
+
+    /**
+     * Project the source parking slot as a rigid footprint into the dynamic frame window.
+     * Frames outside the window are left unchanged.
+     */
+    private SyncResult syncGroundPolygonDynamicRange(
+            DataAnnotationObjectBO source,
+            String trackId,
+            List<DataInfo> frames,
+            Map<Long, Pose> poseByDataId,
+            boolean syncWorldVertical,
+            List<DataAnnotationObject> existingObjects,
+            int previousFrames,
+            int nextFrames,
+            int maxDisappearGap,
+            Map<Long, Integer> segmentByDataId,
+            int locationGapMs) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        JSONArray sourcePoints = groundPolygonPoints(sourceAttrs, source.getDataId(), trackId);
+        Pose sourcePose = poseByDataId.get(source.getDataId());
+        int sourceIndex = findFrameIndex(frames, source.getDataId());
+        if (sourceIndex < 0 || sourcePose == null || !sourcePose.complete) {
+            throw new IllegalStateException(String.format(
+                    "Dynamic range sync requires source pose: dataId=%s, trackId=%s",
+                    source.getDataId(), trackId));
+        }
+        List<double[]> worldPoints = new ArrayList<>(4);
+        for (int index = 0; index < 4; index++) {
+            JSONObject point = sourcePoints.getJSONObject(index);
+            if (point == null) {
+                throw new IllegalArgumentException(String.format(
+                        "Parking slot point is invalid: dataId=%s, index=%s", source.getDataId(), index));
+            }
+            worldPoints.add(localToWorld(
+                    getDouble(point, "x"),
+                    getDouble(point, "y"),
+                    getDouble(point, "z"),
+                    sourcePose,
+                    syncWorldVertical));
+        }
+        Map<Long, DataAnnotationObject> existingByDataId = groundPolygonsByTrack(existingObjects, trackId);
+        List<DataAnnotationObject> inserts = new ArrayList<>();
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        boolean syncUseZ = getBoolean(sourceAttrs, "syncUseZ", true);
+        for (Integer frameIndex : dynamicWindowIndexes(
+                frames.size(), sourceIndex, previousFrames, nextFrames)) {
+            DataInfo frame = frames.get(frameIndex);
+            Pose targetPose = poseByDataId.get(frame.getId());
+            if (targetPose == null || !targetPose.complete) {
+                log.warn("Dynamic range sync skipped target without pose: sourceDataId={}, targetDataId={}, trackId={}",
+                        source.getDataId(), frame.getId(), trackId);
+                continue;
+            }
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
+                    existing == null ? sourceAttrs : existing.getClassAttributes()));
+            stripFrameLocalVisibilityAttrs(attrs, existing != null);
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (contour == null) {
+                contour = new JSONObject();
+                attrs.set("contour", contour);
+            }
+            JSONArray targetPoints = new JSONArray();
+            for (double[] worldPoint : worldPoints) {
+                double[] localPoint = worldToLocal(
+                        worldPoint[0], worldPoint[1], worldPoint[2], targetPose, syncWorldVertical);
+                targetPoints.add(point3D(localPoint[0], localPoint[1], localPoint[2]));
+            }
+            contour.set("points", targetPoints);
+            attrs.set("type", GROUND_POLYGON);
+            attrs.set("trackId", trackId);
+            attrs.set("parkingOpeningEdge", "P3_P0");
+            updateDynamicMetadata(
+                    attrs,
+                    source,
+                    MOTION_DYNAMIC_FIXED_SIZE,
+                    previousFrames,
+                    nextFrames,
+                    maxDisappearGap,
+                    segmentByDataId.get(frame.getId()),
+                    locationGapMs,
+                    syncUseZ,
+                    syncWorldVertical);
+            if (existing == null) {
+                inserts.add(DataAnnotationObject.builder()
+                        .datasetId(source.getDatasetId())
+                        .dataId(frame.getId())
+                        .classId(source.getClassId())
+                        .classAttributes(attrs)
+                        .sourceId(-1L)
+                        .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW)
+                        .createdAt(OffsetDateTime.now())
+                        .createdBy(source.getCreatedBy())
+                        .build());
+            } else {
+                existing.setClassId(source.getClassId());
+                existing.setClassAttributes(attrs);
+                updates.add(existing);
+            }
+        }
+        return applyChanges(inserts, updates, new ArrayList<>());
+    }
+
+    private static JSONArray groundPolygonPoints(JSONObject attrs, Long dataId, String trackId) {
+        JSONObject contour = attrs == null ? null : attrs.getJSONObject("contour");
+        JSONArray points = contour == null ? null : contour.getJSONArray("points");
+        if (points == null || points.size() != 4) {
+            throw new IllegalArgumentException(String.format(
+                    "Parking slot requires exactly four points: dataId=%s, trackId=%s", dataId, trackId));
+        }
+        return points;
+    }
+
+    private static Map<Long, DataAnnotationObject> groundPolygonsByTrack(
+            List<DataAnnotationObject> existingObjects, String trackId) {
+        return existingObjects.stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> isGroundPolygon(object.getClassAttributes()))
+                .collect(Collectors.toMap(
+                        DataAnnotationObject::getDataId,
+                        object -> object,
+                        (first, ignored) -> first));
     }
 
     private SyncResult syncGroundPolyline(DataAnnotationObjectBO source, String trackId, double syncRadius, List<DataInfo> frames,
@@ -2053,6 +2293,231 @@ public class TrackSyncUseCase {
         return Math.hypot(pointX - (startX + ratio * deltaX), pointY - (startY + ratio * deltaY));
     }
 
+    private SyncResult syncSemiStatic(
+            DataAnnotationObjectBO source,
+            String trackId,
+            JSONObject center3D,
+            JSONObject size3D,
+            JSONObject rotation3D,
+            double initialSyncRadius,
+            double semiStaticSyncRadius,
+            boolean initialized,
+            boolean syncUseZ,
+            boolean syncWorldVertical,
+            double syncYawOffset,
+            double syncXOffset,
+            double syncYOffset,
+            List<DataInfo> frames,
+            Map<Long, Pose> poseByDataId,
+            Map<Long, DataAnnotationObject> existingByDataId,
+            List<Long> duplicateObjectIds,
+            Set<Long> reachableFrameIds,
+            int maxDisappearGap,
+            Map<Long, Integer> segmentByDataId,
+            int locationGapMs,
+            boolean segmentsInitialized) {
+        double localX = getDouble(center3D, "x");
+        double localY = getDouble(center3D, "y");
+        double localZ = getDouble(center3D, "z");
+        double localYaw = rotation3D == null ? 0 : getDouble(rotation3D, "z");
+        double rotX = rotation3D == null ? 0 : getDouble(rotation3D, "x");
+        double rotY = rotation3D == null ? 0 : getDouble(rotation3D, "y");
+
+        Pose sourcePose = poseByDataId.get(source.getDataId());
+        Pose effectiveSourcePose = withYawOffset(sourcePose, syncYawOffset);
+        boolean useWorldVertical = syncUseZ;
+        double[] worldPoint = localToWorld(localX, localY, localZ, effectiveSourcePose, useWorldVertical);
+        double worldX = worldPoint[0];
+        double worldY = worldPoint[1];
+        double worldZ = worldPoint[2];
+        double worldYaw = localYaw + effectiveSourcePose.yaw;
+        Integer sourceSegmentId = segmentByDataId.get(source.getDataId());
+
+        var toInsert = new ArrayList<DataAnnotationObject>();
+        var toUpdate = new ArrayList<DataAnnotationObject>();
+        var toDeleteIds = new ArrayList<>(duplicateObjectIds);
+        for (DataInfo frame : frames) {
+            Integer targetSegmentId = segmentByDataId.get(frame.getId());
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            boolean canProjectPosition = poseByDataId.containsKey(frame.getId())
+                    && reachableFrameIds.contains(frame.getId())
+                    && (!segmentsInitialized || ObjectUtil.equal(sourceSegmentId, targetSegmentId));
+            if (!canProjectPosition) {
+                continue;
+            }
+            if (frame.getId().equals(source.getDataId())) {
+                updateSemiStaticExisting(
+                        existing,
+                        source,
+                        size3D,
+                        initialSyncRadius,
+                        semiStaticSyncRadius,
+                        syncUseZ,
+                        syncWorldVertical,
+                        syncYawOffset,
+                        syncXOffset,
+                        syncYOffset,
+                        maxDisappearGap,
+                        targetSegmentId,
+                        locationGapMs,
+                        toUpdate
+                );
+                continue;
+            }
+
+            Pose targetPose = poseByDataId.get(frame.getId());
+            Pose effectiveTargetPose = withYawOffset(targetPose, syncYawOffset);
+            double[] targetLocal = worldToLocal(worldX, worldY, worldZ, effectiveTargetPose, useWorldVertical);
+            double targetLocalX = targetLocal[0] + syncXOffset;
+            double targetLocalY = targetLocal[1] + syncYOffset;
+            double targetLocalZ = syncUseZ ? targetLocal[2] : localZ;
+            double targetLocalYaw = worldYaw - effectiveTargetPose.yaw;
+            double distance = distanceToBoxFootprint(targetLocalX, targetLocalY, targetLocalYaw, size3D);
+            boolean sameLevel = !syncUseZ
+                    || Math.abs(worldZ - targetPose.z) <= STATIC_SYNC_VERTICAL_TOLERANCE_M;
+            if (!isWithinSemiStaticTrackRange(
+                    distance, initialSyncRadius, worldZ, targetPose.z, syncUseZ)) {
+                continue;
+            }
+
+            boolean syncPosition = shouldSyncSemiStaticPosition(initialized, distance, semiStaticSyncRadius)
+                    && sameLevel;
+            if (!syncPosition && existing != null) {
+                updateSemiStaticExisting(
+                        existing,
+                        source,
+                        size3D,
+                        initialSyncRadius,
+                        semiStaticSyncRadius,
+                        syncUseZ,
+                        syncWorldVertical,
+                        syncYawOffset,
+                        syncXOffset,
+                        syncYOffset,
+                        maxDisappearGap,
+                        targetSegmentId,
+                        locationGapMs,
+                        toUpdate
+                );
+                continue;
+            }
+            if (!syncPosition && !sameLevel) {
+                continue;
+            }
+
+            JSONObject newAttrs = existing != null
+                    ? JSONUtil.parseObj(JSONUtil.toJsonStr(existing.getClassAttributes()))
+                    : JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes()));
+            stripFrameLocalVisibilityAttrs(newAttrs, existing != null);
+            JSONObject newContour = newAttrs.getJSONObject("contour");
+            if (newContour == null) {
+                newContour = new JSONObject();
+                newAttrs.set("contour", newContour);
+            }
+            newContour.set("center3D", new JSONObject()
+                    .set("x", targetLocalX)
+                    .set("y", targetLocalY)
+                    .set("z", targetLocalZ));
+            newContour.set("rotation3D", new JSONObject()
+                    .set("x", rotX)
+                    .set("y", rotY)
+                    .set("z", targetLocalYaw));
+            newAttrs.set("trackId", trackId);
+            updateSemiStaticMetadata(
+                    newAttrs,
+                    source,
+                    size3D,
+                    initialSyncRadius,
+                    semiStaticSyncRadius,
+                    syncUseZ,
+                    syncWorldVertical,
+                    syncYawOffset,
+                    syncXOffset,
+                    syncYOffset,
+                    maxDisappearGap,
+                    targetSegmentId,
+                    locationGapMs
+            );
+            if (existing != null) {
+                existing.setClassId(source.getClassId());
+                existing.setClassAttributes(newAttrs);
+                toUpdate.add(existing);
+            } else {
+                toInsert.add(DataAnnotationObject.builder()
+                        .datasetId(source.getDatasetId())
+                        .dataId(frame.getId())
+                        .classId(source.getClassId())
+                        .classAttributes(newAttrs)
+                        .sourceId(-1L)
+                        .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW)
+                        .createdAt(OffsetDateTime.now())
+                        .createdBy(source.getCreatedBy())
+                        .build());
+            }
+        }
+        return applyChanges(toInsert, toUpdate, toDeleteIds);
+    }
+
+    static boolean shouldSyncSemiStaticPosition(
+            boolean initialized, double horizontalDistance, double semiStaticSyncRadius) {
+        return !initialized || horizontalDistance <= semiStaticSyncRadius;
+    }
+
+    static boolean isWithinSemiStaticTrackRange(
+            double horizontalDistance,
+            double initialSyncRadius,
+            double objectWorldZ,
+            double targetSensorWorldZ,
+            boolean syncUseZ) {
+        return isWithinStaticSyncRange(
+                horizontalDistance, initialSyncRadius, objectWorldZ, targetSensorWorldZ, syncUseZ);
+    }
+
+    private void updateSemiStaticExisting(
+            DataAnnotationObject existing,
+            DataAnnotationObjectBO source,
+            JSONObject size3D,
+            double initialSyncRadius,
+            double semiStaticSyncRadius,
+            boolean syncUseZ,
+            boolean syncWorldVertical,
+            double syncYawOffset,
+            double syncXOffset,
+            double syncYOffset,
+            int maxDisappearGap,
+            Integer targetSegmentId,
+            int locationGapMs,
+            List<DataAnnotationObject> toUpdate) {
+        if (existing == null || ObjectUtil.isNull(existing.getClassAttributes())) {
+            return;
+        }
+        JSONObject existingAttrs = existing.getClassAttributes();
+        Object existingSyncDirty = existingAttrs.get("syncDirty");
+        updateSemiStaticMetadata(
+                existingAttrs,
+                source,
+                size3D,
+                initialSyncRadius,
+                semiStaticSyncRadius,
+                syncUseZ,
+                syncWorldVertical,
+                syncYawOffset,
+                syncXOffset,
+                syncYOffset,
+                maxDisappearGap,
+                targetSegmentId,
+                locationGapMs
+        );
+        if (existingSyncDirty == null) {
+            existingAttrs.remove("syncDirty");
+        } else {
+            existingAttrs.set("syncDirty", existingSyncDirty);
+        }
+        existing.setClassId(source.getClassId());
+        existing.setClassAttributes(existingAttrs);
+        toUpdate.add(existing);
+    }
+
     private SyncResult syncStatic(DataAnnotationObjectBO source, String trackId, JSONObject center3D, JSONObject size3D,
                              JSONObject rotation3D, double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
                              double syncYawOffset, double syncXOffset, double syncYOffset, List<DataInfo> frames,
@@ -2205,6 +2670,37 @@ public class TrackSyncUseCase {
         copyClassId(attrs, source.getClassId());
         attrs.set("motionMode", MOTION_STATIC);
         attrs.set("syncDistance", syncRadius);
+        attrs.set("syncUseZ", syncUseZ);
+        attrs.set("syncWorldVertical", syncWorldVertical);
+        attrs.set("syncYawOffsetDeg", Math.toDegrees(syncYawOffset));
+        attrs.set("syncXOffsetM", syncXOffset);
+        attrs.set("syncYOffsetM", syncYOffset);
+        updateSyncMetadata(attrs, maxDisappearGap, segmentId, locationGapMs);
+    }
+
+    private void updateSemiStaticMetadata(
+            JSONObject attrs,
+            DataAnnotationObjectBO source,
+            JSONObject size3D,
+            double initialSyncRadius,
+            double semiStaticSyncRadius,
+            boolean syncUseZ,
+            boolean syncWorldVertical,
+            double syncYawOffset,
+            double syncXOffset,
+            double syncYOffset,
+            int maxDisappearGap,
+            Integer segmentId,
+            int locationGapMs) {
+        JSONObject contour = attrs.getJSONObject("contour");
+        if (contour != null) {
+            contour.set("size3D", JSONUtil.parseObj(JSONUtil.toJsonStr(size3D)));
+        }
+        copyClassId(attrs, source.getClassId());
+        attrs.set("motionMode", MOTION_SEMI_STATIC);
+        attrs.set("syncDistance", initialSyncRadius);
+        attrs.set("semiStaticSyncDistance", semiStaticSyncRadius);
+        attrs.set("semiStaticSyncInitialized", true);
         attrs.set("syncUseZ", syncUseZ);
         attrs.set("syncWorldVertical", syncWorldVertical);
         attrs.set("syncYawOffsetDeg", Math.toDegrees(syncYawOffset));
@@ -2532,6 +3028,90 @@ public class TrackSyncUseCase {
             indexes.add(index);
         }
         return indexes;
+    }
+
+    static final class PolygonPose {
+        final double centerX;
+        final double centerY;
+        final double centerZ;
+        final double yaw;
+
+        PolygonPose(double centerX, double centerY, double centerZ, double yaw) {
+            this.centerX = centerX;
+            this.centerY = centerY;
+            this.centerZ = centerZ;
+            this.yaw = yaw;
+        }
+    }
+
+    /**
+     * Heading runs from the opening edge midpoint {@code (P0+P3)/2} toward the back edge
+     * midpoint {@code (P1+P2)/2}.
+     */
+    static PolygonPose polygonPose(JSONArray points) {
+        double[][] coordinates = polygonPointCoordinates(points);
+        double centerX = 0;
+        double centerY = 0;
+        double centerZ = 0;
+        for (double[] point : coordinates) {
+            centerX += point[0];
+            centerY += point[1];
+            centerZ += point[2];
+        }
+        centerX /= 4.0;
+        centerY /= 4.0;
+        centerZ /= 4.0;
+        double frontX = (coordinates[0][0] + coordinates[3][0]) / 2.0;
+        double frontY = (coordinates[0][1] + coordinates[3][1]) / 2.0;
+        double backX = (coordinates[1][0] + coordinates[2][0]) / 2.0;
+        double backY = (coordinates[1][1] + coordinates[2][1]) / 2.0;
+        return new PolygonPose(centerX, centerY, centerZ, Math.atan2(backY - frontY, backX - frontX));
+    }
+
+    /**
+     * Place the source footprint on the target center and heading. Relative height offsets
+     * come from the source; the target center Z is kept.
+     */
+    static JSONArray applyFixedPolygonShape(JSONArray sourcePoints, JSONArray targetPoints) {
+        double[][] source = polygonPointCoordinates(sourcePoints);
+        PolygonPose sourcePose = polygonPose(sourcePoints);
+        PolygonPose targetPose = polygonPose(targetPoints);
+        JSONArray result = new JSONArray();
+        for (int index = 0; index < 4; index++) {
+            double[] local = rotateZ(
+                    source[index][0] - sourcePose.centerX,
+                    source[index][1] - sourcePose.centerY,
+                    -sourcePose.yaw);
+            double[] placed = rotateZ(local[0], local[1], targetPose.yaw);
+            result.add(point3D(
+                    targetPose.centerX + placed[0],
+                    targetPose.centerY + placed[1],
+                    targetPose.centerZ + (source[index][2] - sourcePose.centerZ)));
+        }
+        return result;
+    }
+
+    private static double[][] polygonPointCoordinates(JSONArray points) {
+        if (points == null || points.size() != 4) {
+            throw new IllegalArgumentException("Parking slot requires exactly four points");
+        }
+        double[][] coordinates = new double[4][3];
+        for (int index = 0; index < 4; index++) {
+            JSONObject point = points.getJSONObject(index);
+            if (point == null) {
+                throw new IllegalArgumentException("Parking slot point is invalid: index=" + index);
+            }
+            coordinates[index][0] = getDouble(point, "x");
+            coordinates[index][1] = getDouble(point, "y");
+            coordinates[index][2] = getDouble(point, "z");
+        }
+        return coordinates;
+    }
+
+    private static double[] rotateZ(double x, double y, double yaw) {
+        double cos = Math.cos(yaw);
+        double sin = Math.sin(yaw);
+        return new double[] {x * cos - y * sin, x * sin + y * cos};
     }
 
     static ProjectedPose projectPose(

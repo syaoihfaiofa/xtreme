@@ -9,6 +9,8 @@ const TRACKING_METADATA_KEYS: readonly (keyof IUserData)[] = [
     'motionMode',
     'wallHeight',
     'syncDistance',
+    'semiStaticSyncDistance',
+    'semiStaticSyncInitialized',
     'syncMaxDisappearGap',
     'syncLocationGapMs',
     'showSyncLocationBoundaries',

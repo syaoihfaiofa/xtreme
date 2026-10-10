@@ -699,7 +699,7 @@ export default class Editor extends THREE.EventDispatcher {
             const userData = object.userData as IUserData;
             const motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
             const dirty =
-                motionMode === MotionMode.STATIC
+                motionMode === MotionMode.STATIC || motionMode === MotionMode.SEMI_STATIC
                     ? !!(transform?.position || transform?.scale || transform?.rotation)
                     : motionMode === MotionMode.DYNAMIC_FIXED_SIZE
                       ? !!transform?.scale
@@ -722,9 +722,10 @@ export default class Editor extends THREE.EventDispatcher {
         }
         const userData = object.userData as IUserData;
         const motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
-        // Ground shapes currently support static propagation only. Do not show an
-        // unsynced state for a mode that cannot be synchronized.
-        if (motionMode !== MotionMode.STATIC || userData.syncDirty === true) return;
+        const canSync =
+            motionMode === MotionMode.STATIC ||
+            (object instanceof GroundPolygon && motionMode === MotionMode.DYNAMIC_FIXED_SIZE);
+        if (!canSync || userData.syncDirty === true) return;
         userData.syncDirty = true;
         this.updateObjectRenderInfo(object);
     }

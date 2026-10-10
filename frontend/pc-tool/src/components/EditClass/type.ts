@@ -50,11 +50,14 @@ export interface IState {
     sensorDistance: number;
     motionMode: MotionMode | '';
     syncDistance: number;
+    semiStaticSyncDistance: number;
+    semiStaticSyncInitialized: boolean;
     syncMaxDisappearGap: number;
     syncLocationGapMs: number;
     showSyncLocationBoundaries: boolean;
     syncSegmentVisibility: boolean;
     isGroundPolyline: boolean;
+    isGroundPolygon: boolean;
     dynamicRangeSyncEnabled: boolean;
     dynamicSyncPreviousFrames: number;
     dynamicSyncNextFrames: number;

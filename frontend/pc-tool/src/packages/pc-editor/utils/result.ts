@@ -177,6 +177,8 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         motionMode: object.motionMode,
         wallHeight: object.wallHeight,
         syncDistance: object.syncDistance,
+        semiStaticSyncDistance: object.semiStaticSyncDistance,
+        semiStaticSyncInitialized: object.semiStaticSyncInitialized,
         syncMaxDisappearGap: object.syncMaxDisappearGap,
         syncLocationGapMs: object.syncLocationGapMs,
         showSyncLocationBoundaries: object.showSyncLocationBoundaries,
@@ -297,6 +299,8 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.motionMode = obj.motionMode;
         userData.wallHeight = Number.isFinite(Number(obj.wallHeight)) ? Math.max(0, Number(obj.wallHeight)) : 0;
         userData.syncDistance = obj.syncDistance;
+        userData.semiStaticSyncDistance = obj.semiStaticSyncDistance;
+        userData.semiStaticSyncInitialized = obj.semiStaticSyncInitialized;
         userData.syncMaxDisappearGap = obj.syncMaxDisappearGap;
         userData.syncLocationGapMs = obj.syncLocationGapMs;
         userData.showSyncLocationBoundaries = obj.showSyncLocationBoundaries;
@@ -569,6 +573,8 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             motionMode: userData.motionMode,
             wallHeight: obj instanceof GroundPolyline ? obj.wallHeight : userData.wallHeight,
             syncDistance: userData.syncDistance,
+            semiStaticSyncDistance: userData.semiStaticSyncDistance,
+            semiStaticSyncInitialized: userData.semiStaticSyncInitialized,
             syncMaxDisappearGap: userData.syncMaxDisappearGap,
             syncLocationGapMs: userData.syncLocationGapMs,
             showSyncLocationBoundaries: userData.showSyncLocationBoundaries,

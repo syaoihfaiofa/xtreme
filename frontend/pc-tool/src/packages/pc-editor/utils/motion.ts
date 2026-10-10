@@ -14,6 +14,7 @@ export function getDefaultMotionMode(className?: string): MotionMode {
 export function getMotionModeOptions($$: (key: string) => string) {
     return [
         { value: MotionMode.STATIC, label: $$('motion-static') },
+        { value: MotionMode.SEMI_STATIC, label: $$('motion-semi-static') },
         { value: MotionMode.DYNAMIC_FIXED_SIZE, label: $$('motion-dynamic-fixed-size') },
         { value: MotionMode.DYNAMIC_VARIABLE_SIZE, label: $$('motion-dynamic-variable-size') },
     ];

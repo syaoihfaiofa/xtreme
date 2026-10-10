@@ -27,6 +27,7 @@ import ParkingPointCloudDensityManager from './ParkingPointCloudDensityManager';
 
 const SYNCABLE_MOTION_MODES: string[] = [
     MotionMode.STATIC,
+    MotionMode.SEMI_STATIC,
     MotionMode.DYNAMIC_FIXED_SIZE,
     MotionMode.DYNAMIC_VARIABLE_SIZE,
 ];
@@ -37,6 +38,18 @@ type SyncableGroundShape = GroundPolygon | GroundPolyline | IrregularWall;
 
 function isSyncableGroundShape(object: unknown): object is SyncableGroundShape {
     return object instanceof GroundPolygon || object instanceof GroundPolyline || object instanceof IrregularWall;
+}
+
+function resolveSyncMotionMode(object: Box | SyncableGroundShape): string {
+    if (object instanceof GroundPolygon) {
+        return object.userData?.motionMode === MotionMode.DYNAMIC_FIXED_SIZE
+            ? MotionMode.DYNAMIC_FIXED_SIZE
+            : MotionMode.STATIC;
+    }
+    if (isSyncableGroundShape(object)) {
+        return MotionMode.STATIC;
+    }
+    return object.userData?.motionMode || utils.getDefaultMotionMode(object.userData?.classType);
 }
 
 function matchesSyncedTrack(
@@ -69,6 +82,8 @@ function buildSyncedUserDataPatch(
         motionMode: fresh.motionMode,
         wallHeight: fresh.wallHeight,
         syncDistance: fresh.syncDistance,
+        semiStaticSyncDistance: fresh.semiStaticSyncDistance,
+        semiStaticSyncInitialized: fresh.semiStaticSyncInitialized,
         syncMaxDisappearGap: fresh.syncMaxDisappearGap,
         syncLocationGapMs: fresh.syncLocationGapMs,
         showSyncLocationBoundaries: fresh.showSyncLocationBoundaries,
@@ -647,10 +662,7 @@ export default class Editor extends BaseEditor {
             this.showMsg('warning', '该对象没有追踪ID');
             return;
         }
-        const isStaticGroundShape = isSyncableGroundShape(box);
-        let motionMode = isStaticGroundShape
-            ? MotionMode.STATIC
-            : box.userData?.motionMode || utils.getDefaultMotionMode(box.userData?.classType);
+        let motionMode = resolveSyncMotionMode(box);
         if (!SYNCABLE_MOTION_MODES.includes(motionMode)) {
             this.showMsg('warning', '该对象的运动模式不支持同步');
             return;
@@ -1095,6 +1107,10 @@ export default class Editor extends BaseEditor {
         });
         this.invalidateTrackDisplayCaches();
         this.selectByTrackId(trackId);
+        // Sync is already persisted on the server. Keeping create/add-object history would let
+        // Ctrl+Z walk past the local edit, undo the multi-frame sync group, then undo create and
+        // remove the source parking slot even though it still exists in GT.
+        this.cmdManager.reset();
         // The selected track does not change during sync, so CURRENT_TRACK_CHANGE will not fire.
         // Use a dedicated event: normal ANNOTATE_CHANGE listeners require an objects array.
         this.dispatchEvent({ type: Event.TRACK_SYNC_COMPLETE, data: { trackId } });
@@ -1216,10 +1232,19 @@ export default class Editor extends BaseEditor {
                     utils.checkAnnotationBoxSize(object, className).forEach((finding) => {
                         addIssue(finding.message, finding.code);
                     });
-                    if (userData.motionMode === MotionMode.STATIC) {
+                    if (
+                        userData.motionMode === MotionMode.STATIC ||
+                        userData.motionMode === MotionMode.SEMI_STATIC
+                    ) {
                         const syncDistance = Number(userData.syncDistance || 12);
                         if (!Number.isFinite(syncDistance) || syncDistance <= 0) {
                             addIssue('同步距离异常');
+                        }
+                        if (userData.motionMode === MotionMode.SEMI_STATIC) {
+                            const semiStaticSyncDistance = Number(userData.semiStaticSyncDistance || 5);
+                            if (!Number.isFinite(semiStaticSyncDistance) || semiStaticSyncDistance <= 0) {
+                                addIssue('半静态同步距离异常');
+                            }
                         }
                     }
                 }

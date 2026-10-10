@@ -10,6 +10,7 @@ export type IInferenceStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
 
 export type IInferenceMotionMode =
     | 'STATIC'
+    | 'SEMI_STATIC'
     | 'DYNAMIC_FIXED_SIZE'
     | 'DYNAMIC_VARIABLE_SIZE';
 
