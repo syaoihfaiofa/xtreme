@@ -122,8 +122,9 @@ public class DataAnnotationController {
 
     @PostMapping("sync")
     public TrackSyncUseCase.SyncResult sync(@RequestParam Long dataId, @RequestParam String trackId,
-                                            @RequestParam(required = false) Long classId) {
-        return trackSyncUseCase.syncByDataIdAndTrackId(dataId, trackId, classId);
+                                            @RequestParam(required = false) Long classId,
+                                            @RequestParam(required = false) Long sourceObjectId) {
+        return trackSyncUseCase.syncByDataIdAndTrackId(dataId, trackId, classId, sourceObjectId);
     }
 
     @PostMapping("track/delete")
@@ -137,9 +138,26 @@ public class DataAnnotationController {
         return trackSyncUseCase.splitTrack(request);
     }
 
+    @PostMapping("track/splitSyncSegment")
+    public TrackSyncUseCase.ManualSyncSegmentSplitResult splitSyncSegment(
+            @RequestBody TrackSyncUseCase.ManualSyncSegmentSplitRequest request) {
+        return trackSyncUseCase.splitManualSyncSegment(request);
+    }
+
+    @PostMapping("track/mergeSyncSegment")
+    public TrackSyncUseCase.ManualSyncSegmentSplitResult mergeSyncSegment(
+            @RequestBody TrackSyncUseCase.ManualSyncSegmentSplitRequest request) {
+        return trackSyncUseCase.mergeManualSyncSegment(request);
+    }
+
     @GetMapping("sync/segments")
     public Map<Long, Integer> syncSegments(@RequestParam Long dataId, @RequestParam String trackId) {
         return trackSyncUseCase.findPoseSegments(dataId, trackId);
+    }
+
+    @GetMapping("sync/manualSegments")
+    public Map<Long, Integer> manualSyncSegments(@RequestParam Long dataId, @RequestParam String trackId) {
+        return trackSyncUseCase.findManualSyncSegments(dataId, trackId);
     }
 
     @PostMapping("review")

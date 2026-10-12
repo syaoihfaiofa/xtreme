@@ -136,6 +136,7 @@ export interface IObjectV2 {
     syncDistance?: number;
     semiStaticSyncDistance?: number;
     semiStaticSyncInitialized?: boolean;
+    semiStaticPositionLocked?: boolean;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
     showSyncLocationBoundaries?: boolean;
@@ -146,6 +147,10 @@ export interface IObjectV2 {
     dynamicSyncNextFrames?: number;
     syncPoseSegmentId?: string | number;
     syncPoseSegmentsInitialized?: boolean;
+    manualSyncSegmentId?: number;
+    manualSyncSegmentBoundaryDataId?: string | number;
+    manualSyncSegmentStartDataId?: string | number;
+    manualSyncSegmentEndDataId?: string | number;
     syncUseZ?: boolean;
     syncYawOffsetDeg?: number;
     syncXOffsetM?: number;
@@ -193,6 +198,7 @@ export interface IUserData {
     syncDistance?: number;
     semiStaticSyncDistance?: number;
     semiStaticSyncInitialized?: boolean;
+    semiStaticPositionLocked?: boolean;
     syncMaxDisappearGap?: number;
     syncLocationGapMs?: number;
     showSyncLocationBoundaries?: boolean;
@@ -203,6 +209,10 @@ export interface IUserData {
     dynamicSyncNextFrames?: number;
     syncPoseSegmentId?: string | number;
     syncPoseSegmentsInitialized?: boolean;
+    manualSyncSegmentId?: number;
+    manualSyncSegmentBoundaryDataId?: string | number;
+    manualSyncSegmentStartDataId?: string | number;
+    manualSyncSegmentEndDataId?: string | number;
     syncUseZ?: boolean;
     syncYawOffsetDeg?: number;
     syncXOffsetM?: number;

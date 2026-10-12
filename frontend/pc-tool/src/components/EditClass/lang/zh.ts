@@ -31,6 +31,7 @@ const zh: ILocale = {
     'sync-distance': '同步距离（到Box最近点，XY平面）',
     'semi-static-initial-sync-distance': '首次静态同步距离',
     'semi-static-sync-distance': '半静态位置同步距离',
+    'semi-static-position-locked': '仅本帧位置（仍同步尺寸）',
     'sync-max-disappear-gap': '最大连续消失帧数',
     'sync-location-gap': 'Location 断档阈值',
     'show-sync-location-boundaries': '显示 Location 断档线',

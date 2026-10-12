@@ -724,7 +724,9 @@ export default class Editor extends THREE.EventDispatcher {
         const motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
         const canSync =
             motionMode === MotionMode.STATIC ||
-            (object instanceof GroundPolygon && motionMode === MotionMode.DYNAMIC_FIXED_SIZE);
+            (object instanceof GroundPolygon &&
+                (motionMode === MotionMode.DYNAMIC_FIXED_SIZE ||
+                    motionMode === MotionMode.SEMI_STATIC));
         if (!canSync || userData.syncDirty === true) return;
         userData.syncDirty = true;
         this.updateObjectRenderInfo(object);

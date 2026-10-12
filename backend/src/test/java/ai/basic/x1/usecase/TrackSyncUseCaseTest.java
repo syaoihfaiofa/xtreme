@@ -19,6 +19,57 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TrackSyncUseCaseTest {
 
     @Test
+    void selectSyncSource_usesExplicitObjectIdWhenTrackHasDuplicateObjects() {
+        DataAnnotationObject staticObject = new DataAnnotationObject();
+        staticObject.setId(34699L);
+        DataAnnotationObject semiStaticObject = new DataAnnotationObject();
+        semiStaticObject.setId(46490L);
+
+        DataAnnotationObject selected = TrackSyncUseCase.selectSyncSource(
+                List.of(staticObject, semiStaticObject), 46490L);
+
+        assertEquals(46490L, selected.getId());
+    }
+
+    @Test
+    void putOptionalSyncPoseSegmentId_omitsNullInsteadOfJsonNull() {
+        JSONObject attrs = new JSONObject();
+
+        TrackSyncUseCase.putOptionalSyncPoseSegmentId(attrs, null);
+
+        assertFalse(attrs.containsKey("syncPoseSegmentId"));
+    }
+
+    @Test
+    void isSameManualSyncSegment_onlyMatchesEqualAssignedSegments() {
+        JSONObject source = new JSONObject();
+        source.set("manualSyncSegmentId", 1);
+        JSONObject sameSegment = new JSONObject();
+        sameSegment.set("manualSyncSegmentId", 1);
+        JSONObject otherSegment = new JSONObject();
+        otherSegment.set("manualSyncSegmentId", 2);
+
+        assertTrue(TrackSyncUseCase.isSameManualSyncSegment(source, sameSegment));
+        assertFalse(TrackSyncUseCase.isSameManualSyncSegment(source, otherSegment));
+    }
+
+    @Test
+    void isSameManualSyncSegment_keepsLegacyTracksCompatible() {
+        assertTrue(TrackSyncUseCase.isSameManualSyncSegment(new JSONObject(), new JSONObject()));
+    }
+
+    @Test
+    void isFrameInManualSyncSegment_rejectsFramesAfterBoundaryForFirstSegment() {
+        JSONObject attrs = new JSONObject();
+        attrs.set("manualSyncSegmentId", 0);
+        attrs.set("manualSyncSegmentBoundaryDataId", 20L);
+        Map<Long, Integer> frameIndexes = Map.of(10L, 0, 20L, 1, 30L, 2);
+
+        assertTrue(TrackSyncUseCase.isFrameInManualSyncSegment(attrs, frameIndexes, 10L));
+        assertFalse(TrackSyncUseCase.isFrameInManualSyncSegment(attrs, frameIndexes, 30L));
+    }
+
+    @Test
     void splitAtFraction_insertsOneSharedCutPoint() {
         JSONArray points = new JSONArray();
         points.add(point(0, 0, 0));
@@ -101,6 +152,13 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void mergeAffectedDataIds_includesGeometryAndMotionModeUpdates() {
+        assertEquals(
+                Set.of(1L, 2L, 3L),
+                TrackSyncUseCase.mergeAffectedDataIds(List.of(1L, 2L), Set.of(2L, 3L)));
+    }
+
+    @Test
     void poseFromLocationValues_usesZeroForMissingRollAndPitch() {
         TrackSyncUseCase.Pose pose = TrackSyncUseCase.poseFromLocationValues(
                 new double[]{1, 2, 3, 0.5, Double.NaN, Double.NaN});
@@ -177,6 +235,20 @@ class TrackSyncUseCaseTest {
         assertTrue(TrackSyncUseCase.isWithinSemiStaticTrackRange(12, 12, 0, 0, true));
         assertFalse(TrackSyncUseCase.isWithinSemiStaticTrackRange(12.1, 12, 0, 0, true));
         assertFalse(TrackSyncUseCase.isWithinSemiStaticTrackRange(5, 12, 3, 0, true));
+    }
+
+    @Test
+    void semiStaticSync_preservesTargetPositionWhenEitherFrameIsLocallyLocked() {
+        assertTrue(TrackSyncUseCase.shouldPreserveSemiStaticPosition(true, false));
+        assertTrue(TrackSyncUseCase.shouldPreserveSemiStaticPosition(false, true));
+        assertFalse(TrackSyncUseCase.shouldPreserveSemiStaticPosition(false, false));
+    }
+
+    @Test
+    void semiStaticSync_allowsLocalPositionLockOnlyInsidePositionSyncRange() {
+        assertTrue(TrackSyncUseCase.isSemiStaticPositionLockEligible(true, 5, 5));
+        assertFalse(TrackSyncUseCase.isSemiStaticPositionLockEligible(true, 5.1, 5));
+        assertFalse(TrackSyncUseCase.isSemiStaticPositionLockEligible(false, 1, 5));
     }
 
     @Test
@@ -281,6 +353,24 @@ class TrackSyncUseCaseTest {
         points.add(point(2, 0, 0));
 
         assertEquals(0, TrackSyncUseCase.distanceToGroundShapeFootprint(points), 0.000000001);
+    }
+
+    @Test
+    void distanceToGroundPolygonFootprint_closesShapeAndReturnsZeroInside() {
+        JSONArray points = new JSONArray();
+        points.add(point(2, -1, 0));
+        points.add(point(4, -1, 0));
+        points.add(point(4, 1, 0));
+        points.add(point(2, 1, 0));
+
+        assertEquals(2, TrackSyncUseCase.distanceToGroundPolygonFootprint(points), 0.000000001);
+
+        points = new JSONArray();
+        points.add(point(-2, -1, 0));
+        points.add(point(2, -1, 0));
+        points.add(point(2, 1, 0));
+        points.add(point(-2, 1, 0));
+        assertEquals(0, TrackSyncUseCase.distanceToGroundPolygonFootprint(points), 0.000000001);
     }
 
     @Test

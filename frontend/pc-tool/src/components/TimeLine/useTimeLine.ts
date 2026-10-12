@@ -654,15 +654,38 @@ export default function useBottom() {
 
     function getSegmentBoundaries(trackList: IUserData[]): boolean[] {
         const boundaries = trackList.map(() => false);
-        let previousSegmentId: string | undefined;
+        let previousPoseSegmentId: string | undefined;
+        let previousManualSegmentId: string | undefined;
         trackList.forEach((userData, index) => {
-            const segmentId = userData?.syncPoseSegmentId;
-            if (segmentId === undefined || segmentId === null) return;
-            const normalizedSegmentId = String(segmentId);
-            if (previousSegmentId !== undefined && normalizedSegmentId !== previousSegmentId) {
-                boundaries[index] = true;
+            const poseSegmentId = userData?.syncPoseSegmentId;
+            if (poseSegmentId !== undefined && poseSegmentId !== null) {
+                const normalizedPoseSegmentId = String(poseSegmentId);
+                if (
+                    previousPoseSegmentId !== undefined &&
+                    normalizedPoseSegmentId !== previousPoseSegmentId
+                ) {
+                    boundaries[index] = true;
+                }
+                previousPoseSegmentId = normalizedPoseSegmentId;
             }
-            previousSegmentId = normalizedSegmentId;
+            const manualSegmentId = userData?.manualSyncSegmentId;
+            if (manualSegmentId !== undefined && manualSegmentId !== null) {
+                const normalizedManualSegmentId = String(manualSegmentId);
+                if (
+                    previousManualSegmentId !== undefined &&
+                    normalizedManualSegmentId !== previousManualSegmentId
+                ) {
+                    boundaries[index] = true;
+                }
+                previousManualSegmentId = normalizedManualSegmentId;
+            }
+            if (
+                userData?.manualSyncSegmentBoundaryDataId !== undefined &&
+                String(userData.manualSyncSegmentBoundaryDataId) ===
+                    String(editor.state.frames[index]?.id)
+            ) {
+                if (index + 1 < boundaries.length) boundaries[index + 1] = true;
+            }
         });
         return boundaries;
     }
@@ -686,23 +709,29 @@ export default function useBottom() {
             const sourceIndex = trackList.findIndex((userData) => !!userData);
             const sourceFrame = editor.state.frames[sourceIndex];
             if (!sourceFrame) return;
+            const localBoundaries = getSegmentBoundaries(trackList);
             const locationGapMs = trackList[sourceIndex]?.syncLocationGapMs ?? 1000;
             const sceneFrameId = editor.state.frames[0]?.id;
             const cacheKey = `${sceneFrameId}:${locationGapMs}`;
             const cachedBoundaries = segmentBoundaryCache.get(cacheKey);
-            if (cachedBoundaries) {
-                iState.segmentBoundaries = [...cachedBoundaries];
-                return;
-            }
             const requestId = ++segmentBoundaryRequest;
             try {
-                const segmentByDataId = await api.getSyncSegments(String(sourceFrame.id), trackId);
+                const [segmentByDataId, manualSegmentByDataId] = await Promise.all([
+                    cachedBoundaries
+                        ? Promise.resolve<Record<string, number>>({})
+                        : api.getSyncSegments(String(sourceFrame.id), trackId),
+                    api.getManualSyncSegments(String(sourceFrame.id), trackId),
+                ]);
                 if (requestId !== segmentBoundaryRequest || editor.currentTrack !== trackId) return;
+                const poseBoundaries = cachedBoundaries || getSegmentBoundariesFromFrames(segmentByDataId);
                 if (Object.keys(segmentByDataId).length > 0) {
-                    const boundaries = getSegmentBoundariesFromFrames(segmentByDataId);
-                    cacheSegmentBoundaries(cacheKey, boundaries);
-                    iState.segmentBoundaries = [...boundaries];
+                    cacheSegmentBoundaries(cacheKey, poseBoundaries);
                 }
+                const manualBoundaries = getSegmentBoundariesFromFrames(manualSegmentByDataId);
+                iState.segmentBoundaries = poseBoundaries.map(
+                    (boundary, index) =>
+                        boundary || manualBoundaries[index] || localBoundaries[index],
+                );
             } catch (error) {
                 console.warn('load location segment boundaries failed', error);
             }
@@ -805,20 +834,25 @@ export default function useBottom() {
         if (!trackId || frames.length === 0) return;
         const requestId = ++trackLineRequest;
         try {
-            const frameIds = await api.getTrackFrameIds(
+            const syncObjects = await api.getSyncTrackObjectBatch(
                 frames.map((frame) => frame.id),
                 trackId,
             );
             if (requestId !== trackLineRequest || editor.currentTrack !== trackId) return;
-            const frameIdSet = new Set(frameIds.map((id) => String(id)));
-            const localList = getTrackLine(trackId);
             const trackName = editor.trackManager.trackMap.get(trackId)?.trackName || '';
-            const serverList = frames.map((frame, frameIndex) => {
-                const local = localList[frameIndex];
-                if (local) return local;
-                return frameIdSet.has(String(frame.id))
-                    ? ({ trackId, trackName } as IUserData)
-                    : undefined;
+            const serverList = frames.map((frame) => {
+                const object = syncObjects.objectsMap[String(frame.id)]?.[0];
+                if (!object) return undefined;
+                return {
+                    trackId: object.trackId || trackId,
+                    trackName: object.trackName || trackName,
+                    motionMode: object.motionMode,
+                    syncPoseSegmentId: object.syncPoseSegmentId,
+                    syncLocationGapMs: object.syncLocationGapMs,
+                    showSyncLocationBoundaries: object.showSyncLocationBoundaries,
+                    manualSyncSegmentId: object.manualSyncSegmentId,
+                    manualSyncSegmentBoundaryDataId: object.manualSyncSegmentBoundaryDataId,
+                } as IUserData;
             }) as IUserData[];
             trackLineCache.set(trackId, serverList);
             const frameIndices: number[] = [];

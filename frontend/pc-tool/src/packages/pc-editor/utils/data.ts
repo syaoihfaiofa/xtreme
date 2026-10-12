@@ -55,6 +55,7 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
                 updateData.syncDistance = userData.syncDistance;
                 updateData.semiStaticSyncDistance = userData.semiStaticSyncDistance;
                 updateData.semiStaticSyncInitialized = userData.semiStaticSyncInitialized;
+                updateData.semiStaticPositionLocked = userData.semiStaticPositionLocked;
                 updateData.syncMaxDisappearGap = userData.syncMaxDisappearGap;
                 updateData.syncLocationGapMs = userData.syncLocationGapMs;
                 updateData.showSyncLocationBoundaries = userData.showSyncLocationBoundaries;
@@ -64,6 +65,10 @@ export function copyData(editor: Editor, copyId: string, toIds: string[], object
                 updateData.dynamicSyncNextFrames = userData.dynamicSyncNextFrames;
                 updateData.syncPoseSegmentId = userData.syncPoseSegmentId;
                 updateData.syncPoseSegmentsInitialized = userData.syncPoseSegmentsInitialized;
+                updateData.manualSyncSegmentId = userData.manualSyncSegmentId;
+                updateData.manualSyncSegmentBoundaryDataId = userData.manualSyncSegmentBoundaryDataId;
+                updateData.manualSyncSegmentStartDataId = userData.manualSyncSegmentStartDataId;
+                updateData.manualSyncSegmentEndDataId = userData.manualSyncSegmentEndDataId;
                 updateData.syncUseZ = userData.syncUseZ;
                 updateData.syncYawOffsetDeg = userData.syncYawOffsetDeg;
                 updateData.syncXOffsetM = userData.syncXOffsetM;

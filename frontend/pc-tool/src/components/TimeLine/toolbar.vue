@@ -242,6 +242,14 @@
             <toolTipMerge :state="state" @action="onTrackAction" />
             <toolTipSplit :state="state" @action="onTrackAction" />
             <a-tooltip placement="top">
+                <template #title>拆分位置同步段</template>
+                <a-button @click="onSplitManualSyncSegment">
+                    <template #icon>
+                        <i class="iconfont icon-chaifen" />
+                    </template>
+                </a-button>
+            </a-tooltip>
+            <a-tooltip placement="top">
                 <template #title>{{ editor.lang('delete') }}</template>
                 <a-button @click="() => onTrackAction('Delete')">
                     <template #icon>
@@ -346,6 +354,12 @@
     function onTrackAction(action: ITrackAction) {
         emit('onTrackAction', action);
     }
+
+    async function onSplitManualSyncSegment(): Promise<void> {
+        const split = await editor.splitManualSyncSegment();
+        if (split) emit('updateTrackLine');
+    }
+
     function onAutoLoadHandle() {
         autoLoadSwitch.value?.blur();
         onAction('AutoLoad');

@@ -125,6 +125,26 @@
                 <div class="title">{{ $$('btn-auto-check') }}</div>
             </a-button>
             <a-button
+                v-if="bsState.syncMode && canEdit()"
+                class="basic-btn"
+                :disabled="blocking || inferenceRunning"
+                size="large"
+                @click="onSplitManualSyncSegment"
+            >
+                <template #icon><ScissorOutlined /></template>
+                <div class="title">Split Segment</div>
+            </a-button>
+            <a-button
+                v-if="bsState.syncMode && canEdit()"
+                class="basic-btn"
+                :disabled="blocking || inferenceRunning"
+                size="large"
+                @click="onMergeManualSyncSegment"
+            >
+                <template #icon><MergeCellsOutlined /></template>
+                <div class="title">Merge Segment</div>
+            </a-button>
+            <a-button
                 class="basic-btn"
                 v-if="has(BsUIType.flowSave)"
                 :disabled="blocking || inferenceRunning"
@@ -216,6 +236,7 @@
         CloseOutlined,
         CheckCircleOutlined,
         MergeCellsOutlined,
+        ScissorOutlined,
         AuditOutlined,
         UnorderedListOutlined,
     } from '@ant-design/icons-vue';
@@ -269,6 +290,14 @@
         const progress = Number.isFinite(task.progress) ? Math.round(task.progress) : 0;
         return `Dataset inference ${task.status.toLowerCase()}: ${task.completedFrames}/${task.totalFrames} (${progress}%)`;
     });
+
+    async function onSplitManualSyncSegment(): Promise<void> {
+        await editor.splitManualSyncSegment();
+    }
+
+    async function onMergeManualSyncSegment(): Promise<void> {
+        await editor.mergeManualSyncSegment();
+    }
 
     onMounted(() => {
         init();

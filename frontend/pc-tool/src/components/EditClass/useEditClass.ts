@@ -56,12 +56,14 @@ export default function useEditClass() {
         syncDistance: DEFAULT_SYNC_DISTANCE,
         semiStaticSyncDistance: DEFAULT_SEMI_STATIC_SYNC_DISTANCE,
         semiStaticSyncInitialized: false,
+        semiStaticPositionLocked: false,
         syncMaxDisappearGap: DEFAULT_SYNC_MAX_DISAPPEAR_GAP,
         syncLocationGapMs: DEFAULT_SYNC_LOCATION_GAP_MS,
         showSyncLocationBoundaries: false,
         syncSegmentVisibility: false,
         isGroundPolyline: false,
         isGroundPolygon: false,
+        isIrregularWall: false,
         dynamicRangeSyncEnabled: false,
         dynamicSyncPreviousFrames: DEFAULT_DYNAMIC_SYNC_FRAME_COUNT,
         dynamicSyncNextFrames: DEFAULT_DYNAMIC_SYNC_FRAME_COUNT,
@@ -208,12 +210,14 @@ export default function useEditClass() {
         state.syncDistance = DEFAULT_SYNC_DISTANCE;
         state.semiStaticSyncDistance = DEFAULT_SEMI_STATIC_SYNC_DISTANCE;
         state.semiStaticSyncInitialized = false;
+        state.semiStaticPositionLocked = false;
         state.syncMaxDisappearGap = DEFAULT_SYNC_MAX_DISAPPEAR_GAP;
         state.syncLocationGapMs = DEFAULT_SYNC_LOCATION_GAP_MS;
         state.showSyncLocationBoundaries = false;
         state.syncSegmentVisibility = false;
         state.isGroundPolyline = false;
         state.isGroundPolygon = false;
+        state.isIrregularWall = false;
         state.dynamicRangeSyncEnabled = false;
         state.dynamicSyncPreviousFrames = DEFAULT_DYNAMIC_SYNC_FRAME_COUNT;
         state.dynamicSyncNextFrames = DEFAULT_DYNAMIC_SYNC_FRAME_COUNT;
@@ -268,7 +272,12 @@ export default function useEditClass() {
         state.reviewedCorrect = objects.every(
             (object) => object.userData?.reviewedCorrect === true,
         );
-        state.sensorDistance = object instanceof Box ? getSensorDistance(object) : 0;
+        state.sensorDistance =
+            object instanceof Box
+                ? getSensorDistance(object)
+                : object instanceof GroundPolygon
+                  ? getGroundPolygonSensorDistance(object)
+                  : 0;
         state.motionMode =
             (object.userData as IUserData).motionMode ||
             utils.getDefaultMotionMode((object.userData as IUserData).classType);
@@ -276,6 +285,8 @@ export default function useEditClass() {
         state.semiStaticSyncDistance = getSemiStaticSyncDistance(object.userData as IUserData);
         state.semiStaticSyncInitialized =
             (object.userData as IUserData).semiStaticSyncInitialized === true;
+        state.semiStaticPositionLocked =
+            (object.userData as IUserData).semiStaticPositionLocked === true;
         state.syncMaxDisappearGap = getSyncMaxDisappearGap(object.userData as IUserData);
         state.syncLocationGapMs = getSyncLocationGapMs(object.userData as IUserData);
         state.showSyncLocationBoundaries =
@@ -284,6 +295,7 @@ export default function useEditClass() {
             (object.userData as IUserData).syncSegmentVisibility === true;
         state.isGroundPolyline = object instanceof GroundPolyline;
         state.isGroundPolygon = object instanceof GroundPolygon;
+        state.isIrregularWall = object instanceof IrregularWall;
         state.dynamicRangeSyncEnabled =
             (object.userData as IUserData).dynamicRangeSyncEnabled === true;
         state.dynamicSyncPreviousFrames = getDynamicSyncFrameCount(
@@ -353,17 +365,24 @@ export default function useEditClass() {
         state.sourceType = userData.sourceType || '';
         state.occluded = userData.occluded === true;
         state.reviewedCorrect = userData.reviewedCorrect === true;
-        state.sensorDistance = object instanceof Box ? getSensorDistance(object as Box) : 0;
+        state.sensorDistance =
+            object instanceof Box
+                ? getSensorDistance(object as Box)
+                : object instanceof GroundPolygon
+                  ? getGroundPolygonSensorDistance(object)
+                  : 0;
         state.motionMode = userData.motionMode || utils.getDefaultMotionMode(userData.classType);
         state.syncDistance = getSyncDistance(userData, object);
         state.semiStaticSyncDistance = getSemiStaticSyncDistance(userData);
         state.semiStaticSyncInitialized = userData.semiStaticSyncInitialized === true;
+        state.semiStaticPositionLocked = userData.semiStaticPositionLocked === true;
         state.syncMaxDisappearGap = getSyncMaxDisappearGap(userData);
         state.syncLocationGapMs = getSyncLocationGapMs(userData);
         state.showSyncLocationBoundaries = userData.showSyncLocationBoundaries === true;
         state.syncSegmentVisibility = userData.syncSegmentVisibility === true;
         state.isGroundPolyline = object instanceof GroundPolyline;
         state.isGroundPolygon = object instanceof GroundPolygon;
+        state.isIrregularWall = object instanceof IrregularWall;
         state.dynamicRangeSyncEnabled = userData.dynamicRangeSyncEnabled === true;
         state.dynamicSyncPreviousFrames = getDynamicSyncFrameCount(
             userData.dynamicSyncPreviousFrames,
@@ -579,6 +598,43 @@ export default function useEditClass() {
         return Math.sqrt(outsideX * outsideX + outsideY * outsideY);
     }
 
+    function getGroundPolygonSensorDistance(polygon: GroundPolygon): number {
+        const points = polygon.points3D;
+        if (points.length < 3) return Number.POSITIVE_INFINITY;
+        if (isOriginInsidePolygon(points)) return 0;
+        let distance = Number.POSITIVE_INFINITY;
+        for (let index = 0; index < points.length; index++) {
+            const start = points[index];
+            const end = points[(index + 1) % points.length];
+            distance = Math.min(distance, distanceToOriginSegment(start, end));
+        }
+        return distance;
+    }
+
+    function isOriginInsidePolygon(points: THREE.Vector3[]): boolean {
+        let inside = false;
+        for (let current = 0, previous = points.length - 1; current < points.length; previous = current++) {
+            const currentPoint = points[current];
+            const previousPoint = points[previous];
+            const crossesRay =
+                (currentPoint.y > 0) !== (previousPoint.y > 0) &&
+                0 < ((previousPoint.x - currentPoint.x) * -currentPoint.y) /
+                    (previousPoint.y - currentPoint.y) +
+                    currentPoint.x;
+            if (crossesRay) inside = !inside;
+        }
+        return inside;
+    }
+
+    function distanceToOriginSegment(start: THREE.Vector3, end: THREE.Vector3): number {
+        const deltaX = end.x - start.x;
+        const deltaY = end.y - start.y;
+        const lengthSquared = deltaX * deltaX + deltaY * deltaY;
+        if (lengthSquared <= Number.EPSILON) return Math.hypot(start.x, start.y);
+        const ratio = Math.max(0, Math.min(1, -(start.x * deltaX + start.y * deltaY) / lengthSquared));
+        return Math.hypot(start.x + ratio * deltaX, start.y + ratio * deltaY);
+    }
+
     function onGroupIdChange() {
         const objects = state.isBatch
             ? tempObjects
@@ -628,6 +684,7 @@ export default function useEditClass() {
                 syncDistance: state.syncDistance,
                 semiStaticSyncDistance: state.semiStaticSyncDistance,
                 semiStaticSyncInitialized: state.semiStaticSyncInitialized,
+                semiStaticPositionLocked: state.semiStaticPositionLocked,
                 syncMaxDisappearGap: state.syncMaxDisappearGap,
                 syncLocationGapMs: state.syncLocationGapMs,
                 showSyncLocationBoundaries: state.showSyncLocationBoundaries,
@@ -674,6 +731,12 @@ export default function useEditClass() {
                 ? nextValue
                 : DEFAULT_SEMI_STATIC_SYNC_DISTANCE;
         if (!state.trackId || !state.motionMode) return;
+        applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
+    }
+
+    function onSemiStaticPositionLockedChange(): void {
+        if (!state.trackId || !state.motionMode || state.isBatch) return;
+        state.semiStaticPositionLocked = state.semiStaticPositionLocked === true;
         applyMotionSettingsToTrack(state.trackId, state.motionMode as MotionMode);
     }
 
@@ -782,6 +845,10 @@ export default function useEditClass() {
         } finally {
             state.syncing = false;
         }
+    }
+
+    async function onSplitManualSyncSegment(): Promise<void> {
+        await editor.splitManualSyncSegment();
     }
 
     async function onSyncClickMulti() {
@@ -974,6 +1041,7 @@ export default function useEditClass() {
         onMotionModeChange,
         onSyncDistanceChange,
         onSemiStaticSyncDistanceChange,
+        onSemiStaticPositionLockedChange,
         onSyncMaxDisappearGapChange,
         onSyncLocationGapMsChange,
         onShowSyncLocationBoundariesChange,
@@ -985,6 +1053,7 @@ export default function useEditClass() {
         onSyncYawOffsetChange,
         onSyncXYOffsetChange,
         onSyncClick,
+        onSplitManualSyncSegment,
         onInstanceRemove,
         onToggleObjectsVisible,
         onRemoveObjects,

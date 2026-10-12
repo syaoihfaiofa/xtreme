@@ -82,9 +82,16 @@ export async function syncObject(
     dataId: string,
     trackId: string,
     classId?: string | number,
+    sourceObjectId?: string | number,
 ): Promise<ISyncObjectResult> {
-    const params: { dataId: string; trackId: string; classId?: string | number } = { dataId, trackId };
+    const params: {
+        dataId: string;
+        trackId: string;
+        classId?: string | number;
+        sourceObjectId?: string | number;
+    } = { dataId, trackId };
     if (classId != null && classId !== '') params.classId = classId;
+    if (sourceObjectId != null && sourceObjectId !== '') params.sourceObjectId = sourceObjectId;
     const response = await post('/api/annotate/data/sync', null, { params });
     const result = response?.data || response || {};
     return {
@@ -125,12 +132,50 @@ export async function splitTrack(request: ITrackSplitRequest): Promise<ITrackSpl
     return response?.data || response;
 }
 
+export interface IManualSyncSegmentSplitRequest {
+    dataId: string | number;
+    trackId: string;
+    classId?: string | number;
+    sourceObjectId: string | number;
+}
+
+export interface IManualSyncSegmentSplitResult {
+    previousSegmentId: number;
+    nextSegmentId: number;
+    affectedDataIds: Array<string | number>;
+}
+
+export async function splitManualSyncSegment(
+    request: IManualSyncSegmentSplitRequest,
+): Promise<IManualSyncSegmentSplitResult> {
+    const response = await post<any>('/api/annotate/data/track/splitSyncSegment', request);
+    return response?.data || response;
+}
+
+export async function mergeManualSyncSegment(
+    request: IManualSyncSegmentSplitRequest,
+): Promise<IManualSyncSegmentSplitResult> {
+    const response = await post<any>('/api/annotate/data/track/mergeSyncSegment', request);
+    return response?.data || response;
+}
+
 export async function getSyncSegments(
     dataId: string,
     trackId: string,
 ): Promise<Record<string, number>> {
     const response = await get<{ data?: Record<string, number> }>(
         '/api/annotate/data/sync/segments',
+        { dataId, trackId },
+    );
+    return response.data || {};
+}
+
+export async function getManualSyncSegments(
+    dataId: string,
+    trackId: string,
+): Promise<Record<string, number>> {
+    const response = await get<{ data?: Record<string, number> }>(
+        '/api/annotate/data/sync/manualSegments',
         { dataId, trackId },
     );
     return response.data || {};

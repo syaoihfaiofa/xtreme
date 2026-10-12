@@ -52,12 +52,14 @@ export interface IState {
     syncDistance: number;
     semiStaticSyncDistance: number;
     semiStaticSyncInitialized: boolean;
+    semiStaticPositionLocked: boolean;
     syncMaxDisappearGap: number;
     syncLocationGapMs: number;
     showSyncLocationBoundaries: boolean;
     syncSegmentVisibility: boolean;
     isGroundPolyline: boolean;
     isGroundPolygon: boolean;
+    isIrregularWall: boolean;
     dynamicRangeSyncEnabled: boolean;
     dynamicSyncPreviousFrames: number;
     dynamicSyncNextFrames: number;

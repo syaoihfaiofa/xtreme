@@ -179,6 +179,7 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         syncDistance: object.syncDistance,
         semiStaticSyncDistance: object.semiStaticSyncDistance,
         semiStaticSyncInitialized: object.semiStaticSyncInitialized,
+        semiStaticPositionLocked: object.semiStaticPositionLocked,
         syncMaxDisappearGap: object.syncMaxDisappearGap,
         syncLocationGapMs: object.syncLocationGapMs,
         showSyncLocationBoundaries: object.showSyncLocationBoundaries,
@@ -188,6 +189,10 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
         dynamicSyncNextFrames: object.dynamicSyncNextFrames,
         syncPoseSegmentId: object.syncPoseSegmentId,
         syncPoseSegmentsInitialized: object.syncPoseSegmentsInitialized,
+        manualSyncSegmentId: object.manualSyncSegmentId,
+        manualSyncSegmentBoundaryDataId: object.manualSyncSegmentBoundaryDataId,
+        manualSyncSegmentStartDataId: object.manualSyncSegmentStartDataId,
+        manualSyncSegmentEndDataId: object.manualSyncSegmentEndDataId,
         syncUseZ: object.syncUseZ,
         syncYawOffsetDeg: object.syncYawOffsetDeg,
         syncXOffsetM: object.syncXOffsetM,
@@ -301,6 +306,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.syncDistance = obj.syncDistance;
         userData.semiStaticSyncDistance = obj.semiStaticSyncDistance;
         userData.semiStaticSyncInitialized = obj.semiStaticSyncInitialized;
+        userData.semiStaticPositionLocked = obj.semiStaticPositionLocked;
         userData.syncMaxDisappearGap = obj.syncMaxDisappearGap;
         userData.syncLocationGapMs = obj.syncLocationGapMs;
         userData.showSyncLocationBoundaries = obj.showSyncLocationBoundaries;
@@ -310,6 +316,10 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
         userData.dynamicSyncNextFrames = obj.dynamicSyncNextFrames;
         userData.syncPoseSegmentId = obj.syncPoseSegmentId;
         userData.syncPoseSegmentsInitialized = obj.syncPoseSegmentsInitialized;
+        userData.manualSyncSegmentId = obj.manualSyncSegmentId;
+        userData.manualSyncSegmentBoundaryDataId = obj.manualSyncSegmentBoundaryDataId;
+        userData.manualSyncSegmentStartDataId = obj.manualSyncSegmentStartDataId;
+        userData.manualSyncSegmentEndDataId = obj.manualSyncSegmentEndDataId;
         userData.syncUseZ = obj.syncUseZ;
         userData.syncYawOffsetDeg = obj.syncYawOffsetDeg;
         userData.syncXOffsetM = obj.syncXOffsetM;
@@ -575,6 +585,7 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             syncDistance: userData.syncDistance,
             semiStaticSyncDistance: userData.semiStaticSyncDistance,
             semiStaticSyncInitialized: userData.semiStaticSyncInitialized,
+            semiStaticPositionLocked: userData.semiStaticPositionLocked,
             syncMaxDisappearGap: userData.syncMaxDisappearGap,
             syncLocationGapMs: userData.syncLocationGapMs,
             showSyncLocationBoundaries: userData.showSyncLocationBoundaries,
@@ -584,6 +595,10 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
             dynamicSyncNextFrames: userData.dynamicSyncNextFrames,
             syncPoseSegmentId: userData.syncPoseSegmentId,
             syncPoseSegmentsInitialized: userData.syncPoseSegmentsInitialized,
+            manualSyncSegmentId: userData.manualSyncSegmentId,
+            manualSyncSegmentBoundaryDataId: userData.manualSyncSegmentBoundaryDataId,
+            manualSyncSegmentStartDataId: userData.manualSyncSegmentStartDataId,
+            manualSyncSegmentEndDataId: userData.manualSyncSegmentEndDataId,
             syncUseZ: userData.syncUseZ,
             syncYawOffsetDeg: userData.syncYawOffsetDeg,
             syncXOffsetM: userData.syncXOffsetM,

@@ -60,7 +60,11 @@
                     :spanWidth="iState.frameConfig.spanWidth"
                     :activeType="iState.activeType"
                     :frame-filter-mask="iState.trackFrameMask"
-                    :segment-boundaries="showLocationBoundaries ? iState.segmentBoundaries : []"
+                    :segment-boundaries="
+                        showLocationBoundaries || hasManualSyncSegment
+                            ? iState.segmentBoundaries
+                            : []
+                    "
                 />
                 <div
                     v-if="editor.bsState.reviewMode"
@@ -133,6 +137,11 @@
             (iState.trackTargetLine.list[editor.state.frameIndex] ||
                 iState.trackTargetLine.list.find((userData) => !!userData))
                 ?.showSyncLocationBoundaries === true,
+    );
+    const hasManualSyncSegment = computed(() =>
+        iState.trackTargetLine.list.some(
+            (userData) => userData?.manualSyncSegmentId !== undefined,
+        ),
     );
     const props = defineProps<{
         config?: IConfig;

@@ -79,6 +79,11 @@ public class TrackSyncUseCase {
     private static final String MOTION_SEMI_STATIC = "SEMI_STATIC";
     private static final String MOTION_DYNAMIC_FIXED_SIZE = "DYNAMIC_FIXED_SIZE";
     private static final String MOTION_DYNAMIC_VARIABLE_SIZE = "DYNAMIC_VARIABLE_SIZE";
+    private static final String SEMI_STATIC_POSITION_LOCKED = "semiStaticPositionLocked";
+    private static final String MANUAL_SYNC_SEGMENT_ID = "manualSyncSegmentId";
+    private static final String MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID = "manualSyncSegmentBoundaryDataId";
+    private static final String MANUAL_SYNC_SEGMENT_START_DATA_ID = "manualSyncSegmentStartDataId";
+    private static final String MANUAL_SYNC_SEGMENT_END_DATA_ID = "manualSyncSegmentEndDataId";
     private static final String PENDING_SYNC_QUARTER_TURNS = "pendingSyncQuarterTurns";
     private static final String GROUND_POLYGON = "GROUND_POLYGON";
     private static final String GROUND_POLYLINE = "GROUND_POLYLINE";
@@ -820,22 +825,237 @@ public class TrackSyncUseCase {
 
     @Transactional(rollbackFor = Exception.class)
     public SyncResult syncByDataIdAndTrackId(Long dataId, String trackId, Long classId) {
+        return syncByDataIdAndTrackId(dataId, trackId, classId, null);
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public SyncResult syncByDataIdAndTrackId(Long dataId, String trackId, Long classId, Long sourceObjectId) {
         if (ObjectUtil.isNull(dataId) || StrUtil.isBlank(trackId)) {
             return SyncResult.empty();
         }
         var objects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .eq(DataAnnotationObject::getDataId, dataId));
-        var source = objects.stream()
+        var sourceCandidates = objects.stream()
                 .filter(obj -> ObjectUtil.isNotNull(obj.getClassAttributes()))
                 .filter(obj -> trackId.equals(obj.getClassAttributes().getStr("trackId")))
                 .filter(TrackSyncUseCase::hasSyncableObject)
                 .filter(obj -> classId == null || sameClassId(obj, classId))
-                .findFirst();
-        if (source.isEmpty()) {
+                .collect(Collectors.toList());
+        log.info(
+                "Sync source candidates: dataId={}, trackId={}, classId={}, candidates={}",
+                dataId,
+                trackId,
+                classId,
+                sourceCandidates.stream()
+                        .map(candidate -> String.format(
+                                "id=%s,type=%s,motionMode=%s",
+                                candidate.getId(),
+                                candidate.getClassAttributes().getStr("type"),
+                                candidate.getClassAttributes().getStr("motionMode")))
+                        .collect(Collectors.toList()));
+        if (sourceCandidates.isEmpty()) {
             throw new IllegalArgumentException(
                     String.format("No syncable 3D object found: dataId=%s, trackId=%s", dataId, trackId));
         }
-        return syncOne(DefaultConverter.convert(source.get(), DataAnnotationObjectBO.class));
+        return syncOne(DefaultConverter.convert(
+                selectSyncSource(sourceCandidates, sourceObjectId), DataAnnotationObjectBO.class));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public ManualSyncSegmentSplitResult splitManualSyncSegment(ManualSyncSegmentSplitRequest request) {
+        if (request == null
+                || request.dataId == null
+                || request.sourceObjectId == null
+                || StrUtil.isBlank(request.trackId)) {
+            throw new IllegalArgumentException("dataId, trackId and sourceObjectId are required");
+        }
+        DataInfo sourceFrame = dataInfoDAO.getById(request.dataId);
+        if (sourceFrame == null || sourceFrame.getParentId() == null) {
+            throw new IllegalArgumentException(String.format("Scene frame not found: dataId=%s", request.dataId));
+        }
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sourceFrame.getParentId())
+                .eq(DataInfo::getIsDeleted, false)
+                .orderByAsc(DataInfo::getOrderName));
+        int splitFrameIndex = findFrameIndex(frames, request.dataId);
+        if (splitFrameIndex < 0 || splitFrameIndex >= frames.size() - 1) {
+            throw new IllegalArgumentException("The current frame must have a following frame to split");
+        }
+        List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
+        List<DataAnnotationObject> sceneObjects = dataAnnotationObjectDAO.list(
+                Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId, frameIds));
+        DataAnnotationObject source = sceneObjects.stream()
+                .filter(object -> request.sourceObjectId.equals(object.getId()))
+                .filter(object -> request.dataId.equals(object.getDataId()))
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(TrackSyncUseCase::hasSyncableObject)
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("The selected sync object was not found"));
+        String sourceType = source.getClassAttributes().getStr("type");
+        if (!"3D_BOX".equals(sourceType) && !GROUND_POLYGON.equals(sourceType)) {
+            throw new IllegalArgumentException("Only 3D_BOX and GROUND_POLYGON support location segment splits");
+        }
+        int sourceSegmentId = manualSyncSegmentId(source.getClassAttributes());
+        List<DataAnnotationObject> segmentObjects = sceneObjects.stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> sourceType.equals(object.getClassAttributes().getStr("type")))
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .filter(object -> manualSyncSegmentId(object.getClassAttributes()) == sourceSegmentId)
+                .collect(Collectors.toList());
+        Map<Long, Integer> frameIndexById = new HashMap<>();
+        for (int index = 0; index < frames.size(); index++) {
+            frameIndexById.put(frames.get(index).getId(), index);
+        }
+        int sourceStartIndex = manualSegmentStartIndex(
+                source.getClassAttributes(), frameIndexById, frames.size());
+        int sourceEndIndex = manualSegmentEndIndex(
+                source.getClassAttributes(), frameIndexById, frames.size());
+        if (splitFrameIndex < sourceStartIndex || splitFrameIndex >= sourceEndIndex) {
+            throw new IllegalArgumentException("The current frame is outside the selected segment or at its end");
+        }
+        boolean hasFollowingObject = segmentObjects.stream()
+                .map(DataAnnotationObject::getDataId)
+                .map(frameIndexById::get)
+                .anyMatch(index -> index != null && index > splitFrameIndex && index <= sourceEndIndex);
+        if (!hasFollowingObject) {
+            throw new IllegalArgumentException("The selected segment has no object after the current frame");
+        }
+        int nextSegmentId = sceneObjects.stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> sourceType.equals(object.getClassAttributes().getStr("type")))
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .map(DataAnnotationObject::getClassAttributes)
+                .filter(ObjectUtil::isNotNull)
+                .mapToInt(TrackSyncUseCase::manualSyncSegmentId)
+                .max()
+                .orElse(0) + 1;
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        Set<Long> affectedDataIds = new HashSet<>();
+        for (DataAnnotationObject object : segmentObjects) {
+            Integer frameIndex = frameIndexById.get(object.getDataId());
+            if (frameIndex == null) {
+                continue;
+            }
+            int targetSegmentId = frameIndex > splitFrameIndex ? nextSegmentId : sourceSegmentId;
+            JSONObject attrs = object.getClassAttributes();
+            Long targetStartDataId = frames.get(
+                    frameIndex > splitFrameIndex ? splitFrameIndex + 1 : sourceStartIndex).getId();
+            Long targetEndDataId = frames.get(
+                    frameIndex > splitFrameIndex ? sourceEndIndex : splitFrameIndex).getId();
+            if (manualSyncSegmentId(attrs) != targetSegmentId
+                    || !targetStartDataId.equals(attrs.getLong(MANUAL_SYNC_SEGMENT_START_DATA_ID))
+                    || !targetEndDataId.equals(attrs.getLong(MANUAL_SYNC_SEGMENT_END_DATA_ID))) {
+                attrs.set(MANUAL_SYNC_SEGMENT_ID, targetSegmentId);
+                attrs.set(MANUAL_SYNC_SEGMENT_START_DATA_ID, targetStartDataId);
+                attrs.set(MANUAL_SYNC_SEGMENT_END_DATA_ID, targetEndDataId);
+                attrs.remove(MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID);
+                object.setClassAttributes(attrs);
+                updates.add(object);
+                affectedDataIds.add(object.getDataId());
+            }
+        }
+        if (CollUtil.isNotEmpty(updates)) {
+            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(updates);
+        }
+        return new ManualSyncSegmentSplitResult(
+                sourceSegmentId,
+                nextSegmentId,
+                affectedDataIds.stream().sorted().collect(Collectors.toList()));
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public ManualSyncSegmentSplitResult mergeManualSyncSegment(ManualSyncSegmentSplitRequest request) {
+        if (request == null
+                || request.dataId == null
+                || request.sourceObjectId == null
+                || StrUtil.isBlank(request.trackId)) {
+            throw new IllegalArgumentException("dataId, trackId and sourceObjectId are required");
+        }
+        DataInfo sourceFrame = dataInfoDAO.getById(request.dataId);
+        if (sourceFrame == null || sourceFrame.getParentId() == null) {
+            throw new IllegalArgumentException(String.format("Scene frame not found: dataId=%s", request.dataId));
+        }
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .eq(DataInfo::getParentId, sourceFrame.getParentId())
+                .eq(DataInfo::getIsDeleted, false)
+                .orderByAsc(DataInfo::getOrderName));
+        Map<Long, Integer> frameIndexById = frameIndexes(frames);
+        List<DataAnnotationObject> sceneObjects = dataAnnotationObjectDAO.list(
+                Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId,
+                                frames.stream().map(DataInfo::getId).collect(Collectors.toList())));
+        DataAnnotationObject source = sceneObjects.stream()
+                .filter(object -> request.sourceObjectId.equals(object.getId()))
+                .filter(object -> request.dataId.equals(object.getDataId()))
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(TrackSyncUseCase::hasSyncableObject)
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("The selected sync object was not found"));
+        String sourceType = source.getClassAttributes().getStr("type");
+        if (!"3D_BOX".equals(sourceType) && !GROUND_POLYGON.equals(sourceType)) {
+            throw new IllegalArgumentException("Only 3D_BOX and GROUND_POLYGON support location segment merges");
+        }
+        int currentSegmentId = manualSyncSegmentId(source.getClassAttributes());
+        int currentStart = manualSegmentStartIndex(source.getClassAttributes(), frameIndexById, frames.size());
+        int currentEnd = manualSegmentEndIndex(source.getClassAttributes(), frameIndexById, frames.size());
+        List<DataAnnotationObject> trackObjects = sceneObjects.stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> sourceType.equals(object.getClassAttributes().getStr("type")))
+                .filter(object -> request.classId == null || sameClassId(object, request.classId))
+                .collect(Collectors.toList());
+        DataAnnotationObject previous = trackObjects.stream()
+                .filter(object -> manualSyncSegmentId(object.getClassAttributes()) != currentSegmentId)
+                .filter(object -> manualSegmentEndIndex(
+                        object.getClassAttributes(), frameIndexById, frames.size()) == currentStart - 1)
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "The current segment has no previous adjacent segment to merge"));
+        int previousSegmentId = manualSyncSegmentId(previous.getClassAttributes());
+        int previousStart = manualSegmentStartIndex(
+                previous.getClassAttributes(), frameIndexById, frames.size());
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        Set<Long> affectedDataIds = new HashSet<>();
+        for (DataAnnotationObject object : trackObjects) {
+            int segmentId = manualSyncSegmentId(object.getClassAttributes());
+            if (segmentId != previousSegmentId && segmentId != currentSegmentId) {
+                continue;
+            }
+            JSONObject attrs = object.getClassAttributes();
+            attrs.set(MANUAL_SYNC_SEGMENT_ID, previousSegmentId);
+            attrs.set(MANUAL_SYNC_SEGMENT_START_DATA_ID, frames.get(previousStart).getId());
+            attrs.set(MANUAL_SYNC_SEGMENT_END_DATA_ID, frames.get(currentEnd).getId());
+            attrs.remove(MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID);
+            object.setClassAttributes(attrs);
+            updates.add(object);
+            affectedDataIds.add(object.getDataId());
+        }
+        if (CollUtil.isNotEmpty(updates)) {
+            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(updates);
+        }
+        return new ManualSyncSegmentSplitResult(
+                currentSegmentId,
+                previousSegmentId,
+                affectedDataIds.stream().sorted().collect(Collectors.toList()));
+    }
+
+    static DataAnnotationObject selectSyncSource(
+            List<DataAnnotationObject> sourceCandidates, Long sourceObjectId) {
+        if (sourceObjectId == null) {
+            return sourceCandidates.get(0);
+        }
+        return sourceCandidates.stream()
+                .filter(candidate -> sourceObjectId.equals(candidate.getId()))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        String.format("Selected sync source was not found: objectId=%s", sourceObjectId)));
     }
 
     public Map<Long, Integer> findPoseSegments(Long dataId, String trackId) {
@@ -867,6 +1087,32 @@ public class TrackSyncUseCase {
                 .eq(DataInfo::getIsDeleted, false)
                 .orderByAsc(DataInfo::getOrderName));
         return buildSegmentByDataId(sourceFrame.getParentId(), frames, locationGapMs);
+    }
+
+    public Map<Long, Integer> findManualSyncSegments(Long dataId, String trackId) {
+        if (ObjectUtil.isNull(dataId) || StrUtil.isBlank(trackId)) {
+            return Map.of();
+        }
+        DataInfo sourceFrame = dataInfoDAO.getById(dataId);
+        if (ObjectUtil.isNull(sourceFrame) || ObjectUtil.isNull(sourceFrame.getParentId())) {
+            return Map.of();
+        }
+        List<Long> frameIds = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                        .eq(DataInfo::getParentId, sourceFrame.getParentId())
+                        .eq(DataInfo::getIsDeleted, false))
+                .stream()
+                .map(DataInfo::getId)
+                .collect(Collectors.toList());
+        return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
+                        .in(DataAnnotationObject::getDataId, frameIds))
+                .stream()
+                .filter(object -> object.getClassAttributes() != null)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> object.getClassAttributes().containsKey(MANUAL_SYNC_SEGMENT_ID))
+                .collect(Collectors.toMap(
+                        DataAnnotationObject::getDataId,
+                        object -> manualSyncSegmentId(object.getClassAttributes()),
+                        (first, ignored) -> first));
     }
 
     /**
@@ -922,6 +1168,12 @@ public class TrackSyncUseCase {
                 && !MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)) {
             return SyncResult.empty();
         }
+        log.info(
+                "Synchronizing track: sourceDataId={}, trackId={}, motionMode={}, type={}",
+                source.getDataId(),
+                trackId,
+                motionMode,
+                attrs.getStr("type"));
 
         var dataset = datasetDAO.getById(source.getDatasetId());
         if (ObjectUtil.isNull(dataset) || !Boolean.TRUE.equals(dataset.getSyncMode())) {
@@ -962,6 +1214,25 @@ public class TrackSyncUseCase {
             return syncGroundPolygonDynamicFixedSize(
                     source, trackId, frames, poseByDataId, syncWorldVertical, existingObjects,
                     segmentByDataId, locationGapMs);
+        }
+        if (isGroundPolygon(attrs) && MOTION_SEMI_STATIC.equals(motionMode)) {
+            requireScenePose(poseByDataId, source.getDataId());
+            double initialSyncRadius = getPositiveDouble(
+                    attrs, "syncDistance", DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M);
+            double semiStaticSyncRadius = getPositiveDouble(
+                    attrs, "semiStaticSyncDistance", DEFAULT_SEMI_STATIC_SYNC_RADIUS_M);
+            SyncResult result = syncGroundPolygonSemiStatic(
+                    source,
+                    trackId,
+                    initialSyncRadius,
+                    semiStaticSyncRadius,
+                    frames,
+                    poseByDataId,
+                    syncWorldVertical,
+                    existingObjects,
+                    locationGapMs
+            );
+            return propagateSemiStaticMotionMode(source, trackId, existingObjects, result);
         }
         if (isGroundPolyline(attrs)) {
             if (MOTION_STATIC.equals(motionMode)) {
@@ -1052,7 +1323,7 @@ public class TrackSyncUseCase {
                     .map(DataAnnotationObject::getClassAttributes)
                     .filter(ObjectUtil::isNotNull)
                     .anyMatch(existingAttrs -> getBoolean(existingAttrs, "semiStaticSyncInitialized", false));
-            return syncSemiStatic(
+            SyncResult result = syncSemiStatic(
                     source,
                     trackId,
                     center3D,
@@ -1076,6 +1347,7 @@ public class TrackSyncUseCase {
                     locationGapMs,
                     segmentsInitialized
             );
+            return propagateSemiStaticMotionMode(source, trackId, existingObjects, result);
         } else if (dynamicRangeSyncEnabled) {
             requireScenePose(poseByDataId, source.getDataId());
             boolean syncUseZ = getBoolean(attrs, "syncUseZ", true);
@@ -1291,6 +1563,7 @@ public class TrackSyncUseCase {
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
         List<Long> deleteIds = new ArrayList<>();
+        Map<Long, Integer> frameIndexes = frameIndexes(frames);
         for (DataInfo frame : frames) {
             Pose targetPose = poseByDataId.get(frame.getId());
             if (targetPose == null || !targetPose.complete) {
@@ -1315,6 +1588,25 @@ public class TrackSyncUseCase {
                 targetPoints.add(targetPoint);
             }
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            boolean sameManualSegment = existing == null
+                    ? isFrameInManualSyncSegment(sourceAttrs, frameIndexes, frame.getId())
+                    : isSameManualSyncSegment(sourceAttrs, existing.getClassAttributes());
+            if (!sameManualSegment) {
+                if (existing != null) {
+                    contour.set("points", applyFixedPolygonShape(sourcePoints, contour.getJSONArray("points")));
+                    copyClassId(attrs, source.getClassId());
+                    attrs.set("type", GROUND_POLYGON);
+                    attrs.set("trackId", trackId);
+                    attrs.set("motionMode", MOTION_STATIC);
+                    attrs.set("syncUseZ", getBoolean(sourceAttrs, "syncUseZ", true));
+                    attrs.set("syncDistance", syncRadius);
+                    attrs.set("parkingOpeningEdge", "P3_P0");
+                    existing.setClassId(source.getClassId());
+                    existing.setClassAttributes(attrs);
+                    updates.add(existing);
+                }
+                continue;
+            }
             // The source frame is the user-confirmed parking-slot annotation and
             // must never be deleted by the propagation radius check.  Only target
             // frames outside the sync range are omitted/removed.
@@ -1354,6 +1646,176 @@ public class TrackSyncUseCase {
             }
         }
         return applyChanges(inserts, updates, deleteIds);
+    }
+
+    private SyncResult syncGroundPolygonSemiStatic(
+            DataAnnotationObjectBO source,
+            String trackId,
+            double initialSyncRadius,
+            double semiStaticSyncRadius,
+            List<DataInfo> frames,
+            Map<Long, Pose> poseByDataId,
+            boolean syncWorldVertical,
+            List<DataAnnotationObject> existingObjects,
+            int locationGapMs) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        JSONArray sourcePoints = groundPolygonPoints(sourceAttrs, source.getDataId(), trackId);
+        Pose sourcePose = poseByDataId.get(source.getDataId());
+        List<double[]> worldPoints = new ArrayList<>(4);
+        for (int index = 0; index < 4; index++) {
+            JSONObject point = sourcePoints.getJSONObject(index);
+            double[] worldPoint = localToWorld(
+                    getDouble(point, "x"),
+                    getDouble(point, "y"),
+                    getDouble(point, "z"),
+                    sourcePose,
+                    syncWorldVertical);
+            worldPoints.add(worldPoint);
+        }
+
+        Map<Long, DataAnnotationObject> existingByDataId = groundPolygonsByTrack(existingObjects, trackId);
+        boolean initialized = getBoolean(sourceAttrs, "semiStaticSyncInitialized", false)
+                || existingByDataId.values().stream()
+                .map(DataAnnotationObject::getClassAttributes)
+                .filter(ObjectUtil::isNotNull)
+                .anyMatch(attrs -> getBoolean(attrs, "semiStaticSyncInitialized", false));
+        boolean sourcePositionLocked = isSourceGroundPolygonPositionLockEligible(
+                source, semiStaticSyncRadius);
+        int maxDisappearGap = getNonNegativeInt(
+                sourceAttrs, "syncMaxDisappearGap", DEFAULT_SYNC_MAX_DISAPPEAR_GAP);
+        List<DataAnnotationObject> inserts = new ArrayList<>();
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        Map<Long, Integer> frameIndexes = frameIndexes(frames);
+
+        for (DataInfo frame : frames) {
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            Pose targetPose = poseByDataId.get(frame.getId());
+            if (targetPose == null || !targetPose.complete) {
+                continue;
+            }
+            if (frame.getId().equals(source.getDataId())) {
+                if (existing != null) {
+                    JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(existing.getClassAttributes()));
+                    updateGroundPolygonSemiStaticMetadata(
+                            attrs,
+                            source,
+                            trackId,
+                            initialSyncRadius,
+                            semiStaticSyncRadius,
+                            maxDisappearGap,
+                            locationGapMs);
+                    existing.setClassId(source.getClassId());
+                    existing.setClassAttributes(attrs);
+                    updates.add(existing);
+                }
+                continue;
+            }
+
+            boolean sameManualSegment = existing == null
+                    ? isFrameInManualSyncSegment(sourceAttrs, frameIndexes, frame.getId())
+                    : isSameManualSyncSegment(sourceAttrs, existing.getClassAttributes());
+            if (!sameManualSegment) {
+                if (existing != null) {
+                    JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(existing.getClassAttributes()));
+                    JSONObject contour = attrs.getJSONObject("contour");
+                    if (contour != null) {
+                        contour.set("points", applyFixedPolygonShape(sourcePoints, contour.getJSONArray("points")));
+                    }
+                    updateGroundPolygonSemiStaticMetadata(
+                            attrs,
+                            source,
+                            trackId,
+                            initialSyncRadius,
+                            semiStaticSyncRadius,
+                            maxDisappearGap,
+                            locationGapMs);
+                    existing.setClassId(source.getClassId());
+                    existing.setClassAttributes(attrs);
+                    updates.add(existing);
+                }
+                continue;
+            }
+
+            JSONArray projectedPoints = new JSONArray();
+            for (double[] worldPoint : worldPoints) {
+                double[] localPoint = worldToLocal(
+                        worldPoint[0], worldPoint[1], worldPoint[2], targetPose, syncWorldVertical);
+                projectedPoints.add(point3D(localPoint[0], localPoint[1], localPoint[2]));
+            }
+            double distance = distanceToGroundPolygonFootprint(projectedPoints);
+            if (distance > initialSyncRadius) {
+                continue;
+            }
+
+            boolean targetPositionLocked = existing != null
+                    && getBoolean(existing.getClassAttributes(), SEMI_STATIC_POSITION_LOCKED, false);
+            boolean syncPosition = !shouldPreserveSemiStaticPosition(sourcePositionLocked, targetPositionLocked)
+                    && shouldSyncSemiStaticPosition(initialized, distance, semiStaticSyncRadius);
+            if (!syncPosition && existing == null) {
+                continue;
+            }
+
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
+                    existing == null ? sourceAttrs : existing.getClassAttributes()));
+            JSONObject contour = attrs.getJSONObject("contour");
+            if (contour == null) {
+                contour = new JSONObject();
+                attrs.set("contour", contour);
+            }
+            if (syncPosition) {
+                contour.set("points", projectedPoints);
+            } else {
+                contour.set("points", applyFixedPolygonShape(sourcePoints, contour.getJSONArray("points")));
+            }
+            updateGroundPolygonSemiStaticMetadata(
+                    attrs,
+                    source,
+                    trackId,
+                    initialSyncRadius,
+                    semiStaticSyncRadius,
+                    maxDisappearGap,
+                    locationGapMs);
+            if (existing == null) {
+                inserts.add(DataAnnotationObject.builder()
+                        .datasetId(source.getDatasetId())
+                        .dataId(frame.getId())
+                        .classId(source.getClassId())
+                        .classAttributes(attrs)
+                        .sourceId(-1L)
+                        .sourceType(DataAnnotationObjectSourceTypeEnum.DATA_FLOW)
+                        .createdAt(OffsetDateTime.now())
+                        .createdBy(source.getCreatedBy())
+                        .build());
+            } else {
+                existing.setClassId(source.getClassId());
+                existing.setClassAttributes(attrs);
+                updates.add(existing);
+            }
+        }
+        return applyChanges(inserts, updates, new ArrayList<>());
+    }
+
+    private void updateGroundPolygonSemiStaticMetadata(
+            JSONObject attrs,
+            DataAnnotationObjectBO source,
+            String trackId,
+            double initialSyncRadius,
+            double semiStaticSyncRadius,
+            int maxDisappearGap,
+            int locationGapMs) {
+        boolean sourcePositionLocked = isSourceGroundPolygonPositionLockEligible(source, semiStaticSyncRadius);
+        copyClassId(attrs, source.getClassId());
+        attrs.set("type", GROUND_POLYGON);
+        attrs.set("trackId", trackId);
+        attrs.set("motionMode", MOTION_SEMI_STATIC);
+        attrs.set("syncDistance", initialSyncRadius);
+        attrs.set("semiStaticSyncDistance", semiStaticSyncRadius);
+        attrs.set("semiStaticSyncInitialized",
+                !sourcePositionLocked || getBoolean(attrs, "semiStaticSyncInitialized", false));
+        attrs.set("syncUseZ", getBoolean(source.getClassAttributes(), "syncUseZ", true));
+        attrs.set("parkingOpeningEdge", "P3_P0");
+        attrs.remove("syncDirty");
+        updateSyncMetadata(attrs, maxDisappearGap, null, locationGapMs);
     }
 
     private SyncResult syncGroundPolygonDynamicFixedSize(
@@ -2275,6 +2737,53 @@ public class TrackSyncUseCase {
         return distance;
     }
 
+    static double distanceToGroundPolygonFootprint(JSONArray points) {
+        if (points == null || points.size() < 3) {
+            return Double.POSITIVE_INFINITY;
+        }
+        if (isPointInsideGroundPolygon(points, 0, 0)) {
+            return 0;
+        }
+        double distance = Double.POSITIVE_INFINITY;
+        for (int index = 0; index < points.size(); index++) {
+            JSONObject start = points.getJSONObject(index);
+            JSONObject end = points.getJSONObject((index + 1) % points.size());
+            if (start == null || end == null) {
+                continue;
+            }
+            distance = Math.min(distance, distanceToSegment(
+                    0,
+                    0,
+                    getDouble(start, "x"),
+                    getDouble(start, "y"),
+                    getDouble(end, "x"),
+                    getDouble(end, "y")));
+        }
+        return distance;
+    }
+
+    private static boolean isPointInsideGroundPolygon(JSONArray points, double pointX, double pointY) {
+        boolean inside = false;
+        for (int current = 0, previous = points.size() - 1; current < points.size(); previous = current++) {
+            JSONObject currentPoint = points.getJSONObject(current);
+            JSONObject previousPoint = points.getJSONObject(previous);
+            if (currentPoint == null || previousPoint == null) {
+                return false;
+            }
+            double currentX = getDouble(currentPoint, "x");
+            double currentY = getDouble(currentPoint, "y");
+            double previousX = getDouble(previousPoint, "x");
+            double previousY = getDouble(previousPoint, "y");
+            boolean crossesRay = (currentY > pointY) != (previousY > pointY)
+                    && pointX < (previousX - currentX) * (pointY - currentY)
+                    / (previousY - currentY) + currentX;
+            if (crossesRay) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    }
+
     private static double distanceToSegment(
             double pointX,
             double pointY,
@@ -2332,6 +2841,8 @@ public class TrackSyncUseCase {
         double worldZ = worldPoint[2];
         double worldYaw = localYaw + effectiveSourcePose.yaw;
         Integer sourceSegmentId = segmentByDataId.get(source.getDataId());
+        boolean sourcePositionLocked = isSourceSemiStaticPositionLockEligible(source, semiStaticSyncRadius);
+        Map<Long, Integer> frameIndexes = frameIndexes(frames);
 
         var toInsert = new ArrayList<DataAnnotationObject>();
         var toUpdate = new ArrayList<DataAnnotationObject>();
@@ -2339,10 +2850,29 @@ public class TrackSyncUseCase {
         for (DataInfo frame : frames) {
             Integer targetSegmentId = segmentByDataId.get(frame.getId());
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            boolean sameManualSegment = existing == null
+                    ? isFrameInManualSyncSegment(source.getClassAttributes(), frameIndexes, frame.getId())
+                    : isSameManualSyncSegment(source.getClassAttributes(), existing.getClassAttributes());
             boolean canProjectPosition = poseByDataId.containsKey(frame.getId())
                     && reachableFrameIds.contains(frame.getId())
-                    && (!segmentsInitialized || ObjectUtil.equal(sourceSegmentId, targetSegmentId));
+                    && (!segmentsInitialized || ObjectUtil.equal(sourceSegmentId, targetSegmentId))
+                    && sameManualSegment;
             if (!canProjectPosition) {
+                updateSemiStaticExisting(
+                        existing,
+                        source,
+                        size3D,
+                        initialSyncRadius,
+                        semiStaticSyncRadius,
+                        syncUseZ,
+                        syncWorldVertical,
+                        syncYawOffset,
+                        syncXOffset,
+                        syncYOffset,
+                        maxDisappearGap,
+                        targetSegmentId,
+                        locationGapMs,
+                        toUpdate);
                 continue;
             }
             if (frame.getId().equals(source.getDataId())) {
@@ -2380,7 +2910,10 @@ public class TrackSyncUseCase {
                 continue;
             }
 
-            boolean syncPosition = shouldSyncSemiStaticPosition(initialized, distance, semiStaticSyncRadius)
+            boolean targetPositionLocked = existing != null
+                    && getBoolean(existing.getClassAttributes(), SEMI_STATIC_POSITION_LOCKED, false);
+            boolean syncPosition = !shouldPreserveSemiStaticPosition(sourcePositionLocked, targetPositionLocked)
+                    && shouldSyncSemiStaticPosition(initialized, distance, semiStaticSyncRadius)
                     && sameLevel;
             if (!syncPosition && existing != null) {
                 updateSemiStaticExisting(
@@ -2399,6 +2932,9 @@ public class TrackSyncUseCase {
                         locationGapMs,
                         toUpdate
                 );
+                continue;
+            }
+            if (!syncPosition && sourcePositionLocked) {
                 continue;
             }
             if (!syncPosition && !sameLevel) {
@@ -2461,6 +2997,49 @@ public class TrackSyncUseCase {
     static boolean shouldSyncSemiStaticPosition(
             boolean initialized, double horizontalDistance, double semiStaticSyncRadius) {
         return !initialized || horizontalDistance <= semiStaticSyncRadius;
+    }
+
+    static boolean shouldPreserveSemiStaticPosition(boolean sourcePositionLocked, boolean targetPositionLocked) {
+        return sourcePositionLocked || targetPositionLocked;
+    }
+
+    static boolean isSemiStaticPositionLockEligible(
+            boolean requested, double sourceDistance, double semiStaticSyncRadius) {
+        return requested && sourceDistance <= semiStaticSyncRadius;
+    }
+
+    private static boolean isSourceSemiStaticPositionLockEligible(
+            DataAnnotationObjectBO source, double semiStaticSyncRadius) {
+        JSONObject attrs = source.getClassAttributes();
+        if (!getBoolean(attrs, SEMI_STATIC_POSITION_LOCKED, false)) {
+            return false;
+        }
+        JSONObject contour = attrs.getJSONObject("contour");
+        JSONObject center3D = contour == null ? null : contour.getJSONObject("center3D");
+        JSONObject size3D = contour == null ? null : contour.getJSONObject("size3D");
+        if (center3D == null || size3D == null) {
+            return false;
+        }
+        JSONObject rotation3D = contour.getJSONObject("rotation3D");
+        double sourceDistance = distanceToBoxFootprint(
+                getDouble(center3D, "x"),
+                getDouble(center3D, "y"),
+                rotation3D == null ? 0 : getDouble(rotation3D, "z"),
+                size3D);
+        return isSemiStaticPositionLockEligible(true, sourceDistance, semiStaticSyncRadius);
+    }
+
+    private static boolean isSourceGroundPolygonPositionLockEligible(
+            DataAnnotationObjectBO source, double semiStaticSyncRadius) {
+        JSONObject attrs = source.getClassAttributes();
+        if (!getBoolean(attrs, SEMI_STATIC_POSITION_LOCKED, false)) {
+            return false;
+        }
+        return isSemiStaticPositionLockEligible(
+                true,
+                distanceToGroundPolygonFootprint(groundPolygonPoints(
+                        attrs, source.getDataId(), attrs.getStr("trackId"))),
+                semiStaticSyncRadius);
     }
 
     static boolean isWithinSemiStaticTrackRange(
@@ -2542,6 +3121,7 @@ public class TrackSyncUseCase {
         double worldZ = worldPoint[2];
         double worldYaw = effectiveSourcePose == null ? 0 : localYaw + effectiveSourcePose.yaw;
         Integer sourceSegmentId = segmentByDataId.get(source.getDataId());
+        Map<Long, Integer> frameIndexes = frameIndexes(frames);
 
         var toInsert = new ArrayList<DataAnnotationObject>();
         var toUpdate = new ArrayList<DataAnnotationObject>();
@@ -2551,10 +3131,14 @@ public class TrackSyncUseCase {
             Integer targetSegmentId = segmentByDataId.get(frame.getId());
             var existing = existingByDataId.get(frame.getId());
             boolean sameSegment = ObjectUtil.equal(sourceSegmentId, targetSegmentId);
+            boolean sameManualSegment = existing == null
+                    ? isFrameInManualSyncSegment(source.getClassAttributes(), frameIndexes, frame.getId())
+                    : isSameManualSyncSegment(source.getClassAttributes(), existing.getClassAttributes());
             boolean canSyncPosition = srcPose != null
                     && poseByDataId.containsKey(frame.getId())
                     && reachableFrameIds.contains(frame.getId())
-                    && (!segmentsInitialized || sameSegment);
+                    && (!segmentsInitialized || sameSegment)
+                    && sameManualSegment;
 
             if (!canSyncPosition) {
                 if (existing != null && ObjectUtil.isNotNull(existing.getClassAttributes())) {
@@ -2700,7 +3284,9 @@ public class TrackSyncUseCase {
         attrs.set("motionMode", MOTION_SEMI_STATIC);
         attrs.set("syncDistance", initialSyncRadius);
         attrs.set("semiStaticSyncDistance", semiStaticSyncRadius);
-        attrs.set("semiStaticSyncInitialized", true);
+        boolean sourcePositionLocked = isSourceSemiStaticPositionLockEligible(source, semiStaticSyncRadius);
+        attrs.set("semiStaticSyncInitialized",
+                !sourcePositionLocked || getBoolean(attrs, "semiStaticSyncInitialized", false));
         attrs.set("syncUseZ", syncUseZ);
         attrs.set("syncWorldVertical", syncWorldVertical);
         attrs.set("syncYawOffsetDeg", Math.toDegrees(syncYawOffset));
@@ -2805,6 +3391,54 @@ public class TrackSyncUseCase {
         return applyChanges(new ArrayList<>(), toUpdate, new ArrayList<>(duplicateObjectIds));
     }
 
+    private SyncResult propagateSemiStaticMotionMode(
+            DataAnnotationObjectBO source,
+            String trackId,
+            List<DataAnnotationObject> existingObjects,
+            SyncResult geometryResult) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        double initialSyncRadius = getPositiveDouble(
+                sourceAttrs,
+                "syncDistance",
+                isGroundPolygon(sourceAttrs)
+                        ? DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M
+                        : DEFAULT_STATIC_SYNC_RADIUS_M);
+        double semiStaticSyncRadius = getPositiveDouble(
+                sourceAttrs, "semiStaticSyncDistance", DEFAULT_SEMI_STATIC_SYNC_RADIUS_M);
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        Set<Long> motionModeDataIds = new HashSet<>();
+        for (DataAnnotationObject existing : existingObjects) {
+            JSONObject existingAttrs = existing.getClassAttributes();
+            if (existingAttrs == null
+                    || !sameTrackId(existingAttrs, trackId)
+                    || !hasSyncableObject(existing)) {
+                continue;
+            }
+            existingAttrs.set("motionMode", MOTION_SEMI_STATIC);
+            existingAttrs.set("syncDistance", initialSyncRadius);
+            existingAttrs.set("semiStaticSyncDistance", semiStaticSyncRadius);
+            existing.setClassAttributes(existingAttrs);
+            updates.add(existing);
+            motionModeDataIds.add(existing.getDataId());
+        }
+        if (CollUtil.isNotEmpty(updates)) {
+            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(updates);
+        }
+        log.info(
+                "Propagated semi-static motion mode: sourceDataId={}, trackId={}, updatedFrameCount={}",
+                source.getDataId(),
+                trackId,
+                motionModeDataIds.size());
+        return new SyncResult(mergeAffectedDataIds(
+                geometryResult.getAffectedDataIds(), motionModeDataIds));
+    }
+
+    static Set<Long> mergeAffectedDataIds(List<Long> first, Set<Long> second) {
+        Set<Long> merged = new HashSet<>(first);
+        merged.addAll(second);
+        return merged;
+    }
+
     private static void copyDynamicSyncConfiguration(JSONObject targetAttrs, JSONObject sourceAttrs) {
         targetAttrs.set("dynamicRangeSyncEnabled",
                 getBoolean(sourceAttrs, "dynamicRangeSyncEnabled", false));
@@ -2815,11 +3449,19 @@ public class TrackSyncUseCase {
     }
 
     private void updateSyncMetadata(JSONObject attrs, int maxDisappearGap, Integer segmentId, int locationGapMs) {
-        attrs.set("syncPoseSegmentId", segmentId);
+        putOptionalSyncPoseSegmentId(attrs, segmentId);
         attrs.set("syncPoseSegmentsInitialized", true);
         attrs.set("syncLocationGapMs", locationGapMs);
         attrs.set("syncMaxDisappearGap", maxDisappearGap);
         attrs.set("syncDirty", false);
+    }
+
+    static void putOptionalSyncPoseSegmentId(JSONObject attrs, Integer segmentId) {
+        if (segmentId == null) {
+            attrs.remove("syncPoseSegmentId");
+        } else {
+            attrs.set("syncPoseSegmentId", segmentId);
+        }
     }
 
     private ExistingRows collectExistingRows(List<DataAnnotationObject> existingObjects, String trackId,
@@ -2852,6 +3494,66 @@ public class TrackSyncUseCase {
         return attributes != null
                 && StrUtil.isNotBlank(trackId)
                 && trackId.equals(attributes.getStr("trackId"));
+    }
+
+    static boolean isSameManualSyncSegment(JSONObject sourceAttrs, JSONObject targetAttrs) {
+        return manualSyncSegmentId(sourceAttrs) == manualSyncSegmentId(targetAttrs);
+    }
+
+    static boolean isFrameInManualSyncSegment(
+            JSONObject sourceAttrs, Map<Long, Integer> frameIndexes, Long targetDataId) {
+        Integer targetIndex = frameIndexes.get(targetDataId);
+        if (targetIndex == null) {
+            return false;
+        }
+        int startIndex = manualSegmentStartIndex(sourceAttrs, frameIndexes, frameIndexes.size());
+        int endIndex = manualSegmentEndIndex(sourceAttrs, frameIndexes, frameIndexes.size());
+        return targetIndex >= startIndex && targetIndex <= endIndex;
+    }
+
+    private static int manualSegmentStartIndex(
+            JSONObject attrs, Map<Long, Integer> frameIndexes, int frameCount) {
+        if (attrs == null) return 0;
+        Long startDataId = attrs.containsKey(MANUAL_SYNC_SEGMENT_START_DATA_ID)
+                ? attrs.getLong(MANUAL_SYNC_SEGMENT_START_DATA_ID)
+                : null;
+        Integer startIndex = startDataId == null ? null : frameIndexes.get(startDataId);
+        if (startIndex != null) return startIndex;
+        Long boundaryDataId = attrs.containsKey(MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID)
+                ? attrs.getLong(MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID)
+                : null;
+        Integer boundaryIndex = boundaryDataId == null ? null : frameIndexes.get(boundaryDataId);
+        return boundaryIndex != null && manualSyncSegmentId(attrs) != 0 ? boundaryIndex + 1 : 0;
+    }
+
+    private static int manualSegmentEndIndex(
+            JSONObject attrs, Map<Long, Integer> frameIndexes, int frameCount) {
+        if (attrs == null) return frameCount - 1;
+        Long endDataId = attrs.containsKey(MANUAL_SYNC_SEGMENT_END_DATA_ID)
+                ? attrs.getLong(MANUAL_SYNC_SEGMENT_END_DATA_ID)
+                : null;
+        Integer endIndex = endDataId == null ? null : frameIndexes.get(endDataId);
+        if (endIndex != null) return endIndex;
+        Long boundaryDataId = attrs.containsKey(MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID)
+                ? attrs.getLong(MANUAL_SYNC_SEGMENT_BOUNDARY_DATA_ID)
+                : null;
+        Integer boundaryIndex = boundaryDataId == null ? null : frameIndexes.get(boundaryDataId);
+        return boundaryIndex != null && manualSyncSegmentId(attrs) == 0
+                ? boundaryIndex
+                : frameCount - 1;
+    }
+
+    private static int manualSyncSegmentId(JSONObject attrs) {
+        Integer segmentId = attrs == null ? null : attrs.getInt(MANUAL_SYNC_SEGMENT_ID);
+        return segmentId == null ? 0 : segmentId;
+    }
+
+    private static Map<Long, Integer> frameIndexes(List<DataInfo> frames) {
+        Map<Long, Integer> indexes = new HashMap<>();
+        for (int index = 0; index < frames.size(); index++) {
+            indexes.put(frames.get(index).getId(), index);
+        }
+        return indexes;
     }
 
     private static void requireScenePose(Map<Long, Pose> poseByDataId, Long sourceDataId) {
@@ -3437,6 +4139,39 @@ public class TrackSyncUseCase {
         public void setT(Double t) { this.t = t; }
         public String getSide() { return side; }
         public void setSide(String side) { this.side = side; }
+    }
+
+    public static class ManualSyncSegmentSplitRequest {
+        private Long dataId;
+        private String trackId;
+        private Long classId;
+        private Long sourceObjectId;
+
+        public Long getDataId() { return dataId; }
+        public void setDataId(Long dataId) { this.dataId = dataId; }
+        public String getTrackId() { return trackId; }
+        public void setTrackId(String trackId) { this.trackId = trackId; }
+        public Long getClassId() { return classId; }
+        public void setClassId(Long classId) { this.classId = classId; }
+        public Long getSourceObjectId() { return sourceObjectId; }
+        public void setSourceObjectId(Long sourceObjectId) { this.sourceObjectId = sourceObjectId; }
+    }
+
+    public static class ManualSyncSegmentSplitResult {
+        private final int previousSegmentId;
+        private final int nextSegmentId;
+        private final List<Long> affectedDataIds;
+
+        ManualSyncSegmentSplitResult(
+                int previousSegmentId, int nextSegmentId, List<Long> affectedDataIds) {
+            this.previousSegmentId = previousSegmentId;
+            this.nextSegmentId = nextSegmentId;
+            this.affectedDataIds = affectedDataIds;
+        }
+
+        public int getPreviousSegmentId() { return previousSegmentId; }
+        public int getNextSegmentId() { return nextSegmentId; }
+        public List<Long> getAffectedDataIds() { return affectedDataIds; }
     }
 
     public static class TrackSplitResult {

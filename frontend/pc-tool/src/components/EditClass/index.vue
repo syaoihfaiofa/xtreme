@@ -148,6 +148,14 @@
                         />
                     </div>
                     <a-checkbox
+                        v-if="isSemiStaticMotionMode && canLockSemiStaticPosition && !state.isBatch"
+                        v-model:checked="state.semiStaticPositionLocked"
+                        style="margin-top: 8px"
+                        @change="onSemiStaticPositionLockedChange"
+                    >
+                        {{ $$('semi-static-position-locked') }}
+                    </a-checkbox>
+                    <a-checkbox
                         v-if="
                             state.motionMode === MotionMode.STATIC ||
                             state.motionMode === MotionMode.SEMI_STATIC ||
@@ -218,6 +226,14 @@
                         @click="onSyncClick"
                     >
                         {{ $$('sync-now') }}
+                    </a-button>
+                    <a-button
+                        v-if="!state.isBatch && !state.isGroundPolyline && !state.isIrregularWall"
+                        block
+                        style="margin-top: 8px"
+                        @click="onSplitManualSyncSegment"
+                    >
+                        拆分位置同步段
                     </a-button>
                     <div class="sync-tip">{{ $$('sync-now-tip') }}</div>
                     <div class="sync-distance-row">
@@ -371,6 +387,7 @@
         onMotionModeChange,
         onSyncDistanceChange,
         onSemiStaticSyncDistanceChange,
+        onSemiStaticPositionLockedChange,
         onSyncMaxDisappearGapChange,
         onSyncLocationGapMsChange,
         onShowSyncLocationBoundariesChange,
@@ -381,6 +398,7 @@
         onSyncYawOffsetChange,
         onSyncXYOffsetChange,
         onSyncClick,
+        onSplitManualSyncSegment,
         onInstanceRemove,
         onToggleObjectsVisible,
         onRemoveObjects,
@@ -392,8 +410,11 @@
     } = useEditClass();
     let motionModeOptions = computed(() => {
         const options = utils.getMotionModeOptions($$);
-        if (!state.isGroundPolygon && !state.isGroundPolyline) return options;
-        return options.filter((option) => option.value !== MotionMode.SEMI_STATIC);
+        if (state.isGroundPolygon) return options;
+        if (state.isGroundPolyline || state.isIrregularWall) {
+            return options.filter((option) => option.value !== MotionMode.SEMI_STATIC);
+        }
+        return options;
     });
     let isDynamicMotionMode = computed(
         () =>
@@ -401,6 +422,9 @@
             state.motionMode === MotionMode.DYNAMIC_VARIABLE_SIZE,
     );
     let isSemiStaticMotionMode = computed(() => state.motionMode === MotionMode.SEMI_STATIC);
+    let canLockSemiStaticPosition = computed(
+        () => state.sensorDistance <= state.semiStaticSyncDistance,
+    );
     defineExpose({
         update,
     });

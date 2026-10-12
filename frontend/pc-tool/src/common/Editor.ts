@@ -42,8 +42,9 @@ function isSyncableGroundShape(object: unknown): object is SyncableGroundShape {
 
 function resolveSyncMotionMode(object: Box | SyncableGroundShape): string {
     if (object instanceof GroundPolygon) {
-        return object.userData?.motionMode === MotionMode.DYNAMIC_FIXED_SIZE
-            ? MotionMode.DYNAMIC_FIXED_SIZE
+        const motionMode = object.userData?.motionMode;
+        return motionMode === MotionMode.DYNAMIC_FIXED_SIZE || motionMode === MotionMode.SEMI_STATIC
+            ? motionMode
             : MotionMode.STATIC;
     }
     if (isSyncableGroundShape(object)) {
@@ -84,6 +85,7 @@ function buildSyncedUserDataPatch(
         syncDistance: fresh.syncDistance,
         semiStaticSyncDistance: fresh.semiStaticSyncDistance,
         semiStaticSyncInitialized: fresh.semiStaticSyncInitialized,
+        semiStaticPositionLocked: fresh.semiStaticPositionLocked,
         syncMaxDisappearGap: fresh.syncMaxDisappearGap,
         syncLocationGapMs: fresh.syncLocationGapMs,
         showSyncLocationBoundaries: fresh.showSyncLocationBoundaries,
@@ -93,6 +95,10 @@ function buildSyncedUserDataPatch(
         dynamicSyncNextFrames: fresh.dynamicSyncNextFrames,
         syncPoseSegmentId: fresh.syncPoseSegmentId,
         syncPoseSegmentsInitialized: fresh.syncPoseSegmentsInitialized,
+        manualSyncSegmentId: fresh.manualSyncSegmentId,
+        manualSyncSegmentBoundaryDataId: fresh.manualSyncSegmentBoundaryDataId,
+        manualSyncSegmentStartDataId: fresh.manualSyncSegmentStartDataId,
+        manualSyncSegmentEndDataId: fresh.manualSyncSegmentEndDataId,
         syncUseZ: fresh.syncUseZ,
         syncYawOffsetDeg: fresh.syncYawOffsetDeg,
         syncXOffsetM: fresh.syncXOffsetM,
@@ -289,6 +295,134 @@ export default class Editor extends BaseEditor {
                     : error?.message || 'Track 截断失败',
                 8,
             );
+            return false;
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async splitManualSyncSegment(): Promise<boolean> {
+        if (this.state.modeConfig.op !== OPType.EXECUTE) return false;
+        const object = this.pc.selection.find(
+            (candidate) => candidate instanceof Box || candidate instanceof GroundPolygon,
+        ) as Box | GroundPolygon | undefined;
+        if (!object) {
+            this.showMsg('warning', '请先选中需要拆分位置同步段的 Box 或 GroundPolygon');
+            return false;
+        }
+        const userData = object.userData as IUserData;
+        if (!userData.trackId) {
+            this.showMsg('warning', '该对象没有追踪ID');
+            return false;
+        }
+        if (this.state.frameIndex >= this.state.frames.length - 1) {
+            this.showMsg('warning', '最后一帧无法拆分位置同步段');
+            return false;
+        }
+        try {
+            await this.showConfirm({
+                title: '拆分位置同步段',
+                subTitle: '当前帧及之前保留为第一段，下一帧及之后为第二段。两段保持同一追踪ID，仅同步尺寸，不同步位置。',
+                okText: '确认拆分',
+                cancelText: '取消',
+                okDanger: true,
+                centered: true,
+            });
+        } catch (_) {
+            return false;
+        }
+        const saved = await this.saveObject(undefined, false, true);
+        if (!saved) {
+            this.showMsg('error', '未保存修改，拆分已取消');
+            return false;
+        }
+        const sourceObjectId = object.userData?.backId;
+        if (!sourceObjectId) {
+            this.showMsg('error', '未找到当前对象的服务端ID，拆分已取消');
+            return false;
+        }
+        this.showLoading({ type: 'loading', content: '正在拆分位置同步段…' });
+        try {
+            const result = await api.splitManualSyncSegment({
+                dataId: this.getCurrentFrame().id,
+                trackId: userData.trackId,
+                classId: userData.classId || undefined,
+                sourceObjectId,
+            });
+            const affectedDataIds = (result.affectedDataIds || []).map((id) => String(id));
+            this.dataManager.invalidateFrameObjects(affectedDataIds);
+            this.trackManager.trackInfo.delete(userData.trackId);
+            this.trackManager.trackFrameIndexMap.delete(userData.trackId);
+            await this.loadFrame(this.state.frameIndex, true, true);
+            this.loadManager.updateTrackMap();
+            this.dispatchEvent({
+                type: Event.TRACK_SYNC_COMPLETE,
+                data: { trackId: userData.trackId },
+            });
+            this.showMsg('success', '已拆分位置同步段');
+            return true;
+        } catch (error: any) {
+            this.showMsg('error', error?.message || '拆分位置同步段失败', 8);
+            return false;
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
+    async mergeManualSyncSegment(): Promise<boolean> {
+        if (this.state.modeConfig.op !== OPType.EXECUTE) return false;
+        const object = this.pc.selection.find(
+            (candidate) => candidate instanceof Box || candidate instanceof GroundPolygon,
+        ) as Box | GroundPolygon | undefined;
+        if (!object) {
+            this.showMsg('warning', '请先选中需要合并位置同步段的 Box 或 GroundPolygon');
+            return false;
+        }
+        const userData = object.userData as IUserData;
+        const sourceObjectId = userData.backId;
+        if (!userData.trackId || !sourceObjectId) {
+            this.showMsg('warning', '当前对象缺少追踪ID或服务端ID');
+            return false;
+        }
+        try {
+            await this.showConfirm({
+                title: '合并位置同步段',
+                subTitle: '将当前分段与前一相邻分段合并。合并后位置可在合并范围内同步。',
+                okText: '确认合并',
+                cancelText: '取消',
+                okDanger: true,
+                centered: true,
+            });
+        } catch (_) {
+            return false;
+        }
+        const saved = await this.saveObject(undefined, false, true);
+        if (!saved) {
+            this.showMsg('error', '未保存修改，合并已取消');
+            return false;
+        }
+        this.showLoading({ type: 'loading', content: '正在合并位置同步段…' });
+        try {
+            const result = await api.mergeManualSyncSegment({
+                dataId: this.getCurrentFrame().id,
+                trackId: userData.trackId,
+                classId: userData.classId || undefined,
+                sourceObjectId,
+            });
+            const affectedDataIds = (result.affectedDataIds || []).map((id) => String(id));
+            this.dataManager.invalidateFrameObjects(affectedDataIds);
+            this.trackManager.trackInfo.delete(userData.trackId);
+            this.trackManager.trackFrameIndexMap.delete(userData.trackId);
+            await this.loadFrame(this.state.frameIndex, true, true);
+            this.loadManager.updateTrackMap();
+            this.dispatchEvent({
+                type: Event.TRACK_SYNC_COMPLETE,
+                data: { trackId: userData.trackId },
+            });
+            this.showMsg('success', '已合并位置同步段');
+            return true;
+        } catch (error: any) {
+            this.showMsg('error', error?.message || '合并位置同步段失败', 8);
             return false;
         } finally {
             this.showLoading(false);
@@ -657,6 +791,23 @@ export default class Editor extends BaseEditor {
             this.showMsg('warning', 'Please Select a 3D Result');
             return;
         }
+        const currentFrameObjects = this.dataManager.getFrameObject(this.getCurrentFrame().id) || [];
+        const currentFrameObject = currentFrameObjects.find((object) => {
+            if (!(object instanceof Box || isSyncableGroundShape(object))) {
+                return false;
+            }
+            const selectedUserData = box!.userData as IUserData;
+            const currentUserData = object.userData as IUserData;
+            return (
+                object === box ||
+                object.uuid === box!.uuid ||
+                (selectedUserData.backId &&
+                    selectedUserData.backId === currentUserData.backId)
+            );
+        }) as Box | SyncableGroundShape | undefined;
+        if (currentFrameObject) {
+            box = currentFrameObject;
+        }
         let trackId = box.userData?.trackId;
         if (!trackId) {
             this.showMsg('warning', '该对象没有追踪ID');
@@ -766,7 +917,12 @@ export default class Editor extends BaseEditor {
             return;
         }
         try {
-            const syncResult = await api.syncObject(String(sourceFrame.id), trackId, classId);
+            const syncResult = await api.syncObject(
+                String(sourceFrame.id),
+                trackId,
+                classId,
+                sourceObject?.userData?.backId,
+            );
             await this.refreshTrackFromServer(
                 trackId,
                 sourceFrame.id,

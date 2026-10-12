@@ -30,6 +30,7 @@ const en = {
     'sync-distance': 'Sync distance (nearest Box point, XY plane)',
     'semi-static-initial-sync-distance': 'Initial static sync distance',
     'semi-static-sync-distance': 'Semi-static position sync distance',
+    'semi-static-position-locked': 'Keep position in this frame only (sync size)',
     'sync-max-disappear-gap': 'Max consecutive missing frames',
     'sync-location-gap': 'Location gap threshold',
     'show-sync-location-boundaries': 'Show Location gap markers',
