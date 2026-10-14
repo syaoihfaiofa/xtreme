@@ -1436,7 +1436,7 @@ public class DataInfoUseCase {
                 objectSourceMap.forEach((sourceId, objectSourceList) -> {
                     var dataResultExportBO = DataResultExportBO.builder().dataId(dataId).version(version).build();
                     var objects = new ArrayList<DataResultObjectExportBO>();
-                    objectSourceList.forEach(o -> {
+                    dedupeObjectsForExport(objectSourceList).forEach(o -> {
                         var dataResultObjectExportBO = DefaultConverter.convert(o.getClassAttributes(), DataResultObjectExportBO.class);
                         dataResultObjectExportBO.setClassName(exportClassName(classMap.get(o.getClassId())));
                         dataResultObjectExportBO.setModelClass(exportClassName(dataResultObjectExportBO.getModelClass()));
@@ -1466,6 +1466,39 @@ public class DataInfoUseCase {
             dataInfoExportBOList.add(dataInfoExportBO);
         });
         return dataInfoExportBOList;
+    }
+
+    static List<DataAnnotationObjectBO> dedupeObjectsForExport(List<DataAnnotationObjectBO> objects) {
+        var keptByTrack = new LinkedHashMap<String, DataAnnotationObjectBO>();
+        var withoutTrack = new ArrayList<DataAnnotationObjectBO>();
+        objects.forEach(object -> {
+            var attributes = object.getClassAttributes();
+            var trackId = attributes == null ? null : attributes.getStr("trackId");
+            var objectType = attributes == null ? null : attributes.getStr("type");
+            if (StrUtil.isBlank(trackId) || !isDisplayDedupeTarget(objectType)) {
+                withoutTrack.add(object);
+                return;
+            }
+            var sourceType = object.getSourceType() == null
+                    ? DataAnnotationObjectSourceTypeEnum.DATA_FLOW
+                    : object.getSourceType();
+            var sourceId = object.getSourceId() == null ? GROUND_TRUTH : object.getSourceId();
+            var dedupeKey = String.format("%s:%s:%s:%s", sourceType, sourceId, trackId, objectType);
+            var existing = keptByTrack.get(dedupeKey);
+            if (existing == null || (existing.getId() == null && object.getId() != null)) {
+                keptByTrack.put(dedupeKey, object);
+            }
+        });
+        var result = new ArrayList<DataAnnotationObjectBO>(withoutTrack);
+        result.addAll(keptByTrack.values());
+        return result;
+    }
+
+    private static boolean isDisplayDedupeTarget(String objectType) {
+        return "3D_BOX".equals(objectType)
+                || "GROUND_POLYGON".equals(objectType)
+                || "GROUND_POLYLINE".equals(objectType)
+                || "IRREGULAR_WALL".equals(objectType);
     }
 
     private void addSceneInfo(List<DataInfoBO> dataInfoBOList) {
