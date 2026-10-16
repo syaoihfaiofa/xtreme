@@ -52,6 +52,8 @@ public class DataAnnotationResultObjectBO {
      */
     private JSONObject contour;
 
+    private BigDecimal wallHeight;
+
     /**
      * Confidence of model recognition, only available for model recognition
      */

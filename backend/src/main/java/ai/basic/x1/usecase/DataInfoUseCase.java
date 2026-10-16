@@ -412,6 +412,9 @@ public class DataInfoUseCase {
                 File searchRoot = resultFile.getParentFile().getParentFile();
                 uploadDataUseCase.handleDataResult(searchRoot, dataName, template, dataAnnotationObjectBOList, errorBuilder);
             }
+            if (errorBuilder.length() > 0) {
+                throw new UsecaseException(UsecaseCode.PARAM_ERROR, errorBuilder.toString());
+            }
             if (!matchedDataIds.isEmpty()) {
                 dataAnnotationObjectDAO.remove(Wrappers.lambdaQuery(DataAnnotationObject.class)
                         .in(DataAnnotationObject::getDataId, matchedDataIds));

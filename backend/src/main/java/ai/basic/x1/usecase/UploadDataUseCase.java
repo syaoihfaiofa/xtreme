@@ -894,6 +894,7 @@ public class UploadDataUseCase {
                     });
                 } catch (Exception e) {
                     log.error("Handle result json error,userId:{},datasetId:{}", dataAnnotationObjectBO.getCreatedBy(), dataAnnotationObjectBO.getDatasetId(), e);
+                    errorBuilder.append(dataName).append(".json cannot be parsed;");
                 }
             }
         }
