@@ -3,12 +3,14 @@ package ai.basic.x1.adapter.port.minio;
 import ai.basic.x1.adapter.api.context.RequestContextHolder;
 import ai.basic.x1.entity.PresignedUrlBO;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.HttpStatus;
 import io.minio.*;
 import io.minio.errors.*;
 import io.minio.http.Method;
+import io.minio.messages.Item;
 import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +19,7 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -75,6 +78,50 @@ public class MinioService {
             }
         }
         return false;
+    }
+
+    public boolean objectExists(String bucketName, String objectName) {
+        try {
+            return checkObjectExist(bucketName, objectName);
+        } catch (Exception exception) {
+            throw new IllegalStateException(
+                    "Failed to check MinIO object: bucketName=" + bucketName
+                            + ", objectName=" + objectName,
+                    exception);
+        }
+    }
+
+    public void removeObjectsByPrefix(String bucketName, String prefix) {
+        try {
+            Iterable<Result<Item>> results = extendMinioClient.listObjects(
+                    ListObjectsArgs.builder().bucket(bucketName).prefix(prefix).recursive(true).build());
+            for (Result<Item> result : results) {
+                extendMinioClient.removeObject(RemoveObjectArgs.builder()
+                        .bucket(bucketName)
+                        .object(result.get().objectName())
+                        .build());
+            }
+        } catch (Exception exception) {
+            throw new IllegalStateException(
+                    "Failed to remove MinIO objects: bucketName=" + bucketName
+                            + ", prefix=" + prefix,
+                    exception);
+        }
+    }
+
+    public String readObjectAsString(String bucketName, String objectName) {
+        GetObjectArgs args = GetObjectArgs.builder()
+                .bucket(bucketName)
+                .object(objectName)
+                .build();
+        try (InputStream stream = extendMinioClient.getObject(args)) {
+            return IoUtil.read(stream, StandardCharsets.UTF_8);
+        } catch (Exception exception) {
+            throw new IllegalStateException(
+                    "Failed to read MinIO object: bucketName=" + bucketName
+                            + ", objectName=" + objectName,
+                    exception);
+        }
     }
 
 

@@ -162,6 +162,9 @@ public class DataInfoUseCase {
     private SceneLocationDAO sceneLocationDAO;
 
     @Autowired
+    private SceneVisibilityUseCase sceneVisibilityUseCase;
+
+    @Autowired
     private SceneLocationSampleDAO sceneLocationSampleDAO;
 
     @Autowired
@@ -1009,6 +1012,20 @@ public class DataInfoUseCase {
      */
     public Long export(DataInfoQueryBO dataInfoQueryBO) {
         var dataset = datasetDAO.getById(dataInfoQueryBO.getDatasetId());
+        if (Boolean.TRUE.equals(dataInfoQueryBO.getIncludeAutoOcclusionResults())) {
+            if (!DatasetTypeEnum.LIDAR_FUSION.equals(dataset.getType())) {
+                throw new UsecaseException(
+                        UsecaseCode.PARAM_ERROR,
+                        "Auto occlusion results can only be exported from a LiDAR Fusion scene");
+            }
+            List<Long> exportDataIds = findExportDataIds(dataInfoQueryBO);
+            dataInfoQueryBO.setVisibilityRunId(sceneVisibilityUseCase.resolveCompleteVisibilityRunForExport(
+                    dataInfoQueryBO.getDatasetId(), exportDataIds));
+        }
+        if (dataInfoQueryBO.getVisibilityRunId() != null) {
+            sceneVisibilityUseCase.requireCurrentSucceededRunForDataset(
+                    dataInfoQueryBO.getVisibilityRunId(), dataInfoQueryBO.getDatasetId());
+        }
         var fileName = String.format("%s-%s.zip", dataset.getName(), TemporalAccessorUtil.format(OffsetDateTime.now(), DatePattern.PURE_DATETIME_PATTERN));
         var serialNumber = exportUseCase.createExportRecord(fileName);
         dataInfoQueryBO.setPageNo(PAGE_NO);
@@ -1423,6 +1440,14 @@ public class DataInfoUseCase {
         Map<Long, List<DataAnnotationClassificationBO>> dataAnnotationMap = CollectionUtil.isNotEmpty(dataAnnotationList) ? dataAnnotationList.stream().collect(
                 Collectors.groupingBy(DataAnnotationClassificationBO::getDataId)) : Map.of();
         var dataAnnotationObjectList = dataAnnotationObjectUseCase.findByDataIds(dataIds, queryBO.getIsAllResult(), queryBO.getSelectModelRunIds());
+        if (queryBO.getVisibilityRunId() != null) {
+            // The export is asynchronous. Revalidate immediately before reading sidecars so a
+            // changed scene cannot export visibility data calculated from an older input hash.
+            sceneVisibilityUseCase.requireCurrentSucceededRunForDataset(
+                    queryBO.getVisibilityRunId(), queryBO.getDatasetId());
+            dataAnnotationObjectList = mergeVisibilityForExport(
+                    dataAnnotationObjectList, dataIds, queryBO.getVisibilityRunId());
+        }
         Map<Long, List<DataAnnotationObjectBO>> dataAnnotationObjectMap = CollectionUtil.isNotEmpty(dataAnnotationObjectList) ?
                 dataAnnotationObjectList.stream().collect(Collectors.groupingBy(DataAnnotationObjectBO::getDataId))
                 : Map.of();
@@ -1469,6 +1494,76 @@ public class DataInfoUseCase {
             dataInfoExportBOList.add(dataInfoExportBO);
         });
         return dataInfoExportBOList;
+    }
+
+    static List<DataAnnotationObjectBO> mergeVisibilityForExport(
+            List<DataAnnotationObjectBO> objects, Long dataId, JSONObject sidecar) {
+        if (CollectionUtil.isEmpty(objects) || sidecar == null) {
+            return objects == null ? List.of() : objects;
+        }
+        JSONObject boxResults = sidecar.getJSONObject("objects");
+        JSONObject polylineResults = sidecar.getJSONObject("polylines");
+        return objects.stream()
+                .map(object -> copyWithVisibility(object,
+                        visibilityResult(boxResults, dataId, object.getId()),
+                        visibilityResult(polylineResults, dataId, object.getId())))
+                .collect(Collectors.toList());
+    }
+
+    private List<DataAnnotationObjectBO> mergeVisibilityForExport(
+            List<DataAnnotationObjectBO> objects, List<Long> dataIds, Long visibilityRunId) {
+        Map<Long, JSONObject> sidecarsByDataId = dataIds.stream().collect(Collectors.toMap(
+                dataId -> dataId,
+                dataId -> sceneVisibilityUseCase.frameResult(visibilityRunId, dataId)));
+        return objects.stream().collect(Collectors.groupingBy(DataAnnotationObjectBO::getDataId))
+                .entrySet().stream()
+                .flatMap(entry -> mergeVisibilityForExport(
+                        entry.getValue(), entry.getKey(), sidecarsByDataId.get(entry.getKey())).stream())
+                .collect(Collectors.toList());
+    }
+
+    private static JSONObject visibilityResult(JSONObject results, Long dataId, Long objectId) {
+        if (results == null || dataId == null || objectId == null) {
+            return null;
+        }
+        return results.getJSONObject(dataId + ":" + objectId);
+    }
+
+    private static DataAnnotationObjectBO copyWithVisibility(
+            DataAnnotationObjectBO source, JSONObject boxResult, JSONObject polylineResult) {
+        JSONObject attributes = source.getClassAttributes() == null
+                ? new JSONObject()
+                : JSONUtil.parseObj(JSONUtil.toJsonStr(source.getClassAttributes()));
+        copyVisibilityFields(attributes, boxResult,
+                "autoVisibleRatio", "autoVisibleRatioByView", "autoOccluded");
+        copyVisibilityFields(attributes, polylineResult,
+                "autoSegmentVisibilityByView", "autoSegmentMeta");
+        return DataAnnotationObjectBO.builder()
+                .id(source.getId())
+                .datasetId(source.getDatasetId())
+                .dataId(source.getDataId())
+                .classId(source.getClassId())
+                .classAttributes(attributes)
+                .createdAt(source.getCreatedAt())
+                .createdBy(source.getCreatedBy())
+                .objectCount(source.getObjectCount())
+                .frontId(source.getFrontId())
+                .sourceId(source.getSourceId())
+                .sourceType(source.getSourceType())
+                .lockedBy(source.getLockedBy())
+                .build();
+    }
+
+    private static void copyVisibilityFields(
+            JSONObject target, JSONObject source, String... fieldNames) {
+        if (source == null) {
+            return;
+        }
+        for (String fieldName : fieldNames) {
+            if (source.containsKey(fieldName)) {
+                target.set(fieldName, source.get(fieldName));
+            }
+        }
     }
 
     static List<DataAnnotationObjectBO> dedupeObjectsForExport(List<DataAnnotationObjectBO> objects) {

@@ -207,6 +207,14 @@ public class DatasetClassUseCase {
         return DefaultConverter.convert(datasetClassDAO.list(lambdaQueryWrapper), DatasetClassBO.class);
     }
 
+    public List<DatasetClassBO> findByDatasetId(Long datasetId) {
+        if (ObjectUtil.isNull(datasetId)) {
+            return List.of();
+        }
+        return DefaultConverter.convert(datasetClassDAO.list(Wrappers.lambdaQuery(DatasetClass.class)
+                .eq(DatasetClass::getDatasetId, datasetId)), DatasetClassBO.class);
+    }
+
 
     @Transactional(rollbackFor = Exception.class)
     public void copyFromOntologyCenter(DatasetClassBO datasetClassBO) {

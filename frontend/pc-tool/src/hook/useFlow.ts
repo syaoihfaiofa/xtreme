@@ -110,6 +110,8 @@ function getMode(query: Record<string, any>): IHandlerType {
     let mode = 'execute' as IHandlerType;
     if (query.type === 'readOnly') {
         mode = 'view';
+    } else if (query.type === 'visibility') {
+        mode = 'visibility';
     } else if (query.type === 'discussion') {
         mode = 'discussion';
     }
@@ -124,5 +126,6 @@ function getQueryKey(query: Record<string, any>): string {
         dataId: query.dataId || '',
         dataType: query.dataType || '',
         type: query.type || '',
+        visibilityRunId: query.visibilityRunId || '',
     });
 }

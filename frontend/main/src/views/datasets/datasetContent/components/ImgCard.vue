@@ -90,6 +90,21 @@
               Annotate
             </Button>
           </div>
+          <div class="openBtn" v-if="visibilityAvailable">
+            <Button
+              type="primary"
+              block
+              border
+              @click="
+                (e) => {
+                  e.stopPropagation();
+                  emits('handleAutoOcclusion', data);
+                }
+              "
+            >
+              Auto Occlusion
+            </Button>
+          </div>
           <div class="openBtn">
             <Button
               type="primary"
@@ -346,6 +361,7 @@
     'handleDelete',
     'handleSingleAnnotate',
     'handleAnotateFrame',
+    'handleAutoOcclusion',
     'handleChangeType',
     'handleEditScene',
     'handleUploadLocation',
@@ -379,6 +395,9 @@
     () =>
       props.info?.type === datasetTypeEnum.LIDAR_FUSION ||
       props.info?.type === datasetTypeEnum.LIDAR_BASIC,
+  );
+  const visibilityAvailable = computed(
+    () => props.info?.type === datasetTypeEnum.LIDAR_FUSION,
   );
 
   onBeforeMount(async () => {

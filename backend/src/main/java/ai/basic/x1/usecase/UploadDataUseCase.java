@@ -882,7 +882,7 @@ public class UploadDataUseCase {
                     }
 
                     this.verifyDataResult(result, dataAnnotationObjectBO.getDataId(), dataName, errorBuilder);
-                    var classMap = getClassMap(dataAnnotationObjectBO.getDatasetId(), result.getObjects());
+                    var classMap = getClassMap(dataAnnotationObjectBO.getDatasetId());
                     result.getObjects().forEach(object -> {
                         var insertDataAnnotationObjectBO = DefaultConverter.convert(dataAnnotationObjectBO, DataAnnotationObjectBO.class);
                         object.setId(IdUtil.fastSimpleUUID());
@@ -900,33 +900,27 @@ public class UploadDataUseCase {
         }
     }
 
-    private Map<Long, DatasetClassBO> getClassMap(Long datasetId, List<DataAnnotationResultObjectBO> objects) {
-        if (CollUtil.isEmpty(objects)) {
-            return new HashMap<>();
-        }
-        var classIds = objects.stream().map(DataAnnotationResultObjectBO::getClassId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        if (CollUtil.isEmpty(classIds)) {
-            return new HashMap<>();
-        }
-        var datasetClassBOList = datasetClassUseCase.findByIds(datasetId, new ArrayList<>(classIds));
-        if (CollUtil.isNotEmpty(datasetClassBOList)) {
-            return datasetClassBOList.stream().collect(Collectors.toMap(DatasetClassBO::getId,
-                    t -> t));
-        }
-        return Map.of();
+    private Map<String, DatasetClassBO> getClassMap(Long datasetId) {
+        return datasetClassUseCase.findByDatasetId(datasetId).stream()
+                .filter(datasetClass -> StrUtil.isNotBlank(datasetClass.getName()))
+                .collect(Collectors.toMap(
+                        datasetClass -> normalizedClassName(datasetClass.getName()),
+                        datasetClass -> datasetClass,
+                        (first, ignored) -> first));
     }
 
-    private void processClassAttributes(Map<Long, DatasetClassBO> classMap,
+    private void processClassAttributes(Map<String, DatasetClassBO> classMap,
                                         DataAnnotationResultObjectBO object) {
         if (object == null) {
             return;
         }
-        var classId = object.getClassId();
-        if (classMap.containsKey(classId)) {
-            object.setClassId(classId);
-            object.setClassName(classMap.get(classId).getName());
+        String className = object.getClassName();
+        DatasetClassBO mappedClass = className == null
+                ? null
+                : classMap.get(normalizedClassName(className));
+        if (mappedClass != null) {
+            object.setClassId(mappedClass.getId());
+            object.setClassName(mappedClass.getName());
         } else {
             object.setClassId(null);
             object.setClassValues(null);
@@ -935,6 +929,13 @@ public class UploadDataUseCase {
                 object.setClassName(null);
             }
         }
+    }
+
+    private static String normalizedClassName(String className) {
+        return Arrays.stream(className.toLowerCase(Locale.ROOT).split("[^a-z0-9]+"))
+                .filter(StrUtil::isNotBlank)
+                .sorted()
+                .collect(Collectors.joining());
     }
 
     /**

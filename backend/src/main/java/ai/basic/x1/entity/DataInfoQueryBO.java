@@ -96,6 +96,16 @@ public class DataInfoQueryBO extends BaseQueryBO {
      */
     private List<Long> selectModelRunIds;
 
+    /**
+     * Successful visibility run whose sidecar fields are copied into this export only.
+     */
+    private Long visibilityRunId;
+
+    /**
+     * Resolve the latest complete visibility task for the exported LiDAR Fusion scene.
+     */
+    private Boolean includeAutoOcclusionResults;
+
     private Boolean isAllResult;
 
     /**

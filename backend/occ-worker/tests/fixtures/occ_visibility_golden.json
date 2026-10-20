@@ -1,0 +1,139 @@
+{
+  "description": "Synthetic, deterministic OCC visibility fixture.",
+  "manifest_input": {
+    "pc_range": [0.0, 0.0, 0.0, 4.0, 2.0, 2.0],
+    "voxel_size": 1.0,
+    "points": [[1.5, 0.5, 0.5], [2.5, 1.5, 0.5]],
+    "free_id": 0,
+    "general_object_id": 1
+  },
+  "annotations": {
+    "box": {
+      "id": "box-occupied",
+      "center": [1.5, 0.5, 0.5],
+      "size": [1.0, 1.0, 1.0],
+      "rotation": [0.0, 0.0, 0.0]
+    },
+    "polyline": {
+      "id": "ground-line",
+      "wall_height": 0.5,
+      "points": [[2.0, 1.5, 0.0], [3.0, 1.5, 0.0]]
+    }
+  },
+  "cameras": {
+    "pinhole": {
+      "type": "pinhole",
+      "width": 16,
+      "height": 16,
+      "fx": 4.0,
+      "fy": 4.0,
+      "cx": 8.0,
+      "cy": 8.0,
+      "R": [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]],
+      "t": [-0.5, -0.5, 0.5]
+    },
+    "fisheye": {
+      "type": "fisheye",
+      "width": 16,
+      "height": 16,
+      "fx": 4.0,
+      "fy": 4.0,
+      "cx": 8.0,
+      "cy": 8.0,
+      "k1": 0.0,
+      "k2": 0.0,
+      "k3": 0.0,
+      "k4": 0.0,
+      "R": [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]],
+      "t": [-0.5, -0.5, 0.5]
+    }
+  },
+  "camera_extrinsics": {
+    "surround_front": {
+      "R": [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]],
+      "t": [-0.5, -0.5, 0.5]
+    },
+    "surround_left": {
+      "R": [[0.0, 0.9950041653, -0.0998334166], [0.0, 0.0998334166, 0.9950041653], [1.0, 0.0, 0.0]],
+      "t": [-0.5, -0.25, 0.5]
+    },
+    "surround_back": {
+      "R": [[0.0, 0.9950041653, 0.0998334166], [0.0, -0.0998334166, 0.9950041653], [1.0, 0.0, 0.0]],
+      "t": [-0.5, 0.0, 0.5]
+    },
+    "surround_right": {
+      "R": [[0.0, -1.0, 0.0], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0]],
+      "t": [-0.5, 0.25, 0.5]
+    }
+  },
+  "current_expected": {
+    "labels": [
+      [[0, 0], [0, 0]],
+      [[1, 0], [0, 0]],
+      [[0, 0], [1, 0]],
+      [[0, 0], [0, 0]]
+    ],
+    "box_visible_ratio": 1.0,
+    "polyline_bev_visibility": [true]
+  },
+  "future_horizon_contract": {
+    "reference": {
+      "algorithm": "Occ3D supplementary material, calculate_LiDAR_visibility ray casting",
+      "dataset_fields": "Occ3D README: labels.npz contains semantics, mask_lidar, and mask_camera",
+      "url": "https://github.com/Tsinghua-MARS-Lab/Occ3D"
+    },
+    "input": {
+      "lidar_origin": [-0.5, 0.5, 0.5],
+      "unknown_id": 255,
+      "labeled_points": [
+        {"xyz": [1.5, 0.5, 0.5], "semantic": 7},
+        {"xyz": [2.5, 1.5, 0.5], "semantic": 2}
+      ]
+    },
+    "derivation": {
+      "free_voxels": [[0, 0, 0], [1, 1, 0]],
+      "occupied_voxels": [
+        {"index": [1, 0, 0], "semantic": 7},
+        {"index": [2, 1, 0], "semantic": 2}
+      ],
+      "mask_lidar_observed_voxels": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [2, 1, 0]],
+      "mask_camera_observed_voxels": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [2, 1, 0]],
+      "auto_visibility_threshold": 0.2,
+      "visible_box_ids": ["box-occupied"],
+      "visible_polyline_segments": {"ground-line": [false]}
+    },
+    "expected": {
+    "semantics": [
+      [[0, 255], [255, 255]],
+      [[7, 255], [0, 255]],
+      [[255, 255], [2, 255]],
+      [[255, 255], [255, 255]]
+    ],
+    "mask_lidar": [
+      [[true, false], [false, false]],
+      [[true, false], [true, false]],
+      [[false, false], [true, false]],
+      [[false, false], [false, false]]
+    ],
+    "mask_camera": [
+      [[true, false], [false, false]],
+      [[true, false], [true, false]],
+      [[false, false], [true, false]],
+      [[false, false], [false, false]]
+    ],
+    "auto": {
+      "box-occupied": {
+        "auto_visible": true,
+        "auto_occluded": false,
+        "auto_visible_ratio": 1.0
+      },
+      "ground-line": {
+        "auto_visible": true,
+        "auto_occluded": false,
+        "auto_visible_ratio": 1.0,
+        "auto_visible_segments": [false]
+      }
+    }
+  }
+}
+}

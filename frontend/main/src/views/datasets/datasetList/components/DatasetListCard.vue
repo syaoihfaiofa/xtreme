@@ -306,7 +306,7 @@
       border-radius: 12px;
       position: relative;
       margin: 0 10px;
-      overflow:hidden;
+      overflow: visible;
       transform: translateZ(0);
 
       &:hover{

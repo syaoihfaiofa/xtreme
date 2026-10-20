@@ -1215,6 +1215,11 @@ public class TrackSyncUseCase {
                     source, trackId, frames, poseByDataId, syncWorldVertical, existingObjects,
                     segmentByDataId, locationGapMs);
         }
+        if (isGroundPolygon(attrs) && MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)) {
+            return syncGroundPolygonDynamicVariableSize(
+                    source, trackId, frames, poseByDataId, syncWorldVertical, existingObjects,
+                    segmentByDataId, locationGapMs);
+        }
         if (isGroundPolygon(attrs) && MOTION_SEMI_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
             double initialSyncRadius = getPositiveDouble(
@@ -1847,10 +1852,63 @@ public class TrackSyncUseCase {
                     nextFrames,
                     maxDisappearGap,
                     segmentByDataId,
-                    locationGapMs);
+                    locationGapMs,
+                    MOTION_DYNAMIC_FIXED_SIZE);
         }
         return syncGroundPolygonFixedShape(
                 source, trackId, existingObjects, maxDisappearGap, segmentByDataId, locationGapMs);
+    }
+
+    /**
+     * Variable-size parking slots keep independent per-frame shapes. Without range sync only the
+     * motion mode and dynamic configuration are propagated; with range sync, existing frames in
+     * the window are aligned to the source position and heading while keeping their own shape.
+     */
+    private SyncResult syncGroundPolygonDynamicVariableSize(
+            DataAnnotationObjectBO source,
+            String trackId,
+            List<DataInfo> frames,
+            Map<Long, Pose> poseByDataId,
+            boolean syncWorldVertical,
+            List<DataAnnotationObject> existingObjects,
+            Map<Long, Integer> segmentByDataId,
+            int locationGapMs) {
+        JSONObject sourceAttrs = source.getClassAttributes();
+        int maxDisappearGap = getNonNegativeInt(
+                sourceAttrs, "syncMaxDisappearGap", DEFAULT_SYNC_MAX_DISAPPEAR_GAP);
+        if (getBoolean(sourceAttrs, "dynamicRangeSyncEnabled", false)) {
+            requireScenePose(poseByDataId, source.getDataId());
+            int previousFrames = getNonNegativeInt(
+                    sourceAttrs, "dynamicSyncPreviousFrames", DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES);
+            int nextFrames = getNonNegativeInt(
+                    sourceAttrs, "dynamicSyncNextFrames", DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES);
+            return syncGroundPolygonDynamicRange(
+                    source,
+                    trackId,
+                    frames,
+                    poseByDataId,
+                    syncWorldVertical,
+                    existingObjects,
+                    previousFrames,
+                    nextFrames,
+                    maxDisappearGap,
+                    segmentByDataId,
+                    locationGapMs,
+                    MOTION_DYNAMIC_VARIABLE_SIZE);
+        }
+        List<DataAnnotationObject> updates = new ArrayList<>();
+        for (DataAnnotationObject existing : groundPolygonsByTrack(existingObjects, trackId).values()) {
+            JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(existing.getClassAttributes()));
+            copyClassId(attrs, source.getClassId());
+            attrs.set("motionMode", MOTION_DYNAMIC_VARIABLE_SIZE);
+            copyDynamicSyncConfiguration(attrs, sourceAttrs);
+            updateSyncMetadata(
+                    attrs, maxDisappearGap, segmentByDataId.get(existing.getDataId()), locationGapMs);
+            existing.setClassId(source.getClassId());
+            existing.setClassAttributes(attrs);
+            updates.add(existing);
+        }
+        return applyChanges(new ArrayList<>(), updates, new ArrayList<>());
     }
 
     /**
@@ -1901,7 +1959,8 @@ public class TrackSyncUseCase {
             int nextFrames,
             int maxDisappearGap,
             Map<Long, Integer> segmentByDataId,
-            int locationGapMs) {
+            int locationGapMs,
+            String motionMode) {
         JSONObject sourceAttrs = source.getClassAttributes();
         JSONArray sourcePoints = groundPolygonPoints(sourceAttrs, source.getDataId(), trackId);
         Pose sourcePose = poseByDataId.get(source.getDataId());
@@ -1953,14 +2012,19 @@ public class TrackSyncUseCase {
                         worldPoint[0], worldPoint[1], worldPoint[2], targetPose, syncWorldVertical);
                 targetPoints.add(point3D(localPoint[0], localPoint[1], localPoint[2]));
             }
-            contour.set("points", targetPoints);
+            boolean keepExistingShape = existing != null
+                    && MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)
+                    && contour.getJSONArray("points") != null;
+            contour.set("points", keepExistingShape
+                    ? applyPolygonPose(contour.getJSONArray("points"), polygonPose(targetPoints))
+                    : targetPoints);
             attrs.set("type", GROUND_POLYGON);
             attrs.set("trackId", trackId);
             attrs.set("parkingOpeningEdge", "P3_P0");
             updateDynamicMetadata(
                     attrs,
                     source,
-                    MOTION_DYNAMIC_FIXED_SIZE,
+                    motionMode,
                     previousFrames,
                     nextFrames,
                     maxDisappearGap,
@@ -3789,6 +3853,29 @@ public class TrackSyncUseCase {
                     targetPose.centerX + placed[0],
                     targetPose.centerY + placed[1],
                     targetPose.centerZ + (source[index][2] - sourcePose.centerZ)));
+        }
+        return result;
+    }
+
+    /**
+     * Keep the shape of {@code shapePoints} (relative to its own center and heading) and move it
+     * onto {@code targetPose}. Relative height offsets come from the shape; the target center Z
+     * is used.
+     */
+    static JSONArray applyPolygonPose(JSONArray shapePoints, PolygonPose targetPose) {
+        double[][] shape = polygonPointCoordinates(shapePoints);
+        PolygonPose shapePose = polygonPose(shapePoints);
+        JSONArray result = new JSONArray();
+        for (int index = 0; index < 4; index++) {
+            double[] local = rotateZ(
+                    shape[index][0] - shapePose.centerX,
+                    shape[index][1] - shapePose.centerY,
+                    -shapePose.yaw);
+            double[] placed = rotateZ(local[0], local[1], targetPose.yaw);
+            result.add(point3D(
+                    targetPose.centerX + placed[0],
+                    targetPose.centerY + placed[1],
+                    targetPose.centerZ + (shape[index][2] - shapePose.centerZ)));
         }
         return result;
     }

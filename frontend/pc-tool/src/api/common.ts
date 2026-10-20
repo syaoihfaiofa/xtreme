@@ -15,8 +15,11 @@ import { utils } from 'pc-editor';
 // import BSError from '../common/BSError';
 import * as THREE from 'three';
 import { IDataSetInfo } from '../type';
+import { stripAutoVisibilitySidecarFields } from './visibilitySidecar';
 
 let { empty, queryStr, traverseClassification2Arr, traverseClass2Arr } = utils;
+
+export const stripAutoVisibilityAttributes = stripAutoVisibilitySidecarFields;
 
 const EMPTY_OBJECT_RESULT = {
     objectsMap: {} as Record<string, IObject[]>,
@@ -234,7 +237,9 @@ export async function getSyncTrackObjectBatch(
                 .filter((object: any) => object.sourceType !== SourceType.SNAPSHOT)
                 .map((object: any) => {
                     const { id, sourceId, sourceType, classId } = object;
-                    const classAttributes = object.classAttributes || {};
+                    const classAttributes = stripAutoVisibilityAttributes(
+                        object.classAttributes || {},
+                    );
                     const { meta, contour, ...rest } = classAttributes;
                     try {
                         return utils.translateToObject(
@@ -277,7 +282,9 @@ export async function getDataObject(dataIds: string[] | string | number) {
             .filter((object: any) => object.sourceType !== SourceType.SNAPSHOT)
             .map((o: any) => {
                 let { id, sourceId, sourceType, classId } = o;
-                const classAttributes = o.classAttributes || {};
+                const classAttributes = stripAutoVisibilityAttributes(
+                    o.classAttributes || {},
+                );
                 const { meta, contour, ...rest } = classAttributes;
                 try {
                     return utils.translateToObject(
@@ -367,6 +374,130 @@ export async function getDataClassificationBatch(dataIds: string[] | string | nu
       }, {});
     });
   }
+
+export interface IVisibilitySegmentEntry {
+    index: number;
+    visible: boolean;
+}
+
+export interface IVisibilityObjectResult {
+    autoVisibleRatio: number;
+    autoVisibleRatioByView: Record<string, number>;
+    autoOccluded: boolean;
+}
+
+export interface IVisibilityPolylineResult {
+    autoSegmentVisibilityByView: Record<string, IVisibilitySegmentEntry[]>;
+    autoSegmentMeta: {
+        numSegments: number;
+        segmentLength: number;
+    };
+}
+
+export interface IVisibilityFrameResult {
+    schemaVersion: string;
+    frameToken: string;
+    objects: Record<string, IVisibilityObjectResult>;
+    polylines: Record<string, IVisibilityPolylineResult>;
+}
+
+export interface IOccVoxel {
+    x: number;
+    y: number;
+    z: number;
+    semanticId: number;
+    sourceClassId?: number;
+    lidarObserved?: boolean;
+    cameraObserved?: boolean;
+}
+
+export interface IOccVisualizationResult {
+    schemaVersion: string;
+    voxelSize: number;
+    pcRange: [number, number, number, number, number, number];
+    voxels: IOccVoxel[];
+}
+
+export type IVisibilityRunTaskType = 'OCC' | 'VISIBILITY';
+export type IVisibilityRunStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+export type IVisibilityRunStage =
+    | 'QUEUED'
+    | 'PREPARING'
+    | 'OCC_GENERATION'
+    | 'LIDAR_VISIBILITY'
+    | 'ANNOTATION_VISIBILITY'
+    | 'WRITING'
+    | 'COMPLETED'
+    | 'FAILED';
+
+export interface IVisibilityRun {
+    id: number;
+    datasetId: number;
+    sceneId: number;
+    taskType: IVisibilityRunTaskType;
+    occRunId?: number;
+    status: IVisibilityRunStatus;
+    stage: IVisibilityRunStage;
+    progress: number;
+    totalFrames: number;
+    completedFrames: number;
+    error?: string;
+}
+
+export interface IVisibilityTaskRequest {
+    occRunId: number;
+    selectedDataIds: number[];
+}
+
+function unwrapVisibilityResponse<T>(response: T | { data?: T }): T {
+    return (response as { data?: T }).data || (response as T);
+}
+
+export async function getVisibilityRun(runId: string): Promise<IVisibilityRun> {
+    const response = await get<IVisibilityRun>(`/api/annotate/visibility/status/${runId}`);
+    return unwrapVisibilityResponse(response);
+}
+
+export async function getLatestVisibilityTask(
+    occRunId: string,
+): Promise<IVisibilityRun | undefined> {
+    const response = await get<IVisibilityRun | undefined>(
+        `/api/annotate/visibility/${occRunId}/latest-task`,
+    );
+    return unwrapVisibilityResponse(response);
+}
+
+export async function createVisibilityTask(
+    request: IVisibilityTaskRequest,
+): Promise<IVisibilityRun> {
+    const response = await post<IVisibilityRun>(
+        '/api/annotate/visibility/tasks/visibility',
+        request,
+    );
+    return unwrapVisibilityResponse(response);
+}
+
+export async function getVisibilityFrame(
+    runId: string,
+    dataId: string,
+): Promise<IVisibilityFrameResult> {
+    const response = await get<any>(`/api/annotate/visibility/${runId}/frame/${dataId}`);
+    return (response?.data || response) as IVisibilityFrameResult;
+}
+
+export async function getOccVisualization(
+    runId: string,
+    dataId: string,
+    maxVoxels: number,
+    layer: 'semantic' | 'lidar-mask' | 'camera-mask',
+): Promise<IOccVisualizationResult> {
+    const response = await get<any>(
+        `/api/annotate/visibility/${runId}/frame/${dataId}/occ`,
+        { maxVoxels, layer },
+    );
+    return (response?.data || response) as IOccVisualizationResult;
+}
+
 export async function unlockRecord(recordId: string) {
     let url = `/api/data/unLock/${recordId}`;
     return await post(url);
@@ -513,6 +644,13 @@ export async function getDataFile(dataId: string) {
     });
 
     return { configs, name: data[0]?.name || '' };
+}
+
+export async function getSceneIdByDataId(dataId: string): Promise<string | undefined> {
+    const response = await get('/api/data/listByIds', { dataIds: dataId });
+    const data = response?.data || response || [];
+    const parentId = data[0]?.parentId;
+    return parentId == null ? undefined : String(parentId);
 }
 
 export interface IScenePose {

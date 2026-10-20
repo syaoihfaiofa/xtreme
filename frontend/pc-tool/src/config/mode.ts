@@ -24,6 +24,13 @@ const view: IModeConfig<IBsUIType, IBsActionName> = {
     actions: toMap<IBsActionName>([...viewActions]),
 };
 
+const visibility: IModeConfig<IBsUIType, IBsActionName> = {
+    name: 'visibility',
+    op: OPType.VIEW,
+    ui: toMap([BsUIType.setting, BsUIType.info, BsUIType.project]),
+    actions: toMap<IBsActionName>([...viewActions, 'projectObject2D']),
+};
+
 const discussion: IModeConfig<IBsUIType, IBsActionName> = {
     name: 'discussion',
     op: OPType.VIEW,
@@ -34,6 +41,7 @@ const discussion: IModeConfig<IBsUIType, IBsActionName> = {
 let modes = {
     execute,
     view,
+    visibility,
     discussion,
 };
 

@@ -26,6 +26,12 @@
           <div class="whitespace-nowrap" style="color: #333; width: 100px">Source data</div>
           <Checkbox v-model:checked="includeSourceData">Download point clouds and images</Checkbox>
         </div>
+        <div v-if="props.datasetType === 'LIDAR_FUSION'" class="flex items-center gap-10px">
+          <div class="whitespace-nowrap" style="color: #333; width: 100px">Auto occlusion</div>
+          <Checkbox v-model:checked="includeAutoOcclusionResults">
+            Include auto occlusion results
+          </Checkbox>
+        </div>
         <div class="flex items-center gap-10px">
           <div class="whitespace-nowrap" style="color: #333; width: 100px">Results</div>
 
@@ -140,6 +146,7 @@
   let selectModelRunIds = ref<any>([]);
   let dataType = ref<string>('');
   let includeSourceData = ref<boolean>(false);
+  let includeAutoOcclusionResults = ref<boolean>(false);
 
   const isLoading = ref<boolean>(false);
   const handleSubmit = async () => {
@@ -195,6 +202,7 @@
     dataType.value = '';
     selectModelRunIds.value = [];
     includeSourceData.value = false;
+    includeAutoOcclusionResults.value = false;
   };
 
   let fliterPa = (data) => {
@@ -213,6 +221,7 @@
     res.selectModelRunIds = selectModelRunIds.value.toString();
     res.dataFormat = dataFormat.value;
     res.includeSourceData = includeSourceData.value;
+    res.includeAutoOcclusionResults = includeAutoOcclusionResults.value;
     return res;
   };
 </script>

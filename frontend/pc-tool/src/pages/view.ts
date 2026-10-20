@@ -4,6 +4,7 @@ import { useInjectEditor } from '../state';
 import modes from '../config/mode';
 import useTool from '../hook/useTool';
 import { BSError } from 'pc-editor';
+import { getSceneIdByDataId } from '../api';
 
 export function view(): IPageHandler {
     let editor = useInjectEditor();
@@ -24,8 +25,23 @@ export function view(): IPageHandler {
             return;
         }
 
-        // set mode
-        editor.setMode(modes.view);
+        if (query.type === 'visibility' && !query.visibilityRunId) {
+            const sceneId = await getSceneIdByDataId(String(query.dataId));
+            if (!sceneId) {
+                editor.showMsg('error', '无法确定当前帧所属场景，请从数据集场景页进入自动遮挡。');
+                return;
+            }
+            window.location.replace(
+                `/#/auto-occlusion?datasetId=${encodeURIComponent(String(query.datasetId))}`
+                + `&dataId=${encodeURIComponent(sceneId)}&sceneId=${encodeURIComponent(sceneId)}`
+                + `&frameDataId=${encodeURIComponent(String(query.dataId))}`
+                + '&dataType=frame',
+            );
+            return;
+        }
+
+        const mode = query.type === 'visibility' ? modes.visibility : modes.view;
+        editor.setMode(mode);
 
         editor.showLoading(true);
         try {

@@ -43,7 +43,9 @@ function isSyncableGroundShape(object: unknown): object is SyncableGroundShape {
 function resolveSyncMotionMode(object: Box | SyncableGroundShape): string {
     if (object instanceof GroundPolygon) {
         const motionMode = object.userData?.motionMode;
-        return motionMode === MotionMode.DYNAMIC_FIXED_SIZE || motionMode === MotionMode.SEMI_STATIC
+        return motionMode === MotionMode.DYNAMIC_FIXED_SIZE ||
+            motionMode === MotionMode.DYNAMIC_VARIABLE_SIZE ||
+            motionMode === MotionMode.SEMI_STATIC
             ? motionMode
             : MotionMode.STATIC;
     }
@@ -1320,7 +1322,7 @@ export default class Editor extends BaseEditor {
                         sourceId: object.sourceId,
                         sourceType: object.sourceType,
                         promoteToHuman: object.manualModified === true,
-                        classAttributes: objectV2,
+                        classAttributes: api.stripAutoVisibilityAttributes(objectV2),
                     };
                 });
                 return { dataId: frame.id, objects, dataAnnotations: [] };
@@ -1658,7 +1660,7 @@ export default class Editor extends BaseEditor {
                     sourceId: e.sourceId,
                     sourceType: e.sourceType,
                     promoteToHuman: e.manualModified === true,
-                    classAttributes: objectV2,
+                    classAttributes: api.stripAutoVisibilityAttributes(objectV2),
                 });
             });
 

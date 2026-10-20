@@ -11,6 +11,7 @@
         <slot name="info" v-if="$slots.info"></slot>
         <Info v-else />
         <Image2DMax />
+        <VisibilityOverlay />
         <slot name="editClass" v-if="$slots.editClass"></slot>
     </div>
 </template>
@@ -25,6 +26,7 @@
     import Labels from './Labels.vue';
     import Annotation from './Annotation.vue';
     import Info from './Info.vue';
+    import VisibilityOverlay from './VisibilityOverlay.vue';
     import Image2DMax from '../ImgView/Image2DMax.vue';
 
     import { IUserData, IClassType, Event } from 'pc-editor';

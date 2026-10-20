@@ -20,6 +20,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     groupTrack: THREE.Group;
     /** Transient two-point measurement graphics. Never part of annotation data. */
     groupMeasure: THREE.Group;
+    originMarker: THREE.Group;
     selection: AnnotateObject[];
     selectionMap: Record<string, AnnotateObject>;
     renderViews: RenderView[];
@@ -48,6 +49,7 @@ export default class PointCloud extends THREE.EventDispatcher {
         this.groupPoints = new THREE.Group();
         this.groupTrack = new THREE.Group();
         this.groupMeasure = new THREE.Group();
+        this.originMarker = createOriginMarker();
 
         let ground = new THREE.PlaneHelper(
             new THREE.Plane(new THREE.Vector3(0, 0, -1), 0),
@@ -71,11 +73,8 @@ export default class PointCloud extends THREE.EventDispatcher {
             this.trimBox,
             this.groupTrack,
             this.groupMeasure,
+            this.originMarker,
         );
-
-        const axesHelper = new THREE.AxesHelper(100);
-        axesHelper.visible = false;
-        this.scene.add(axesHelper);
 
         this.selection = [];
         this.selectionMap = {};
@@ -426,4 +425,26 @@ export default class PointCloud extends THREE.EventDispatcher {
         this.selection = [];
         this.selectionMap = {};
     }
+}
+
+function createOriginMarker(): THREE.Group {
+    const marker = new THREE.Group();
+    marker.name = 'lidar-origin-marker';
+
+    const heading = new THREE.ArrowHelper(
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(0, 0, 0.06),
+        1.8,
+        0xff3b30,
+        0.45,
+        0.24,
+    );
+    heading.line.material.depthTest = false;
+    heading.cone.material.depthTest = false;
+
+    const axes = new THREE.AxesHelper(0.8);
+    axes.position.z = 0.08;
+    marker.add(heading, axes);
+    marker.renderOrder = 1200;
+    return marker;
 }

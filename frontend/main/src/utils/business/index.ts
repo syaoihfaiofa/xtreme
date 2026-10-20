@@ -2,7 +2,7 @@ import { message } from 'ant-design-vue';
 import qs from 'qs';
 import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
 
-export const goToTool = (query: any, type?: datasetTypeEnum) => {
+export const getToolUrl = (query: any, type?: datasetTypeEnum) => {
   let toolPath;
   console.log(type === datasetTypeEnum.TEXT);
   switch (type) {
@@ -30,9 +30,13 @@ export const goToTool = (query: any, type?: datasetTypeEnum) => {
     }
   }
 
+  return toolPath + '?' + qs.stringify(query);
+};
+
+export const goToTool = (query: any, type?: datasetTypeEnum) => {
   // window.open(BaseURL + toolPath + '?' + qs.stringify(query));
   const oA = document.createElement('a'); //创建a标签
-  oA.href = toolPath + '?' + qs.stringify(query); //添加 href 属性
+  oA.href = getToolUrl(query, type); //添加 href 属性
   oA.target = '_blank'; //添加 target 属性
   oA.click(); //模拟点击
 };

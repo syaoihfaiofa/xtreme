@@ -2,10 +2,23 @@ package ai.basic.x1.adapter.api.config;
 
 import ai.basic.x1.adapter.api.annotation.user.LoggedUserArgumentResolver;
 import ai.basic.x1.adapter.api.filter.JwtHelper;
+import ai.basic.x1.adapter.port.dao.DataAnnotationObjectDAO;
+import ai.basic.x1.adapter.port.dao.DataInfoDAO;
+import ai.basic.x1.adapter.port.dao.DatasetClassDAO;
+import ai.basic.x1.adapter.port.dao.DatasetDAO;
+import ai.basic.x1.adapter.port.dao.FileDAO;
+import ai.basic.x1.adapter.port.dao.SceneLocationDAO;
+import ai.basic.x1.adapter.port.dao.SceneLocationSampleDAO;
+import ai.basic.x1.adapter.port.dao.SceneVisibilityRunDAO;
+import ai.basic.x1.adapter.port.dao.UserDAO;
+import ai.basic.x1.adapter.port.minio.MinioProp;
+import ai.basic.x1.adapter.port.minio.MinioService;
+import ai.basic.x1.adapter.port.rpc.SceneVisibilityWorkerHttpCaller;
 import ai.basic.x1.usecase.*;
 import ai.basic.x1.util.lock.DistributedLock;
 import ai.basic.x1.util.lock.IDistributedLock;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -17,6 +30,7 @@ import org.springframework.web.method.support.HandlerMethodArgumentResolver;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
 
 /**
  * @author Jagger Wang
@@ -215,6 +229,39 @@ public class CommonConfig implements WebMvcConfigurer {
     @Bean
     public SceneInferenceUseCase sceneInferenceUseCase() {
         return new SceneInferenceUseCase();
+    }
+
+    @Bean
+    public SceneVisibilityUseCase sceneVisibilityUseCase(
+            DataInfoDAO dataInfoDAO,
+            DataAnnotationObjectDAO dataAnnotationObjectDAO,
+            DatasetClassDAO datasetClassDAO,
+            DatasetDAO datasetDAO,
+            FileDAO fileDAO,
+            SceneLocationDAO sceneLocationDAO,
+            SceneLocationSampleDAO sceneLocationSampleDAO,
+            SceneVisibilityRunDAO sceneVisibilityRunDAO,
+            UserDAO userDAO,
+            SceneVisibilityWorkerHttpCaller workerHttpCaller,
+            MinioService minioService,
+            MinioProp minioProp,
+            @Qualifier("visibilityTaskExecutor") ExecutorService executorService,
+            @Value("${visibility.algorithm.version:xtreme-occ-v1}") String algorithmVersion) {
+        return new SceneVisibilityUseCase(
+                dataInfoDAO,
+                dataAnnotationObjectDAO,
+                datasetClassDAO,
+                datasetDAO,
+                fileDAO,
+                sceneLocationDAO,
+                sceneLocationSampleDAO,
+                sceneVisibilityRunDAO,
+                userDAO,
+                workerHttpCaller,
+                minioService,
+                minioProp,
+                executorService,
+                algorithmVersion);
     }
 
     @Bean

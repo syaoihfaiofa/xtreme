@@ -103,4 +103,12 @@ public class DataInfoQueryDTO {
      */
     private List<Long> selectModelRunIds;
 
+    /**
+     * Successful visibility run whose sidecar fields are copied into this export only.
+     */
+    private Long visibilityRunId;
+
+    /** Include auto occlusion fields from the completed visibility sidecar. */
+    private Boolean includeAutoOcclusionResults;
+
 }

@@ -78,4 +78,14 @@ public class DataResultObjectExportBO {
     /** Frame whose raw 2D/3D model pair was selected as this track's representative. */
     private Long sourceDataId;
 
+    private BigDecimal autoVisibleRatio;
+
+    private JSONObject autoVisibleRatioByView;
+
+    private Boolean autoOccluded;
+
+    private JSONObject autoSegmentVisibilityByView;
+
+    private JSONObject autoSegmentMeta;
+
 }

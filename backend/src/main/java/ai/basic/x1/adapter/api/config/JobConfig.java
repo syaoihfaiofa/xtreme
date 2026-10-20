@@ -96,6 +96,19 @@ public class JobConfig {
         return executor;
     }
 
+    @Bean(name = "visibilityTaskExecutor")
+    public ExecutorService visibilityTaskExecutor() {
+        AtomicInteger index = new AtomicInteger(1);
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS,
+                new LinkedBlockingDeque<>(), runnable -> {
+            Thread thread = new Thread(runnable);
+            thread.setName("visibility-task-executor" + index.getAndIncrement());
+            thread.setDaemon(true);
+            return thread;
+        });
+        return executor;
+    }
+
     @Bean(initMethod = "start", destroyMethod = "stop")
     public StreamMessageListenerContainer<String, ObjectRecord<String, String>> dataStreamMessageListenerContainer(Executor dataRedisStreamExecutor,
                                                                                                                RedisConnectionFactory redisConnectionFactory,

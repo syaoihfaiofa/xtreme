@@ -1,0 +1,54 @@
+{
+  "reference": {
+    "repository": "/home/PnP/lxzhu/perceptionoffline",
+    "git_commit": "445ff833ea145495cd9dd593441b85f1b3ea091a",
+    "files": [
+      {
+        "path": "Horizon/v3_8/scripts/docs/prompts_visibility.md",
+        "git_blob_sha1": "35f86ea80cd9592db2822b6367803e649a626413"
+      },
+      {
+        "path": "Horizon/v3_8/scripts/configs/bev/xtreme_v1_occ.py",
+        "git_blob_sha1": "3aefad6131b0e9414688130b793a5056c057bbd1"
+      }
+    ],
+    "configuration_output": {
+      "occ_seg_class": [
+        "free",
+        "general_object",
+        "car",
+        "cone",
+        "pillar",
+        "person",
+        "ground",
+        "curb",
+        "wall",
+        "fence",
+        "wheel_stopper",
+        "pole",
+        "board_no_parking",
+        "parkinglock_locked",
+        "parkinglock_unlocked",
+        "barrier"
+      ],
+      "voxel_size": 0.1,
+      "z_range": [-0.7, 1.3, 0.1],
+      "camera_mask_field": "mask_camera"
+    }
+  },
+  "fixture": {
+    "path": "occ_visibility_golden.json",
+    "git_blob_sha1": "c37dc05a9029610c49d611d62441654d999ced56",
+    "sha256": "c9576f49f5a7c5e429ed0fcba80b8346b60e695863d38ded34a46ef21602e882",
+    "reference_compatibility": {
+      "semantic_ids": {
+        "free": 0,
+        "general_object": 1,
+        "car": 2,
+        "ground": 6
+      },
+      "output_fields": ["semantics", "mask_lidar", "mask_camera"]
+    }
+  },
+  "runtime_dependency": false
+}

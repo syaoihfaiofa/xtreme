@@ -119,6 +119,7 @@
               @handleDelete="handleDeleteSingle"
               @handleSingleAnnotate="handleSingleAnnotate"
               @handleAnotateFrame="handleAnotateFrame"
+              @handleAutoOcclusion="handleAutoOcclusion"
               @handleChangeType="handleChangeType"
               @handleEditScene="handleEditScene"
               @handleUploadLocation="handleUploadLocation"
@@ -965,6 +966,19 @@
     });
     goToTool(buildToolQuery(res, [dataId], dataTypeEnum.FRAME_SERIES), info.value?.type);
     // window.location.reload();
+  };
+
+  const handleAutoOcclusion = (data: DatasetItem) => {
+    const datasetId = Number(id);
+    const sceneId = Number(data.id);
+    if (!Number.isSafeInteger(datasetId) || datasetId <= 0 || !Number.isSafeInteger(sceneId) || sceneId <= 0) {
+      message.error('无法启动自动遮挡：数据集或场景参数无效。');
+      return;
+    }
+    window.location.assign(
+      `/#/auto-occlusion?datasetId=${datasetId}&dataId=${sceneId}&sceneId=${sceneId}`
+        + `&frameDataId=${data.firstDataId ?? ''}&dataType=frame&datasetType=${info.value?.type ?? ''}`,
+    );
   };
   // Open Frame
   const frameDetailName = ref<string>('');

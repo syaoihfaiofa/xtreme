@@ -40,7 +40,7 @@
                 @click="canNavigateFrame(1) && !blocking ? onNext() : null"
             />
         </div>
-        <div class="review-color-legend">
+        <div v-if="state.modeConfig.name !== 'visibility'" class="review-color-legend">
             <span class="legend-item">
                 <i style="background-color: #ff9f00"></i>
                 正常
@@ -181,7 +181,7 @@
                     class="basic modify"
                     :disabled="blocking"
                     :loading="bsState.modifying"
-                    v-show="!canEdit() && editor.state.modeConfig.name !== 'discussion'"
+                    v-show="editor.state.modeConfig.name === 'view'"
                     @click="onModify"
                 >
                     {{ $$('btn-modify') }}
