@@ -72,6 +72,9 @@ services:
     build: ./backend
     # image: basicai/xtreme1-backend:v0.9.1
     # pull_policy: always
+    environment:
+      VISIBILITY_WORKER_SHARED_SECRET: ${OCC_WORKER_SHARED_SECRET:?OCC_WORKER_SHARED_SECRET must be set and non-blank}
+      VISIBILITY_PROGRESS_SHARED_SECRET: ${OCC_PROGRESS_SHARED_SECRET:?OCC_PROGRESS_SHARED_SECRET must be set and non-blank}
     ports:
       - 8290:8080
     volumes:
@@ -110,6 +113,23 @@ services:
     image: xtreme1-pcd-tools:local
     ports:
       - 8295:5000
+  occ-worker:
+    build: ./backend/occ-worker
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: admin
+      MINIO_SECRET_KEY: 1tQB970y
+      MINIO_BUCKET: xtreme1
+      MINIO_SECURE: "false"
+      PORT: 8080
+      OCC_WORKER_SHARED_SECRET: ${OCC_WORKER_SHARED_SECRET:?OCC_WORKER_SHARED_SECRET must be set and non-blank}
+      OCC_PROGRESS_CALLBACK_URL: http://backend:8080/annotate/visibility/internal/runs
+      OCC_PROGRESS_SHARED_SECRET: ${OCC_PROGRESS_SHARED_SECRET:?OCC_PROGRESS_SHARED_SECRET must be set and non-blank}
+    depends_on:
+      minio:
+        condition: service_healthy
+    profiles:
+      - auto-occlusion
   image-vect-visualization:
     image: basicai/xtreme1-image-vect-visualization
     pull_policy: always
