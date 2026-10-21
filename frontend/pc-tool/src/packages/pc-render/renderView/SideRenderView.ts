@@ -48,6 +48,15 @@ const defaultActions = ['resize-translate', 'distance-measure'];
 // Keep the midpoint insertion control clear of the two vertex controls.
 const MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX = 36;
 
+interface HandleStyle {
+    background?: string;
+    borderColor?: string;
+    boxShadow?: string;
+    display?: string;
+    left?: string;
+    top?: string;
+}
+
 export default class SideRenderView extends Render {
     container: HTMLDivElement;
     pointCloud: PointCloud;
@@ -101,6 +110,7 @@ export default class SideRenderView extends Render {
     private readonly vertexHandleLayer: HTMLDivElement;
     private readonly vertexHandles: HTMLDivElement[] = [];
     private readonly segmentHandles: HTMLDivElement[] = [];
+    private readonly handleStyles = new WeakMap<HTMLElement, HandleStyle>();
     private heightDragMove?: (event: PointerEvent) => void;
     private heightDragUp?: () => void;
     private readonly groundPolylineEditLine = new THREE.Line(
@@ -829,6 +839,9 @@ export default class SideRenderView extends Render {
                 ? object.bottomPoints.length + object.topPoints.length - 2
                 : 0;
         this.ensureSegmentHandles(segmentCount);
+        const selectedVertex = this.getSelectedGroundPolylineVertex?.();
+        const selectedGroundPolygonVertex = this.getSelectedGroundPolygonVertex?.();
+        const selectedIrregularWallVertex = this.getSelectedIrregularWallVertex?.();
         editablePoints.forEach((point, index) => {
             const canvasPoint = this.cameraToCanvas(point.clone().applyMatrix4(object.matrixWorld));
             const handle = this.vertexHandles[index];
@@ -837,15 +850,6 @@ export default class SideRenderView extends Render {
                 ? index < object.bottomPoints.length ? 'bottom' : 'top'
                 : '';
             handle.dataset.sideIndex = String(object instanceof IrregularWall && index >= object.bottomPoints.length ? index - object.bottomPoints.length : index);
-            handle.style.display =
-                object instanceof GroundPolyline && object.isVisibilityBoundaryPoint(index)
-                    ? 'none'
-                    : 'block';
-            handle.style.left = `${canvasPoint.x}px`;
-            handle.style.top = `${canvasPoint.y}px`;
-            const selectedVertex = this.getSelectedGroundPolylineVertex?.();
-            const selectedGroundPolygonVertex = this.getSelectedGroundPolygonVertex?.();
-            const selectedIrregularWallVertex = this.getSelectedIrregularWallVertex?.();
             const isSelectedGroundPolygonVertex =
                 object instanceof GroundPolygon &&
                 selectedGroundPolygonVertex?.object === object &&
@@ -855,22 +859,29 @@ export default class SideRenderView extends Render {
                 selectedIrregularWallVertex?.object === object &&
                 selectedIrregularWallVertex.side === handle.dataset.side &&
                 selectedIrregularWallVertex.index === Number(handle.dataset.sideIndex);
-            handle.style.background = object instanceof IrregularWall
-                ? isSelectedIrregularWallVertex ? '#ffff00' : handle.dataset.side === 'bottom' ? '#00e5ff' : '#ff9f1c'
-                : isSelectedGroundPolygonVertex
-                    ? '#ffff00'
-                : selectedVertex?.object === object && selectedVertex.index === index
-                    ? '#00e5ff'
-                    : '#10252a';
-            handle.style.borderColor =
-                isSelectedIrregularWallVertex || isSelectedGroundPolygonVertex ? '#ffffff' : '';
-            handle.style.boxShadow =
-                isSelectedIrregularWallVertex || isSelectedGroundPolygonVertex
+            this.setHandleStyle(handle, {
+                background: object instanceof IrregularWall
+                    ? isSelectedIrregularWallVertex ? '#ffff00' : handle.dataset.side === 'bottom' ? '#00e5ff' : '#ff9f1c'
+                    : isSelectedGroundPolygonVertex
+                        ? '#ffff00'
+                        : selectedVertex?.object === object && selectedVertex.index === index
+                            ? '#00e5ff'
+                            : '#10252a',
+                borderColor: isSelectedIrregularWallVertex || isSelectedGroundPolygonVertex
+                    ? '#ffffff'
+                    : '',
+                boxShadow: isSelectedIrregularWallVertex || isSelectedGroundPolygonVertex
                     ? '0 0 0 3px rgba(255, 255, 0, 0.55)'
-                    : '';
+                    : '',
+                display: object instanceof GroundPolyline && object.isVisibilityBoundaryPoint(index)
+                    ? 'none'
+                    : 'block',
+                left: `${canvasPoint.x}px`,
+                top: `${canvasPoint.y}px`,
+            });
         });
         this.vertexHandles.slice(editablePoints.length).forEach((handle) => {
-            handle.style.display = 'none';
+            this.setHandleStyle(handle, { display: 'none' });
         });
         if (object instanceof GroundPolyline) {
             for (let index = 0; index < object.points3D.length - 1; index++) {
@@ -892,9 +903,11 @@ export default class SideRenderView extends Render {
                     end.y <= this.height &&
                     Math.hypot(end.x - start.x, end.y - start.y) >=
                         MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX;
-                handle.style.display = canInsert ? 'block' : 'none';
-                handle.style.left = `${(start.x + end.x) / 2}px`;
-                handle.style.top = `${(start.y + end.y) / 2}px`;
+                this.setHandleStyle(handle, {
+                    display: canInsert ? 'block' : 'none',
+                    left: `${(start.x + end.x) / 2}px`,
+                    top: `${(start.y + end.y) / 2}px`,
+                });
             }
         } else if (object instanceof IrregularWall) {
             const segments: Array<{ side: 'bottom' | 'top'; index: number; start: THREE.Vector3; end: THREE.Vector3 }> = [];
@@ -910,16 +923,43 @@ export default class SideRenderView extends Render {
                 handle.dataset.side = segment.side;
                 handle.textContent = '+';
                 handle.title = 'Insert point into this segment';
-                handle.style.display = Math.hypot(end.x - start.x, end.y - start.y) >= MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX ? 'block' : 'none';
-                handle.style.left = `${(start.x + end.x) / 2}px`;
-                handle.style.top = `${(start.y + end.y) / 2}px`;
+                this.setHandleStyle(handle, {
+                    display: Math.hypot(end.x - start.x, end.y - start.y) >= MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX
+                        ? 'block'
+                        : 'none',
+                    left: `${(start.x + end.x) / 2}px`,
+                    top: `${(start.y + end.y) / 2}px`,
+                });
             });
         }
         this.segmentHandles.slice(segmentCount).forEach(
             (handle) => {
-                handle.style.display = 'none';
+                this.setHandleStyle(handle, { display: 'none' });
             },
         );
+    }
+
+    private setHandleStyle(handle: HTMLElement, next: HandleStyle): void {
+        const previous = this.handleStyles.get(handle) || {};
+        if (next.display !== undefined && previous.display !== next.display) {
+            handle.style.display = next.display;
+        }
+        if (next.left !== undefined && previous.left !== next.left) {
+            handle.style.left = next.left;
+        }
+        if (next.top !== undefined && previous.top !== next.top) {
+            handle.style.top = next.top;
+        }
+        if (next.background !== undefined && previous.background !== next.background) {
+            handle.style.background = next.background;
+        }
+        if (next.borderColor !== undefined && previous.borderColor !== next.borderColor) {
+            handle.style.borderColor = next.borderColor;
+        }
+        if (next.boxShadow !== undefined && previous.boxShadow !== next.boxShadow) {
+            handle.style.boxShadow = next.boxShadow;
+        }
+        this.handleStyles.set(handle, { ...previous, ...next });
     }
 
     private startGroundPolygonVertexDrag(event: PointerEvent, index: number): void {

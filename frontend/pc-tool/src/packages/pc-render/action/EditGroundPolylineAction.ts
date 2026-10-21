@@ -19,6 +19,13 @@ const MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX = 36;
 
 type ExtendEnd = 'start' | 'end';
 
+interface HandleStyle {
+    background?: string;
+    display?: string;
+    left?: string;
+    top?: string;
+}
+
 export default class EditGroundPolylineAction extends Action {
     static actionName: string = 'edit-ground-polyline';
     renderView: MainRenderView;
@@ -48,6 +55,7 @@ export default class EditGroundPolylineAction extends Action {
     private readonly pointer: THREE.Vector2 = new THREE.Vector2();
     private readonly estimatePlane: THREE.Plane = new THREE.Plane();
     private readonly estimatedPoint: THREE.Vector3 = new THREE.Vector3();
+    private readonly handleStyles = new WeakMap<HTMLElement, HandleStyle>();
     private extendEnd: ExtendEnd | null = null;
     private extendPreview: THREE.Vector2 | null = null;
     private pendingExtendClick?: { event: MouseEvent; timer: number };
@@ -55,18 +63,29 @@ export default class EditGroundPolylineAction extends Action {
     private dragUp?: () => void;
     private heightDragMove?: (event: PointerEvent) => void;
     private heightDragUp?: () => void;
+    private isCameraInteracting: boolean = false;
     private readonly onSelect = (): void => {
         this.endExtend();
     };
     private readonly onKeyDown = (event: KeyboardEvent): void => {
         if (event.key === 'Escape') this.endExtend();
     };
+    private readonly onOrbitStart = (): void => {
+        if (this.isPointerDragActive()) return;
+        this.isCameraInteracting = true;
+        this.setHandleStyle(this.layer, { display: 'none' });
+    };
+    private readonly onOrbitEnd = (): void => {
+        if (!this.isCameraInteracting) return;
+        this.isCameraInteracting = false;
+    };
     private readonly updateHandles = (): void => {
+        if (this.isCameraInteracting && !this.isPointerDragActive()) return;
         const object = this.getObject();
         if (!this.isEnable() || !object || !object.visible) {
-            this.layer.style.display = 'none';
-            this.extendStartHandle.style.display = 'none';
-            this.extendEndHandle.style.display = 'none';
+            this.setHandleStyle(this.layer, { display: 'none' });
+            this.setHandleStyle(this.extendStartHandle, { display: 'none' });
+            this.setHandleStyle(this.extendEndHandle, { display: 'none' });
             if (!this.extendEnd) {
                 this.extendCanvas.style.display = 'none';
             }
@@ -75,9 +94,10 @@ export default class EditGroundPolylineAction extends Action {
 
         this.ensureHandles(object.points3D.length);
         this.ensureSegmentHandles(object.points3D.length - 1);
-        this.layer.style.display = 'block';
+        this.setHandleStyle(this.layer, { display: 'block' });
         object.updateMatrixWorld();
         const screenPoints: Array<{ x: number; y: number; visible: boolean }> = [];
+        const selectedVertex = this.getSelectedGroundPolylineVertex?.();
         object.points3D.forEach((point, index) => {
             const projected = point
                 .clone()
@@ -92,22 +112,21 @@ export default class EditGroundPolylineAction extends Action {
             const screenY = (1 - (projected.y + 1) / 2) * this.renderView.height;
             screenPoints.push({ x: screenX, y: screenY, visible });
             const handle = this.handles[index];
-            handle.style.display =
-                visible && !object.isVisibilityBoundaryPoint(index) ? 'block' : 'none';
-            handle.style.left = `${screenX}px`;
-            handle.style.top = `${screenY}px`;
-            const selectedVertex = this.getSelectedGroundPolylineVertex?.();
-            handle.style.background =
-                this.extendEnd === 'start' && index === 0
+            this.setHandleStyle(handle, {
+                background: this.extendEnd === 'start' && index === 0
                     ? '#00e5ff'
                     : this.extendEnd === 'end' && index === object.points3D.length - 1
-                      ? '#00e5ff'
-                      : selectedVertex?.object === object && selectedVertex.index === index
                         ? '#00e5ff'
-                      : '#10252a';
+                        : selectedVertex?.object === object && selectedVertex.index === index
+                        ? '#00e5ff'
+                        : '#10252a',
+                display: visible && !object.isVisibilityBoundaryPoint(index) ? 'block' : 'none',
+                left: `${screenX}px`,
+                top: `${screenY}px`,
+            });
         });
         this.handles.slice(object.points3D.length).forEach((handle) => {
-            handle.style.display = 'none';
+            this.setHandleStyle(handle, { display: 'none' });
         });
         for (let index = 0; index < object.points3D.length - 1; index++) {
             const start = screenPoints[index];
@@ -119,12 +138,14 @@ export default class EditGroundPolylineAction extends Action {
                 end.visible &&
                 Math.hypot(end.x - start.x, end.y - start.y) >=
                     MIN_SEGMENT_INSERT_HANDLE_DISTANCE_PX;
-            handle.style.display = canInsert ? 'block' : 'none';
-            handle.style.left = `${(start.x + end.x) / 2}px`;
-            handle.style.top = `${(start.y + end.y) / 2}px`;
+            this.setHandleStyle(handle, {
+                display: canInsert ? 'block' : 'none',
+                left: `${(start.x + end.x) / 2}px`,
+                top: `${(start.y + end.y) / 2}px`,
+            });
         }
         this.segmentHandles.slice(object.points3D.length - 1).forEach((handle) => {
-            handle.style.display = 'none';
+            this.setHandleStyle(handle, { display: 'none' });
         });
         this.positionExtendHandle(this.extendStartHandle, screenPoints, 0);
         this.positionExtendHandle(this.extendEndHandle, screenPoints, screenPoints.length - 1);
@@ -164,6 +185,8 @@ export default class EditGroundPolylineAction extends Action {
     init(): void {
         this.renderView.addEventListener(Event.RENDER_AFTER, this.updateHandles);
         this.renderView.pointCloud.addEventListener(Event.SELECT, this.onSelect);
+        this.renderView.pointCloud.addEventListener('point-cloud-orbit-start', this.onOrbitStart);
+        this.renderView.pointCloud.addEventListener('point-cloud-orbit-end', this.onOrbitEnd);
         document.addEventListener('keydown', this.onKeyDown);
         this.renderView.container.addEventListener('pointerdown', this.onHeightPointerDown, true);
     }
@@ -173,6 +196,8 @@ export default class EditGroundPolylineAction extends Action {
         this.clearDrag();
         this.renderView.removeEventListener(Event.RENDER_AFTER, this.updateHandles);
         this.renderView.pointCloud.removeEventListener(Event.SELECT, this.onSelect);
+        this.renderView.pointCloud.removeEventListener('point-cloud-orbit-start', this.onOrbitStart);
+        this.renderView.pointCloud.removeEventListener('point-cloud-orbit-end', this.onOrbitEnd);
         document.removeEventListener('keydown', this.onKeyDown);
         this.renderView.container.removeEventListener('pointerdown', this.onHeightPointerDown, true);
         this.clearHeightDrag();
@@ -211,7 +236,7 @@ export default class EditGroundPolylineAction extends Action {
         const point = screenPoints[index];
         const neighbor = screenPoints[index === 0 ? 1 : index - 1];
         if (!point?.visible || !neighbor) {
-            handle.style.display = 'none';
+            this.setHandleStyle(handle, { display: 'none' });
             return;
         }
         const direction = new THREE.Vector2(point.x - neighbor.x, point.y - neighbor.y);
@@ -220,9 +245,11 @@ export default class EditGroundPolylineAction extends Action {
         } else {
             direction.normalize();
         }
-        handle.style.display = this.extendEnd ? 'none' : 'block';
-        handle.style.left = `${point.x + direction.x * EXTEND_HANDLE_OFFSET_PX}px`;
-        handle.style.top = `${point.y + direction.y * EXTEND_HANDLE_OFFSET_PX}px`;
+        this.setHandleStyle(handle, {
+            display: this.extendEnd ? 'none' : 'block',
+            left: `${point.x + direction.x * EXTEND_HANDLE_OFFSET_PX}px`,
+            top: `${point.y + direction.y * EXTEND_HANDLE_OFFSET_PX}px`,
+        });
     }
 
     private getObject(): GroundPolyline | null {
@@ -496,7 +523,7 @@ export default class EditGroundPolylineAction extends Action {
         event.preventDefault();
         event.stopPropagation();
         this.clearDrag();
-        this.handles[index].style.background = '#00e5ff';
+        this.setHandleStyle(this.handles[index], { background: '#00e5ff' });
         const beforePoints = object.points3D.map((item) => item.clone());
         let latestPoints = beforePoints;
         let changed = false;
@@ -521,7 +548,7 @@ export default class EditGroundPolylineAction extends Action {
         this.dragUp = (): void => {
             const activeObject = this.getObject();
             if (activeObject && this.handles[index]) {
-                this.handles[index].style.background = '#10252a';
+                this.setHandleStyle(this.handles[index], { background: '#10252a' });
             }
             if (changed && activeObject === object) {
                 this.onGroundPolylinePointsChange?.(object, latestPoints, beforePoints);
@@ -584,6 +611,27 @@ export default class EditGroundPolylineAction extends Action {
         // still take priority so normal edits remain snapped to the measured surface.
         this.estimatePlane.set(new THREE.Vector3(0, 0, 1), -reference.anchorZ);
         return this.raycaster.ray.intersectPlane(this.estimatePlane, this.estimatedPoint)?.clone() || null;
+    }
+
+    private isPointerDragActive(): boolean {
+        return Boolean(this.dragMove || this.heightDragMove);
+    }
+
+    private setHandleStyle(handle: HTMLElement, next: HandleStyle): void {
+        const previous = this.handleStyles.get(handle) || {};
+        if (next.display !== undefined && previous.display !== next.display) {
+            handle.style.display = next.display;
+        }
+        if (next.left !== undefined && previous.left !== next.left) {
+            handle.style.left = next.left;
+        }
+        if (next.top !== undefined && previous.top !== next.top) {
+            handle.style.top = next.top;
+        }
+        if (next.background !== undefined && previous.background !== next.background) {
+            handle.style.background = next.background;
+        }
+        this.handleStyles.set(handle, { ...previous, ...next });
     }
 
     private clearDrag(): void {

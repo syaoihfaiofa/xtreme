@@ -4,10 +4,32 @@ import * as THREE from 'three';
 import MainRenderView from '../renderView/MainRenderView';
 import Action from './Action';
 
+const WHEEL_INTERACTION_DEBOUNCE_MS = 280;
+
 export default class OrbitControlsAction extends Action {
     static actionName: string = 'orbit-control';
     renderView: MainRenderView;
     control: OrbitControls;
+    private isInteracting: boolean = false;
+    private orbitEndTimer?: number;
+    private readonly controlStart = (): void => {
+        this.clearOrbitEndTimer();
+        this.startInteraction();
+    };
+    private readonly controlEnd = (): void => {
+        this.endInteraction();
+        this.renderView.render();
+    };
+    private readonly onWheel = (): void => {
+        if (!this.control.enabled) return;
+        this.startInteraction();
+        this.clearOrbitEndTimer();
+        this.orbitEndTimer = window.setTimeout(() => {
+            this.orbitEndTimer = undefined;
+            this.endInteraction();
+            this.renderView.render();
+        }, WHEEL_INTERACTION_DEBOUNCE_MS);
+    };
 
     constructor(renderView: MainRenderView) {
         super();
@@ -69,7 +91,7 @@ export default class OrbitControlsAction extends Action {
     }
 
     destroy(): void {
-        this.control.removeEventListener('change', this.controlChange);
+        this.removeControlListeners(this.control);
         this.control.dispose();
     }
 
@@ -84,13 +106,16 @@ export default class OrbitControlsAction extends Action {
         control.target.copy(target);
         control.enabled = enabled;
         control.addEventListener('change', this.controlChange);
+        control.addEventListener('start', this.controlStart);
+        control.addEventListener('end', this.controlEnd);
+        domElement.addEventListener('wheel', this.onWheel, { passive: true });
         return control;
     }
 
     private replaceControl(domElement: HTMLElement, drawing: boolean): void {
         const target = this.control.target.clone();
         const enabled = this.control.enabled;
-        this.control.removeEventListener('change', this.controlChange);
+        this.removeControlListeners(this.control);
         this.control.dispose();
         this.control = this.createControl(domElement, target, enabled);
         if (drawing) {
@@ -99,5 +124,34 @@ export default class OrbitControlsAction extends Action {
             this.control.mouseButtons.RIGHT = THREE.MOUSE.PAN;
         }
         this.control.update();
+    }
+
+    private removeControlListeners(control: OrbitControls): void {
+        control.removeEventListener('change', this.controlChange);
+        control.removeEventListener('start', this.controlStart);
+        control.removeEventListener('end', this.controlEnd);
+        control.domElement.removeEventListener('wheel', this.onWheel);
+        this.clearOrbitEndTimer();
+        if (this.isInteracting) {
+            this.endInteraction();
+        }
+    }
+
+    private startInteraction(): void {
+        if (this.isInteracting) return;
+        this.isInteracting = true;
+        this.renderView.pointCloud.dispatchEvent({ type: 'point-cloud-orbit-start' });
+    }
+
+    private endInteraction(): void {
+        if (!this.isInteracting) return;
+        this.isInteracting = false;
+        this.renderView.pointCloud.dispatchEvent({ type: 'point-cloud-orbit-end' });
+    }
+
+    private clearOrbitEndTimer(): void {
+        if (this.orbitEndTimer === undefined) return;
+        window.clearTimeout(this.orbitEndTimer);
+        this.orbitEndTimer = undefined;
     }
 }
