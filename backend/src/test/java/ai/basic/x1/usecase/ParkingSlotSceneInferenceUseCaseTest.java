@@ -2,10 +2,12 @@ package ai.basic.x1.usecase;
 
 import org.junit.jupiter.api.Test;
 import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONUtil;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ParkingSlotSceneInferenceUseCaseTest {
@@ -33,6 +35,57 @@ class ParkingSlotSceneInferenceUseCaseTest {
         assertEquals(0.0, ParkingSlotSceneInferenceUseCase.distanceToNearestCameraFootprint(
                 square(10, -1), List.of(new ParkingSlotSceneInferenceUseCase.Point(0, 0, 0),
                         new ParkingSlotSceneInferenceUseCase.Point(10, 0, 0))), 1e-9);
+    }
+
+    @Test
+    void syncRangeRejectsParkingSlotOnDifferentLevel() {
+        List<ParkingSlotSceneInferenceUseCase.Point> slot = square(0, 0);
+
+        assertTrue(ParkingSlotSceneInferenceUseCase.isWithinSyncRange(
+                slot, new ParkingSlotSceneInferenceUseCase.Point(0, 0, 2), 10));
+        assertFalse(ParkingSlotSceneInferenceUseCase.isWithinSyncRange(
+                slot, new ParkingSlotSceneInferenceUseCase.Point(0, 0, 2.1), 10));
+    }
+
+    @Test
+    void polylineSyncRangeSplitsRampAtVerticalBoundary() {
+        JSONArray projected = new JSONArray();
+        projected.add(JSONUtil.createObj().set("x", 0).set("y", 0).set("z", 0));
+        projected.add(JSONUtil.createObj().set("x", 4).set("y", 0).set("z", 4));
+        JSONArray world = new JSONArray();
+        world.add(JSONUtil.createObj().set("x", 0).set("y", 0).set("z", 0));
+        world.add(JSONUtil.createObj().set("x", 4).set("y", 0).set("z", 4));
+
+        TrackSyncUseCase.PolylineDistanceMask mask =
+                TrackSyncUseCase.splitGroundPolylineBySyncRange(projected, world, 10, 0, true);
+
+        assertEquals(3, mask.points.size());
+        assertEquals(2.0, mask.points.getJSONObject(1).getDouble("z"), 1e-9);
+        assertEquals(List.of(false, true), mask.outsideSegments);
+    }
+
+    @Test
+    void irregularWallSyncRangeClipsBothBoundariesAtRampHeightLimit() {
+        JSONArray bottom = new JSONArray();
+        bottom.add(JSONUtil.createObj().set("x", 0).set("y", 0).set("z", 0));
+        bottom.add(JSONUtil.createObj().set("x", 4).set("y", 0).set("z", 4));
+        JSONArray top = new JSONArray();
+        top.add(JSONUtil.createObj().set("x", 0).set("y", 0).set("z", 3));
+        top.add(JSONUtil.createObj().set("x", 4).set("y", 0).set("z", 7));
+
+        TrackSyncUseCase.IrregularWallSyncGeometry geometry =
+                TrackSyncUseCase.clipIrregularWallToSyncRange(
+                        bottom,
+                        bottom,
+                        top,
+                        new TrackSyncUseCase.Pose(0D, 0D, 0D, 0D),
+                        10,
+                        true);
+
+        assertEquals(2, geometry.bottomPoints.size());
+        assertEquals(2.0, geometry.bottomPoints.getJSONObject(1).getDouble("z"), 1e-9);
+        assertEquals(2, geometry.topPoints.size());
+        assertEquals(5.0, geometry.topPoints.getJSONObject(1).getDouble("z"), 1e-9);
     }
 
     @Test

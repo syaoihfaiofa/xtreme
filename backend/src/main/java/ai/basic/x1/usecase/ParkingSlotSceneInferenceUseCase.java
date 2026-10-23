@@ -147,8 +147,8 @@ public class ParkingSlotSceneInferenceUseCase {
             SceneLocation pose = poses.get(frame.getId()); if (!complete(pose)) continue;
             for (Track track : tracks) {
                 List<Point> local = track.world.stream().map(p -> worldToLocal(p, pose)).collect(Collectors.toList());
-                // The sync radius is measured from the rear-axle center, the local-coordinate origin.
-                if (distanceToFootprint(local) > PARKING_SLOT_SYNC_DISTANCE_METERS) continue;
+                Point targetSensor = new Point(pose.getPosX(), pose.getPosY(), pose.getPosZ());
+                if (!isWithinSyncRange(track.world, targetSensor, PARKING_SLOT_SYNC_DISTANCE_METERS)) continue;
                 if (overlapsProtected(local, track.classId, protectedObjects, frame.getId(), protectedIou)) continue;
                 inserts.add(DataAnnotationObject.builder().datasetId(datasetId).dataId(frame.getId()).classId(track.classId)
                         .sourceType(DataAnnotationObjectSourceTypeEnum.MODEL).sourceId(runId)
@@ -261,6 +261,16 @@ public class ParkingSlotSceneInferenceUseCase {
             }
         }
         return result;
+    }
+    static boolean isWithinSyncRange(List<Point> footprint, Point targetSensor, double syncDistance) {
+        double sourceWorldZ = footprint.stream().mapToDouble(point -> point.z).average()
+                .orElse(Double.NaN);
+        return TrackSyncUseCase.isWithinStaticSyncRange(
+                distanceToFootprint(footprint, targetSensor),
+                syncDistance,
+                sourceWorldZ,
+                targetSensor.z,
+                true);
     }
     static double iou(List<Point> a, List<Point> b) { double aa=Math.abs(area(a)), bb=Math.abs(area(b)); if(aa==0||bb==0)return 0; List<Point> clipped=new ArrayList<>(a); for(int i=0;i<b.size()&&!clipped.isEmpty();i++) clipped=clip(clipped,b.get(i),b.get((i+1)%b.size()),area(b)>=0); double inter=Math.abs(area(clipped)); return inter/(aa+bb-inter); }
     private static List<Point> clip(List<Point> subject, Point a, Point b, boolean ccw) { List<Point> out=new ArrayList<>(); for(int i=0;i<subject.size();i++){Point p=subject.get(i),q=subject.get((i+1)%subject.size()); boolean pi=inside(p,a,b,ccw), qi=inside(q,a,b,ccw); if(pi)out.add(p); if(pi!=qi)out.add(intersection(p,q,a,b));} return out; }

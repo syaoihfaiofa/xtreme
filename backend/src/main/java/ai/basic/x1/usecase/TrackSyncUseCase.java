@@ -1551,6 +1551,10 @@ public class TrackSyncUseCase {
             double[] worldPoint = localToWorld(localX, localY, localZ, sourcePose, syncWorldVertical);
             worldPoints.add(worldPoint);
         }
+        double sourceWorldZ = worldPoints.stream().mapToDouble(point -> point[2]).average()
+                .orElseThrow(() -> new IllegalStateException(
+                        String.format("Parking slot has no world points: dataId=%s, trackId=%s",
+                                source.getDataId(), trackId)));
 
         Map<Long, DataAnnotationObject> existingByDataId = existingObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
@@ -1617,7 +1621,12 @@ public class TrackSyncUseCase {
             // frames outside the sync range are omitted/removed.
             if (
                     !frame.getId().equals(source.getDataId())
-                            && distanceToGroundShapeFootprint(targetPoints) > syncRadius) {
+                            && !isWithinStaticSyncRange(
+                                    distanceToGroundShapeFootprint(targetPoints),
+                                    syncRadius,
+                                    sourceWorldZ,
+                                    targetPose.z,
+                                    getBoolean(sourceAttrs, "syncUseZ", true))) {
                 if (existing != null) {
                     deleteIds.add(existing.getId());
                 }
@@ -2109,6 +2118,7 @@ public class TrackSyncUseCase {
         boolean showSyncLocationBoundaries = getBoolean(
                 sourceAttrs, "showSyncLocationBoundaries", false);
         boolean syncSegmentVisibility = shouldSyncSegmentVisibility(sourceAttrs);
+        boolean syncUseZ = getBoolean(sourceAttrs, "syncUseZ", true);
 
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
@@ -2151,8 +2161,12 @@ public class TrackSyncUseCase {
                 existingPoints = existingContour == null ? null : existingContour.getJSONArray("points");
             }
             JSONArray projectedPoints = polylineToLocal(sourceWorldPoints, targetPose, syncWorldVertical);
-            PolylineDistanceMask distanceMask = splitGroundPolylineByRadius(
-                    projectedPoints, syncRadius);
+            PolylineDistanceMask distanceMask = splitGroundPolylineBySyncRange(
+                    projectedPoints,
+                    sourceWorldPoints,
+                    syncRadius,
+                    targetPose.z,
+                    syncUseZ);
             if (isGroundPolylineFullyOutside(distanceMask.outsideSegments)) {
                 if (existing != null) {
                     deleteIds.add(existing.getId());
@@ -2247,24 +2261,28 @@ public class TrackSyncUseCase {
             Pose targetPose = poseByDataId.get(frame.getId());
             if (targetPose == null || !targetPose.complete) continue;
             JSONArray bottomPoints = polylineToLocal(sourceBottomWorld, targetPose, syncWorldVertical);
-            if (distanceToGroundShapeFootprint(bottomPoints) > syncRadius) {
+            IrregularWallSyncGeometry geometry = clipIrregularWallToSyncRange(
+                    bottomPoints,
+                    sourceBottomWorld,
+                    sourceTopWorld,
+                    targetPose,
+                    syncRadius,
+                    getBoolean(sourceAttrs, "syncUseZ", true));
+            if (geometry.bottomPoints.size() < 2) {
                 DataAnnotationObject existing = existingByDataId.get(frame.getId());
                 if (existing != null) deleteIds.add(existing.getId());
                 continue;
             }
-            JSONArray topPoints = sourceTopWorld.isEmpty()
-                    ? new JSONArray()
-                    : polylineToLocal(sourceTopWorld, targetPose, syncWorldVertical);
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
             JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
                     existing == null ? sourceAttrs : existing.getClassAttributes()));
             JSONObject contour = attrs.getJSONObject("contour");
             if (contour == null) { contour = new JSONObject(); attrs.set("contour", contour); }
-            contour.set("bottomPoints", bottomPoints);
-            contour.set("topPoints", topPoints);
+            contour.set("bottomPoints", geometry.bottomPoints);
+            contour.set("topPoints", geometry.topPoints);
             // Keep a conventional points contour for clients that use the bottom
             // boundary for generic shape indexing.
-            contour.set("points", bottomPoints);
+            contour.set("points", geometry.bottomPoints);
             copyClassId(attrs, source.getClassId());
             attrs.set("type", IRREGULAR_WALL);
             attrs.set("trackId", trackId);
@@ -2473,6 +2491,241 @@ public class TrackSyncUseCase {
                     middleX * middleX + middleY * middleY > radiusSquared + GEOMETRY_EPSILON);
         }
         return new PolylineDistanceMask(splitPoints, outsideSegments);
+    }
+
+    static PolylineDistanceMask splitGroundPolylineBySyncRange(
+            JSONArray projectedPoints,
+            JSONArray worldPoints,
+            double radius,
+            double targetSensorWorldZ,
+            boolean syncUseZ) {
+        if (
+                projectedPoints == null ||
+                worldPoints == null ||
+                projectedPoints.size() < 2 ||
+                projectedPoints.size() != worldPoints.size()) {
+            throw new IllegalArgumentException("Projected and world ground polyline points must have equal sizes of at least two");
+        }
+        if (radius <= 0) {
+            throw new IllegalArgumentException(String.format(
+                    "Ground polyline sync radius must be positive: radius=%s", radius));
+        }
+        JSONArray splitProjectedPoints = new JSONArray();
+        JSONArray splitWorldPoints = new JSONArray();
+        splitProjectedPoints.add(copyPoint(requireGroundPoint(projectedPoints, 0)));
+        splitWorldPoints.add(copyPoint(requireGroundPoint(worldPoints, 0)));
+        for (int index = 1; index < projectedPoints.size(); index++) {
+            JSONObject projectedStart = requireGroundPoint(projectedPoints, index - 1);
+            JSONObject projectedEnd = requireGroundPoint(projectedPoints, index);
+            JSONObject worldStart = requireGroundPoint(worldPoints, index - 1);
+            JSONObject worldEnd = requireGroundPoint(worldPoints, index);
+            List<Double> parameters = new ArrayList<>(circleSegmentIntersections(
+                    getDouble(projectedStart, "x"),
+                    getDouble(projectedStart, "y"),
+                    getDouble(projectedEnd, "x"),
+                    getDouble(projectedEnd, "y"),
+                    radius));
+            if (syncUseZ) {
+                double startZ = getDouble(worldStart, "z");
+                double deltaZ = getDouble(worldEnd, "z") - startZ;
+                if (Math.abs(deltaZ) > GEOMETRY_EPSILON) {
+                    for (double boundaryZ : new double[]{
+                            targetSensorWorldZ - STATIC_SYNC_VERTICAL_TOLERANCE_M,
+                            targetSensorWorldZ + STATIC_SYNC_VERTICAL_TOLERANCE_M}) {
+                        double parameter = (boundaryZ - startZ) / deltaZ;
+                        if (parameter > GEOMETRY_EPSILON && parameter < 1 - GEOMETRY_EPSILON) {
+                            parameters.add(parameter);
+                        }
+                    }
+                }
+            }
+            parameters.sort(Double::compare);
+            double previousParameter = Double.NaN;
+            for (double parameter : parameters) {
+                if (!Double.isNaN(previousParameter) &&
+                        Math.abs(parameter - previousParameter) <= GEOMETRY_EPSILON) {
+                    continue;
+                }
+                splitProjectedPoints.add(interpolatePoint(projectedStart, projectedEnd, parameter));
+                splitWorldPoints.add(interpolatePoint(worldStart, worldEnd, parameter));
+                previousParameter = parameter;
+            }
+            splitProjectedPoints.add(copyPoint(projectedEnd));
+            splitWorldPoints.add(copyPoint(worldEnd));
+        }
+
+        List<Boolean> outsideSegments = new ArrayList<>();
+        double radiusSquared = radius * radius;
+        for (int index = 1; index < splitProjectedPoints.size(); index++) {
+            JSONObject projectedStart = splitProjectedPoints.getJSONObject(index - 1);
+            JSONObject projectedEnd = splitProjectedPoints.getJSONObject(index);
+            double middleX = (getDouble(projectedStart, "x") + getDouble(projectedEnd, "x")) / 2;
+            double middleY = (getDouble(projectedStart, "y") + getDouble(projectedEnd, "y")) / 2;
+            boolean outsideRadius = middleX * middleX + middleY * middleY >
+                    radiusSquared + GEOMETRY_EPSILON;
+            JSONObject worldStart = splitWorldPoints.getJSONObject(index - 1);
+            JSONObject worldEnd = splitWorldPoints.getJSONObject(index);
+            double middleWorldZ = (getDouble(worldStart, "z") + getDouble(worldEnd, "z")) / 2;
+            boolean outsideHeight = syncUseZ &&
+                    Math.abs(middleWorldZ - targetSensorWorldZ) >
+                            STATIC_SYNC_VERTICAL_TOLERANCE_M + GEOMETRY_EPSILON;
+            outsideSegments.add(outsideRadius || outsideHeight);
+        }
+        return new PolylineDistanceMask(splitProjectedPoints, outsideSegments);
+    }
+
+    static IrregularWallSyncGeometry clipIrregularWallToSyncRange(
+            JSONArray projectedBottomPoints,
+            JSONArray worldBottomPoints,
+            JSONArray worldTopPoints,
+            Pose targetPose,
+            double radius,
+            boolean syncUseZ) {
+        PolylineDistanceMask mask = splitGroundPolylineBySyncRange(
+                projectedBottomPoints,
+                worldBottomPoints,
+                radius,
+                targetPose.z,
+                syncUseZ);
+        JSONArray bottomPoints = nearestVisiblePolylineComponent(mask);
+        if (bottomPoints.size() < 2 || worldTopPoints == null || worldTopPoints.isEmpty()) {
+            return new IrregularWallSyncGeometry(bottomPoints, new JSONArray());
+        }
+        JSONArray orientedTopPoints = orientWallTopPoints(worldBottomPoints, worldTopPoints);
+        JSONArray topPoints = new JSONArray();
+        JSONArray bottomWorldPoints = polylineToWorld(bottomPoints, targetPose, true);
+        for (int index = 0; index < bottomWorldPoints.size(); index++) {
+            double parameter = polylineParameterAtPoint(
+                    worldBottomPoints,
+                    bottomWorldPoints.getJSONObject(index));
+            JSONObject topWorldPoint = interpolatePolylineAtParameter(orientedTopPoints, parameter);
+            double[] topLocalPoint = worldToLocal(
+                    getDouble(topWorldPoint, "x"),
+                    getDouble(topWorldPoint, "y"),
+                    getDouble(topWorldPoint, "z"),
+                    targetPose,
+                    true);
+            topPoints.add(point3D(topLocalPoint[0], topLocalPoint[1], topLocalPoint[2]));
+        }
+        return new IrregularWallSyncGeometry(bottomPoints, topPoints);
+    }
+
+    private static JSONArray nearestVisiblePolylineComponent(PolylineDistanceMask mask) {
+        List<JSONArray> components = new ArrayList<>();
+        JSONArray current = new JSONArray();
+        for (int index = 1; index < mask.points.size(); index++) {
+            if (mask.outsideSegments.get(index - 1)) {
+                addComponent(components, current);
+                current = new JSONArray();
+                continue;
+            }
+            JSONObject start = mask.points.getJSONObject(index - 1);
+            JSONObject end = mask.points.getJSONObject(index);
+            if (current.isEmpty()) {
+                current.add(copyPoint(start));
+            }
+            if (!samePoint(current.getJSONObject(current.size() - 1), end)) {
+                current.add(copyPoint(end));
+            }
+        }
+        addComponent(components, current);
+        JSONArray nearest = new JSONArray();
+        double nearestDistance = Double.POSITIVE_INFINITY;
+        for (JSONArray component : components) {
+            double distance = distanceToGroundShapeFootprint(component);
+            if (distance < nearestDistance) {
+                nearestDistance = distance;
+                nearest = component;
+            }
+        }
+        return nearest;
+    }
+
+    private static JSONArray orientWallTopPoints(JSONArray bottomPoints, JSONArray topPoints) {
+        if (topPoints.size() < 2) {
+            return topPoints;
+        }
+        JSONObject bottomStart = requireGroundPoint(bottomPoints, 0);
+        JSONObject bottomEnd = requireGroundPoint(bottomPoints, bottomPoints.size() - 1);
+        JSONObject topStart = requireGroundPoint(topPoints, 0);
+        JSONObject topEnd = requireGroundPoint(topPoints, topPoints.size() - 1);
+        double directDistance = squaredDistance(bottomStart, topStart) + squaredDistance(bottomEnd, topEnd);
+        double reversedDistance = squaredDistance(bottomStart, topEnd) + squaredDistance(bottomEnd, topStart);
+        if (directDistance <= reversedDistance) {
+            return topPoints;
+        }
+        JSONArray reversed = new JSONArray();
+        for (int index = topPoints.size() - 1; index >= 0; index--) {
+            reversed.add(copyPoint(requireGroundPoint(topPoints, index)));
+        }
+        return reversed;
+    }
+
+    private static double polylineParameterAtPoint(JSONArray points, JSONObject point) {
+        double totalLength = polylineLength(points);
+        if (totalLength <= GEOMETRY_EPSILON) {
+            return 0;
+        }
+        double accumulatedLength = 0;
+        double nearestDistanceSquared = Double.POSITIVE_INFINITY;
+        double nearestParameter = 0;
+        for (int index = 1; index < points.size(); index++) {
+            JSONObject start = requireGroundPoint(points, index - 1);
+            JSONObject end = requireGroundPoint(points, index);
+            double segmentX = getDouble(end, "x") - getDouble(start, "x");
+            double segmentY = getDouble(end, "y") - getDouble(start, "y");
+            double segmentZ = getDouble(end, "z") - getDouble(start, "z");
+            double segmentLengthSquared = segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
+            double segmentLength = Math.sqrt(segmentLengthSquared);
+            if (segmentLength <= GEOMETRY_EPSILON) {
+                continue;
+            }
+            double pointX = getDouble(point, "x") - getDouble(start, "x");
+            double pointY = getDouble(point, "y") - getDouble(start, "y");
+            double pointZ = getDouble(point, "z") - getDouble(start, "z");
+            double ratio = Math.max(0, Math.min(1,
+                    (pointX * segmentX + pointY * segmentY + pointZ * segmentZ) / segmentLengthSquared));
+            double deltaX = pointX - ratio * segmentX;
+            double deltaY = pointY - ratio * segmentY;
+            double deltaZ = pointZ - ratio * segmentZ;
+            double distanceSquared = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+            if (distanceSquared < nearestDistanceSquared) {
+                nearestDistanceSquared = distanceSquared;
+                nearestParameter = (accumulatedLength + ratio * segmentLength) / totalLength;
+            }
+            accumulatedLength += segmentLength;
+        }
+        return nearestParameter;
+    }
+
+    private static JSONObject interpolatePolylineAtParameter(JSONArray points, double parameter) {
+        double totalLength = polylineLength(points);
+        if (totalLength <= GEOMETRY_EPSILON) {
+            return copyPoint(requireGroundPoint(points, 0));
+        }
+        double targetLength = Math.max(0, Math.min(1, parameter)) * totalLength;
+        double accumulatedLength = 0;
+        for (int index = 1; index < points.size(); index++) {
+            JSONObject start = requireGroundPoint(points, index - 1);
+            JSONObject end = requireGroundPoint(points, index);
+            double segmentLength = Math.sqrt(squaredDistance(start, end));
+            if (segmentLength > GEOMETRY_EPSILON &&
+                    targetLength <= accumulatedLength + segmentLength + GEOMETRY_EPSILON) {
+                return interpolatePoint(start, end, (targetLength - accumulatedLength) / segmentLength);
+            }
+            accumulatedLength += segmentLength;
+        }
+        return copyPoint(requireGroundPoint(points, points.size() - 1));
+    }
+
+    private static double polylineLength(JSONArray points) {
+        double length = 0;
+        for (int index = 1; index < points.size(); index++) {
+            length += Math.sqrt(squaredDistance(
+                    requireGroundPoint(points, index - 1),
+                    requireGroundPoint(points, index)));
+        }
+        return length;
     }
 
     static boolean isGroundPolylineFullyOutside(List<Boolean> outsideSegments) {
@@ -4540,6 +4793,16 @@ public class TrackSyncUseCase {
         PolylineDistanceMask(JSONArray points, List<Boolean> outsideSegments) {
             this.points = points;
             this.outsideSegments = outsideSegments;
+        }
+    }
+
+    static class IrregularWallSyncGeometry {
+        final JSONArray bottomPoints;
+        final JSONArray topPoints;
+
+        IrregularWallSyncGeometry(JSONArray bottomPoints, JSONArray topPoints) {
+            this.bottomPoints = bottomPoints;
+            this.topPoints = topPoints;
         }
     }
 

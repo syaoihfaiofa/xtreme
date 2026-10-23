@@ -919,7 +919,7 @@ class SceneVisibilityUseCaseTest {
         when(runDAO.getById(7L)).thenReturn(succeededRun());
         when(dataInfoDAO.getById(10L)).thenReturn(frame());
         when(workerCaller.occVisualization(
-                "visibility/8/9/7/occ/10/labels.npz", 5000))
+                "visibility/8/9/7/occ/10/labels.npz", 5000, "semantic"))
                 .thenReturn(JSONUtil.parseObj("{\"voxelCount\":12}"));
 
         JSONObject result = useCase().occVisualization(7L, 10L, 5000);
