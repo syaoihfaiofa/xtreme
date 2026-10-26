@@ -2,6 +2,7 @@ package ai.basic.x1.adapter.port.dao.mybatis.model;
 
 import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import lombok.AllArgsConstructor;
@@ -10,6 +11,7 @@ import lombok.NoArgsConstructor;
 import lombok.experimental.SuperBuilder;
 
 import java.time.OffsetDateTime;
+import java.util.Objects;
 
 /**
  * @author chenchao
@@ -34,6 +36,9 @@ public class DataAnnotationObject {
     @TableField(value = "class_attributes", typeHandler = JacksonTypeHandler.class)
     private JSONObject classAttributes;
 
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private String trackId;
+
     private Long sourceId;
 
     private DataAnnotationObjectSourceTypeEnum sourceType;
@@ -55,4 +60,34 @@ public class DataAnnotationObject {
 
     @TableField(exist = false)
     private String frontId;
+
+    @TableField(exist = false)
+    private Long persistedSyncClassId;
+
+    @TableField(exist = false)
+    private String persistedSyncClassAttributes;
+
+    @TableField(exist = false)
+    private boolean persistedSyncStateCaptured;
+
+    public void setClassAttributes(JSONObject classAttributes) {
+        this.classAttributes = classAttributes;
+        this.trackId = DataAnnotationObjectTrackId.fromClassAttributes(classAttributes);
+    }
+
+    public void capturePersistedSyncState() {
+        persistedSyncClassId = classId;
+        persistedSyncClassAttributes = JSONUtil.toJsonStr(classAttributes);
+        persistedSyncStateCaptured = true;
+    }
+
+    public boolean hasPersistedSyncState() {
+        return persistedSyncStateCaptured;
+    }
+
+    public boolean matchesPersistedSyncState() {
+        return persistedSyncStateCaptured
+                && Objects.equals(persistedSyncClassId, classId)
+                && Objects.equals(persistedSyncClassAttributes, JSONUtil.toJsonStr(classAttributes));
+    }
 }

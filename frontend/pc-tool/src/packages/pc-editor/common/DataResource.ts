@@ -55,7 +55,8 @@ export class ResourceLoader {
     load() {
         let promise: Promise<IDataResource> = new Promise(async (resolve, reject) => {
             try {
-                let config = this.dataResource.dataMap[this.data.id];
+                let config = this.dataResource.dataMap[this.data.id]
+                    || this.dataResource.getFrameConfig(this.data.id);
                 this.data.loadState = 'loading';
                 this.dataResource.editor.performanceMonitor.start('resource-total', this.data.id);
 
@@ -66,7 +67,9 @@ export class ResourceLoader {
 
                 if (!config) {
                     config = await this.dataResource.loadDataConfig(this.data);
+                    this.dataResource.setFrameConfig(this.data.id, config);
                 }
+                if (this.manual) this.dataResource.prefetchFrameConfigs(this.data);
 
                 // test resource
                 // if (import.meta.env.DEV) {
@@ -187,6 +190,8 @@ export default class DataResource {
     private prefetchDirection: 1 | -1 = 1;
     private worker?: Worker;
     private workerSequence = 0;
+    private frameConfigs = new Map<string, IDataResource>();
+    private frameConfigPrefetches = new Set<string>();
     private workerJobs = new Map<number, { resolve: (data: any) => void; reject: (error: any) => void }>();
     private backgroundControllers = new Map<string, AbortController>();
     private fullUpgradeTimer?: ReturnType<typeof setTimeout>;
@@ -223,6 +228,8 @@ export default class DataResource {
         this.loaders.forEach((loader) => loader.cancel());
         Object.values(this.dataMap).forEach((resource) => this.releaseResource(resource));
         this.dataMap = {};
+        this.frameConfigs.clear();
+        this.frameConfigPrefetches.clear();
         this.loaders = [];
         this.workerJobs.forEach((job) => job.reject(new Error('resource generation changed')));
         this.workerJobs.clear();
@@ -248,6 +255,49 @@ export default class DataResource {
 
     async loadDataConfig(data: IFrame) {
         return await this.editor.businessManager.loadFrameConfig(data);
+    }
+
+    getFrameConfig(frameId: string | number): IDataResource | undefined {
+        const key = String(frameId);
+        const config = this.frameConfigs.get(key);
+        if (config) {
+            this.frameConfigs.delete(key);
+            this.frameConfigs.set(key, config);
+        }
+        return config;
+    }
+
+    setFrameConfig(frameId: string | number, config: IDataResource): void {
+        const key = String(frameId);
+        this.frameConfigs.delete(key);
+        this.frameConfigs.set(key, config);
+        while (this.frameConfigs.size > 8) {
+            const oldestKey = this.frameConfigs.keys().next().value;
+            if (oldestKey === undefined) break;
+            this.frameConfigs.delete(oldestKey);
+        }
+    }
+
+    prefetchFrameConfigs(frame: IFrame): void {
+        const frameIndex = this.editor.state.frames.findIndex((item) => item.id === frame.id);
+        if (frameIndex < 0) return;
+        const candidates = [frameIndex + this.prefetchDirection, frameIndex + this.prefetchDirection * 2]
+            .map((index) => this.editor.state.frames[index])
+            .filter((candidate): candidate is IFrame => Boolean(candidate))
+            .filter((candidate) =>
+                !this.dataMap[candidate.id]
+                && !this.frameConfigs.has(String(candidate.id))
+                && !this.frameConfigPrefetches.has(String(candidate.id)),
+            );
+        if (candidates.length === 0) return;
+        candidates.forEach((candidate) => this.frameConfigPrefetches.add(String(candidate.id)));
+        this.editor.businessManager.loadFrameConfigs(candidates)
+            .then((configs) => {
+                Object.entries(configs).forEach(([frameId, config]) => this.setFrameConfig(frameId, config));
+            })
+            .catch(() => undefined)
+            .finally(() => candidates.forEach((candidate) =>
+                this.frameConfigPrefetches.delete(String(candidate.id))));
     }
 
     async loadImage(viewConfigs: IImgViewConfig[]) {

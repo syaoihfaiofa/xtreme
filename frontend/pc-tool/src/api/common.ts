@@ -612,12 +612,29 @@ export async function getDataFile(dataId: string) {
     let data = await get(url, { dataIds: dataId });
 
     data = data.data || [];
-    if (data.length === 0 || !data[0]?.content) {
+    return parseDataFile(data[0]);
+}
+
+export async function getDataFileBatch(dataIds: string[]): Promise<Record<string, {
+    configs: IFileConfig[];
+    name: string;
+}>> {
+    if (dataIds.length === 0) return {};
+    const response = await get('/api/data/listByIds', { dataIds });
+    const rows = response.data || [];
+    return rows.reduce((result: Record<string, { configs: IFileConfig[]; name: string }>, row: any) => {
+        result[String(row.id)] = parseDataFile(row);
+        return result;
+    }, {});
+}
+
+function parseDataFile(data: any): { configs: IFileConfig[]; name: string } {
+    if (!data?.content) {
         return { configs: [] as IFileConfig[], name: '' };
     }
 
     let configs = [] as IFileConfig[];
-    data[0].content.forEach((config: any) => {
+    data.content.forEach((config: any) => {
         let file = config.files?.[0];
         if (!file?.file) {
             return;
@@ -643,7 +660,7 @@ export async function getDataFile(dataId: string) {
         });
     });
 
-    return { configs, name: data[0]?.name || '' };
+    return { configs, name: data.name || '' };
 }
 
 export async function getSceneIdByDataId(dataId: string): Promise<string | undefined> {

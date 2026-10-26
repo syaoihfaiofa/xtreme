@@ -15,11 +15,14 @@ import ai.basic.x1.entity.SceneLocationBO;
 import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.util.DefaultConverter;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.collection.ListUtil;
 import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
+import com.google.common.cache.Cache;
+import com.google.common.cache.CacheBuilder;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +74,7 @@ public class TrackSyncUseCase {
     private static final int DEFAULT_SYNC_LOCATION_GAP_MS = 1000;
     private static final int DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES = 1;
     private static final int DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES = 1;
+    private static final int SYNC_WRITE_BATCH_SIZE = 200;
     private static final double POLYLINE_OVERLAP_SNAP_M = 0.2;
     private static final double GEOMETRY_EPSILON = 0.000000001;
     private static final List<String> CAMERA_VIEW_KEYS = List.of("0", "1", "2", "3");
@@ -104,6 +108,8 @@ public class TrackSyncUseCase {
 
     @Autowired
     private SceneLocationSampleDAO sceneLocationSampleDAO;
+
+    private final ScenePoseCache scenePoseCache = new ScenePoseCache();
 
     @Autowired
     private DatasetDAO datasetDAO;
@@ -157,7 +163,8 @@ public class TrackSyncUseCase {
         }
         List<DataAnnotationObject> matched = dataAnnotationObjectDAO.list(
                         Wrappers.lambdaQuery(DataAnnotationObject.class)
-                                .in(DataAnnotationObject::getDataId, frameIds))
+                                .in(DataAnnotationObject::getDataId, frameIds)
+                                .eq(DataAnnotationObject::getTrackId, trackId))
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
@@ -204,18 +211,10 @@ public class TrackSyncUseCase {
         List<DataAnnotationObject> sceneObjects = dataAnnotationObjectDAO.list(
                 Wrappers.lambdaQuery(DataAnnotationObject.class)
                         .in(DataAnnotationObject::getDataId, frameIds));
-        List<Long> trackObjectIds = sceneObjects.stream()
-                .filter(object -> object.getClassAttributes() != null)
-                .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> request.classId == null || sameClassId(object, request.classId))
-                .map(DataAnnotationObject::getId)
-                .collect(Collectors.toList());
-        if (trackObjectIds.isEmpty()) {
-            throw new IllegalArgumentException("The selected track object was not found");
-        }
         List<DataAnnotationObject> trackObjects = dataAnnotationObjectDAO.list(
                         Wrappers.lambdaQuery(DataAnnotationObject.class)
-                                .in(DataAnnotationObject::getId, trackObjectIds)
+                                .in(DataAnnotationObject::getDataId, frameIds)
+                                .eq(DataAnnotationObject::getTrackId, request.trackId)
                                 .last("FOR UPDATE"))
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
@@ -834,7 +833,8 @@ public class TrackSyncUseCase {
             return SyncResult.empty();
         }
         var objects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                .eq(DataAnnotationObject::getDataId, dataId));
+                .eq(DataAnnotationObject::getDataId, dataId)
+                .eq(DataAnnotationObject::getTrackId, trackId));
         var sourceCandidates = objects.stream()
                 .filter(obj -> ObjectUtil.isNotNull(obj.getClassAttributes()))
                 .filter(obj -> trackId.equals(obj.getClassAttributes().getStr("trackId")))
@@ -884,7 +884,8 @@ public class TrackSyncUseCase {
         List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
         List<DataAnnotationObject> sceneObjects = dataAnnotationObjectDAO.list(
                 Wrappers.lambdaQuery(DataAnnotationObject.class)
-                        .in(DataAnnotationObject::getDataId, frameIds));
+                        .in(DataAnnotationObject::getDataId, frameIds)
+                        .eq(DataAnnotationObject::getTrackId, request.trackId));
         DataAnnotationObject source = sceneObjects.stream()
                 .filter(object -> request.sourceObjectId.equals(object.getId()))
                 .filter(object -> request.dataId.equals(object.getDataId()))
@@ -988,7 +989,8 @@ public class TrackSyncUseCase {
         List<DataAnnotationObject> sceneObjects = dataAnnotationObjectDAO.list(
                 Wrappers.lambdaQuery(DataAnnotationObject.class)
                         .in(DataAnnotationObject::getDataId,
-                                frames.stream().map(DataInfo::getId).collect(Collectors.toList())));
+                                frames.stream().map(DataInfo::getId).collect(Collectors.toList()))
+                        .eq(DataAnnotationObject::getTrackId, request.trackId));
         DataAnnotationObject source = sceneObjects.stream()
                 .filter(object -> request.sourceObjectId.equals(object.getId()))
                 .filter(object -> request.dataId.equals(object.getDataId()))
@@ -1068,7 +1070,8 @@ public class TrackSyncUseCase {
         }
         DataAnnotationObject source = dataAnnotationObjectDAO.list(
                         Wrappers.lambdaQuery(DataAnnotationObject.class)
-                                .eq(DataAnnotationObject::getDataId, dataId))
+                                .eq(DataAnnotationObject::getDataId, dataId)
+                                .eq(DataAnnotationObject::getTrackId, trackId))
                 .stream()
                 .filter(object -> ObjectUtil.isNotNull(object.getClassAttributes()))
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
@@ -1104,7 +1107,8 @@ public class TrackSyncUseCase {
                 .map(DataInfo::getId)
                 .collect(Collectors.toList());
         return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                        .in(DataAnnotationObject::getDataId, frameIds))
+                        .in(DataAnnotationObject::getDataId, frameIds)
+                        .eq(DataAnnotationObject::getTrackId, trackId))
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
@@ -1136,7 +1140,8 @@ public class TrackSyncUseCase {
         }
         List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
         var objects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                .in(DataAnnotationObject::getDataId, frameIds));
+                .in(DataAnnotationObject::getDataId, frameIds)
+                .eq(DataAnnotationObject::getTrackId, trackId));
         var toUpdate = new ArrayList<DataAnnotationObject>();
         for (var object : objects) {
             JSONObject attrs = object.getClassAttributes();
@@ -1185,8 +1190,10 @@ public class TrackSyncUseCase {
             return SyncResult.empty();
         }
         Long sceneId = sourceFrame.getParentId();
+        long inputLoadStartedAt = System.nanoTime();
 
         var frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .select(DataInfo::getId, DataInfo::getName, DataInfo::getOrderName)
                 .eq(DataInfo::getParentId, sceneId)
                 .eq(DataInfo::getIsDeleted, false)
                 .orderByAsc(DataInfo::getOrderName));
@@ -1194,33 +1201,85 @@ public class TrackSyncUseCase {
             return SyncResult.empty();
         }
         List<Long> frameIds = frames.stream().map(DataInfo::getId).collect(Collectors.toList());
-        // One scene-wide annotation read is shared by every sync mode. Ground shapes used to
-        // issue a second identical query after poses had already been loaded.
+        boolean dynamicRangeSyncEnabled = getBoolean(attrs, "dynamicRangeSyncEnabled", false);
+        boolean dynamicRangeMotionMode = dynamicRangeSyncEnabled
+                && (MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)
+                || MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode));
+        int sourceFrameIndex = dynamicRangeMotionMode
+                ? findFrameIndex(frames, source.getDataId())
+                : -1;
+        List<DataInfo> objectQueryFrames = dynamicRangeMotionMode && sourceFrameIndex >= 0
+                ? dynamicWindowIndexes(
+                        frames.size(),
+                        sourceFrameIndex,
+                        getNonNegativeInt(
+                                attrs,
+                                "dynamicSyncPreviousFrames",
+                                DEFAULT_DYNAMIC_SYNC_PREVIOUS_FRAMES),
+                        getNonNegativeInt(
+                                attrs,
+                                "dynamicSyncNextFrames",
+                                DEFAULT_DYNAMIC_SYNC_NEXT_FRAMES))
+                        .stream()
+                        .map(frames::get)
+                        .collect(Collectors.toList())
+                : frames;
+        List<Long> objectQueryFrameIds = objectQueryFrames.stream()
+                .map(DataInfo::getId)
+                .collect(Collectors.toList());
+        // Read only this track's rows. The (data_id, track_id) index avoids materializing
+        // unrelated annotations from large scenes before the type-specific sync filters run.
         var existingObjects = dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                .in(DataAnnotationObject::getDataId, frameIds));
+                .in(DataAnnotationObject::getDataId, objectQueryFrameIds)
+                .eq(DataAnnotationObject::getTrackId, trackId));
+        existingObjects.forEach(DataAnnotationObject::capturePersistedSyncState);
 
-        Map<Long, Pose> poseByDataId = buildPoseByDataId(sceneId, frames, frameIds);
         int locationGapMs = getPositiveInt(attrs, "syncLocationGapMs", DEFAULT_SYNC_LOCATION_GAP_MS);
-        Map<Long, Integer> segmentByDataId = buildSegmentByDataId(sceneId, frames, locationGapMs);
+        boolean groundPolygon = isGroundPolygon(attrs);
+        boolean groundPolyline = isGroundPolyline(attrs);
+        boolean irregularWall = isIrregularWall(attrs);
+        boolean requiresPose = requiresScenePose(motionMode, dynamicRangeSyncEnabled);
+        boolean requiresSegments = (!groundPolygon && !groundPolyline && !irregularWall)
+                || (groundPolygon
+                && (MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)
+                || MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)));
+        Map<Long, Pose> poseByDataId = requiresPose
+                ? dynamicRangeMotionMode
+                ? buildPoseByDataId(sceneId, objectQueryFrames, objectQueryFrameIds)
+                : getOrBuildScenePoses(sceneId, frames, frameIds)
+                : Map.of();
+        Map<Long, Integer> segmentByDataId = requiresSegments
+                ? buildSegmentByDataId(sceneId, frames, locationGapMs)
+                : Map.of();
+        log.info(
+                "Sync input loaded: sourceDataId={}, trackId={}, frameCount={}, trackObjectCount={}, poseLoaded={}, "
+                        + "segmentLoaded={}, elapsedMs={}",
+                source.getDataId(),
+                trackId,
+                frames.size(),
+                existingObjects.size(),
+                requiresPose,
+                requiresSegments,
+                (System.nanoTime() - inputLoadStartedAt) / 1_000_000);
 
         boolean syncWorldVertical = useWorldVerticalSync(attrs);
-        if (isGroundPolygon(attrs) && MOTION_STATIC.equals(motionMode)) {
+        if (groundPolygon && MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(attrs, "syncDistance", DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M);
             return syncGroundPolygon(
                     source, trackId, syncRadius, frames, poseByDataId, syncWorldVertical, existingObjects);
         }
-        if (isGroundPolygon(attrs) && MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)) {
+        if (groundPolygon && MOTION_DYNAMIC_FIXED_SIZE.equals(motionMode)) {
             return syncGroundPolygonDynamicFixedSize(
                     source, trackId, frames, poseByDataId, syncWorldVertical, existingObjects,
                     segmentByDataId, locationGapMs);
         }
-        if (isGroundPolygon(attrs) && MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)) {
+        if (groundPolygon && MOTION_DYNAMIC_VARIABLE_SIZE.equals(motionMode)) {
             return syncGroundPolygonDynamicVariableSize(
                     source, trackId, frames, poseByDataId, syncWorldVertical, existingObjects,
                     segmentByDataId, locationGapMs);
         }
-        if (isGroundPolygon(attrs) && MOTION_SEMI_STATIC.equals(motionMode)) {
+        if (groundPolygon && MOTION_SEMI_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
             double initialSyncRadius = getPositiveDouble(
                     attrs, "syncDistance", DEFAULT_GROUND_POLYGON_SYNC_RADIUS_M);
@@ -1239,7 +1298,7 @@ public class TrackSyncUseCase {
             );
             return propagateSemiStaticMotionMode(source, trackId, existingObjects, result);
         }
-        if (isGroundPolyline(attrs)) {
+        if (groundPolyline) {
             if (MOTION_STATIC.equals(motionMode)) {
                 requireScenePose(poseByDataId, source.getDataId());
                 double syncRadius = getPositiveDouble(
@@ -1249,7 +1308,7 @@ public class TrackSyncUseCase {
             }
             return SyncResult.empty();
         }
-        if (isIrregularWall(attrs) && MOTION_STATIC.equals(motionMode)) {
+        if (irregularWall && MOTION_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
             double syncRadius = getPositiveDouble(
                     attrs, "syncDistance", DEFAULT_GROUND_POLYLINE_SYNC_RADIUS_M);
@@ -1272,7 +1331,6 @@ public class TrackSyncUseCase {
         );
         Set<Long> reachableFrameIds =
                 computeReachableFrameIds(source.getDataId(), frames, existingByDataId, maxDisappearGap);
-        boolean dynamicRangeSyncEnabled = getBoolean(attrs, "dynamicRangeSyncEnabled", false);
         int dynamicSyncPreviousFrames = getNonNegativeInt(
                 attrs,
                 "dynamicSyncPreviousFrames",
@@ -2662,7 +2720,7 @@ public class TrackSyncUseCase {
     }
 
     private static double polylineParameterAtPoint(JSONArray points, JSONObject point) {
-        double totalLength = polylineLength(points);
+        double totalLength = groundPolylineLength(points);
         if (totalLength <= GEOMETRY_EPSILON) {
             return 0;
         }
@@ -2699,7 +2757,7 @@ public class TrackSyncUseCase {
     }
 
     private static JSONObject interpolatePolylineAtParameter(JSONArray points, double parameter) {
-        double totalLength = polylineLength(points);
+        double totalLength = groundPolylineLength(points);
         if (totalLength <= GEOMETRY_EPSILON) {
             return copyPoint(requireGroundPoint(points, 0));
         }
@@ -2718,7 +2776,7 @@ public class TrackSyncUseCase {
         return copyPoint(requireGroundPoint(points, points.size() - 1));
     }
 
-    private static double polylineLength(JSONArray points) {
+    private static double groundPolylineLength(JSONArray points) {
         double length = 0;
         for (int index = 1; index < points.size(); index++) {
             length += Math.sqrt(squaredDistance(
@@ -3738,16 +3796,15 @@ public class TrackSyncUseCase {
             updates.add(existing);
             motionModeDataIds.add(existing.getDataId());
         }
-        if (CollUtil.isNotEmpty(updates)) {
-            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(updates);
-        }
+        SyncResult metadataResult = applyChanges(List.of(), updates, List.of());
         log.info(
                 "Propagated semi-static motion mode: sourceDataId={}, trackId={}, updatedFrameCount={}",
                 source.getDataId(),
                 trackId,
                 motionModeDataIds.size());
         return new SyncResult(mergeAffectedDataIds(
-                geometryResult.getAffectedDataIds(), motionModeDataIds));
+                geometryResult.getAffectedDataIds(),
+                new HashSet<>(metadataResult.getAffectedDataIds())));
     }
 
     static Set<Long> mergeAffectedDataIds(List<Long> first, Set<Long> second) {
@@ -3878,6 +3935,25 @@ public class TrackSyncUseCase {
             throw new IllegalStateException(
                     "Sync requires scene location data. Upload location/location.txt or re-upload the scene zip.");
         }
+    }
+
+    public void invalidateScenePoseCache(Long sceneId) {
+        if (sceneId != null) {
+            scenePoseCache.invalidate(sceneId);
+        }
+    }
+
+    private Map<Long, Pose> getOrBuildScenePoses(
+            Long sceneId,
+            List<DataInfo> frames,
+            List<Long> frameIds) {
+        Map<Long, Pose> cached = scenePoseCache.getIfPresent(sceneId);
+        if (cached != null) {
+            return cached;
+        }
+        Map<Long, Pose> poses = buildPoseByDataId(sceneId, frames, frameIds);
+        scenePoseCache.put(sceneId, poses);
+        return poses;
     }
 
     private Map<Long, Pose> buildPoseByDataId(Long sceneId, List<DataInfo> frames, List<Long> frameIds) {
@@ -4360,6 +4436,12 @@ public class TrackSyncUseCase {
                 : current;
     }
 
+    static boolean requiresScenePose(String motionMode, boolean dynamicRangeSyncEnabled) {
+        return MOTION_STATIC.equals(motionMode)
+                || MOTION_SEMI_STATIC.equals(motionMode)
+                || dynamicRangeSyncEnabled;
+    }
+
     private static boolean hasUsableBox(DataAnnotationObject obj) {
         JSONObject attrs = obj.getClassAttributes();
         JSONObject contour = attrs == null ? null : attrs.getJSONObject("contour");
@@ -4421,14 +4503,23 @@ public class TrackSyncUseCase {
 
     private SyncResult applyChanges(List<DataAnnotationObject> toInsert, List<DataAnnotationObject> toUpdate,
                                List<Long> toDeleteIds) {
-        Map<Long, DataAnnotationObject> storedById = CollUtil.isEmpty(toUpdate)
+        long writeStartedAt = System.nanoTime();
+        List<Long> unsnapshottedUpdateIds = toUpdate.stream()
+                .filter(candidate -> !candidate.hasPersistedSyncState())
+                .map(DataAnnotationObject::getId)
+                .filter(ObjectUtil::isNotNull)
+                .collect(Collectors.toList());
+        Map<Long, DataAnnotationObject> storedById = CollUtil.isEmpty(unsnapshottedUpdateIds)
                 ? Map.of()
                 : dataAnnotationObjectDAO.listByIds(
-                                toUpdate.stream().map(DataAnnotationObject::getId).collect(Collectors.toList()))
+                                unsnapshottedUpdateIds)
                         .stream()
                         .collect(Collectors.toMap(DataAnnotationObject::getId, object -> object));
         List<DataAnnotationObject> changedUpdates = toUpdate.stream()
                 .filter(candidate -> {
+                    if (candidate.hasPersistedSyncState()) {
+                        return !candidate.matchesPersistedSyncState();
+                    }
                     DataAnnotationObject stored = storedById.get(candidate.getId());
                     return stored == null
                             || !ObjectUtil.equal(stored.getClassId(), candidate.getClassId())
@@ -4445,14 +4536,23 @@ public class TrackSyncUseCase {
                     .forEach(object -> affectedDataIds.add(object.getDataId()));
         }
         if (CollUtil.isNotEmpty(toInsert)) {
-            dataAnnotationObjectDAO.getBaseMapper().insertBatch(toInsert);
+            ListUtil.split(toInsert, SYNC_WRITE_BATCH_SIZE).forEach(
+                    batch -> dataAnnotationObjectDAO.getBaseMapper().insertBatch(batch));
         }
         if (CollUtil.isNotEmpty(changedUpdates)) {
-            dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(changedUpdates);
+            ListUtil.split(changedUpdates, SYNC_WRITE_BATCH_SIZE).forEach(
+                    batch -> dataAnnotationObjectDAO.getBaseMapper().mysqlInsertOrUpdateBatch(batch));
         }
         if (CollUtil.isNotEmpty(toDeleteIds)) {
             dataAnnotationObjectDAO.removeBatchByIds(toDeleteIds);
         }
+        log.info(
+                "Sync changes applied: inserted={}, updated={}, deleted={}, affectedFrameCount={}, elapsedMs={}",
+                toInsert.size(),
+                changedUpdates.size(),
+                toDeleteIds.size(),
+                affectedDataIds.size(),
+                (System.nanoTime() - writeStartedAt) / 1_000_000);
         return new SyncResult(affectedDataIds);
     }
 
@@ -4695,6 +4795,26 @@ public class TrackSyncUseCase {
             this.byDataId = byDataId;
             this.duplicateObjectIds = duplicateObjectIds;
             this.duplicateDataIdByObjectId = duplicateDataIdByObjectId;
+        }
+    }
+
+    static final class ScenePoseCache {
+        private static final int MAX_SCENES = 64;
+
+        private final Cache<Long, Map<Long, Pose>> posesByScene = CacheBuilder.newBuilder()
+                .maximumSize(MAX_SCENES)
+                .build();
+
+        Map<Long, Pose> getIfPresent(Long sceneId) {
+            return posesByScene.getIfPresent(sceneId);
+        }
+
+        void put(Long sceneId, Map<Long, Pose> poses) {
+            posesByScene.put(sceneId, Map.copyOf(poses));
+        }
+
+        void invalidate(Long sceneId) {
+            posesByScene.invalidate(sceneId);
         }
     }
 

@@ -65,13 +65,46 @@ export default class BusinessManager extends BaseBusinessManager {
             cameraInfo = utils.normalizeCameraInfoList(cameraInfo);
         }
 
-        const pointConfig = fileConfig.find((file) => regLidar.test(file.dirName));
-        let info = utils.createViewConfig(fileConfig, cameraInfo as any[]);
+        return this.createFrameResourceConfig(fileConfig, name, cameraInfo as any[]);
+    }
+
+    async loadFrameConfigs(frames: IFrame[]): Promise<Record<string, IDataResource>> {
+        const frameFiles = await api.getDataFileBatch(frames.map((frame) => String(frame.id)));
+        const cameraConfig = Object.values(frameFiles)
+            .flatMap((file) => file.configs)
+            .find((file) => /camera(_?)config/i.test(file.dirName));
+        let cameraInfo: any[] = [];
+        if (cameraConfig) {
+            const response = await api.getUrl(cameraConfig.url);
+            cameraInfo = utils.normalizeCameraInfoList(
+                Array.isArray(response) ? response : response || {},
+            );
+        }
+        return frames.reduce((result: Record<string, IDataResource>, frame) => {
+            const file = frameFiles[String(frame.id)];
+            if (file) {
+                result[String(frame.id)] = this.createFrameResourceConfig(
+                    file.configs,
+                    file.name,
+                    cameraInfo,
+                );
+            }
+            return result;
+        }, {});
+    }
+
+    private createFrameResourceConfig(
+        fileConfig: IFileConfig[],
+        name: string,
+        cameraInfo: any[],
+    ): IDataResource {
+        const pointConfig = fileConfig.find((file) => /point(_?)cloud/i.test(file.dirName));
+        const info = utils.createViewConfig(fileConfig, cameraInfo);
         info.config.forEach((view, index) => {
             view.occlusionMask =
                 CAMERA_OCCLUSION_MASK_CONFIG.views[String(index)]?.points || [];
         });
-        let config: IDataResource = {
+        return {
             pointsUrl: info.pointsUrl,
             previewPointsUrl: pointConfig?.previewUrl,
             pointCount: pointConfig?.pointCount,
@@ -83,11 +116,8 @@ export default class BusinessManager extends BaseBusinessManager {
             pointsData: {},
             viewConfig: info.config,
             time: 0,
-            name: name,
+            name,
         };
-        return config;
-
-        // return {} as IDataResource;
     }
 
     async getFrameClassification(
