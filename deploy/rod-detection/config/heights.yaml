@@ -1,0 +1,4 @@
+board_no_parking: 1.5
+cone: 0.7
+parkinglock_locked: 0.5
+parkinglock_unlocked: 0.3

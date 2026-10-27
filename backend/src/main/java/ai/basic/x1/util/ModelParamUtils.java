@@ -25,6 +25,7 @@ public class ModelParamUtils {
             case LIDAR_DETECTION:
             case IMAGE_DETECTION:
             case IMAGE_KEYPOINT_LIFTED_DETECTION:
+            case IMAGE_ROD_DETECTION:
             case PARKING_SLOT_DETECTION:
                 var modelClass = DefaultConverter.convert(resultFilterParam, PreModelParamDTO.class);
                 ValidateUtil.validate(modelClass);

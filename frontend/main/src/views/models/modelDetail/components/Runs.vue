@@ -40,7 +40,7 @@
   </div>
 </template>
 <script lang="tsx" setup>
-  import { h, inject, onBeforeMount, ref, watch } from 'vue';
+  import { h, inject, onBeforeMount, onBeforeUnmount, ref, watch } from 'vue';
   import { useI18n } from '/@/hooks/web/useI18n';
   import { RouteEnum, RouteNameEnum } from '/@/enums/routeEnum';
   import { useGo } from '/@/hooks/web/usePage';
@@ -69,6 +69,7 @@
     DataModelParam,
     runModelRunParams,
     ModelRunItem,
+    statusEnum,
   } from '/@/api/business/model/modelsModel';
   import { datasetTypeEnum } from '/@/api/business/model/datasetModel';
   import { dataTypeEnum } from '/@/api/business/model/datasetModel';
@@ -92,8 +93,8 @@
 
   // Table ==>
   const [registerTable, { reload }] = useTable({
-    afterFetch: (res) => {
-      // debugger;
+    afterFetch: (res: ModelRunItem[]) => {
+      syncProgressRefreshTimer(res);
       return res;
     },
     // filterFn: (data) => {
@@ -149,6 +150,30 @@
       delete: handleDelete,
       rerun: handleRerun,
     }),
+  });
+
+  let progressRefreshTimer: ReturnType<typeof setInterval> | undefined;
+
+  function syncProgressRefreshTimer(runs: ModelRunItem[]): void {
+    const hasActiveRun = runs.some(
+      ({ status }) => status === statusEnum.started || status === statusEnum.running,
+    );
+    if (hasActiveRun && !progressRefreshTimer) {
+      progressRefreshTimer = setInterval(() => {
+        reload();
+      }, 3000);
+      return;
+    }
+    if (!hasActiveRun && progressRefreshTimer) {
+      clearInterval(progressRefreshTimer);
+      progressRefreshTimer = undefined;
+    }
+  }
+
+  onBeforeUnmount(() => {
+    if (progressRefreshTimer) {
+      clearInterval(progressRefreshTimer);
+    }
   });
 
   // 刷新表格

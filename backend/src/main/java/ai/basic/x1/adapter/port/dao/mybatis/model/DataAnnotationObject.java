@@ -70,6 +70,26 @@ public class DataAnnotationObject {
     @TableField(exist = false)
     private boolean persistedSyncStateCaptured;
 
+    protected DataAnnotationObject(DataAnnotationObjectBuilder<?, ?> builder) {
+        this.id = builder.id;
+        this.datasetId = builder.datasetId;
+        this.dataId = builder.dataId;
+        this.classId = builder.classId;
+        this.classAttributes = builder.classAttributes;
+        this.trackId = DataAnnotationObjectTrackId.fromClassAttributes(this.classAttributes);
+        this.sourceId = builder.sourceId;
+        this.sourceType = builder.sourceType;
+        this.createdAt = builder.createdAt;
+        this.createdBy = builder.createdBy;
+        this.updatedAt = builder.updatedAt;
+        this.updatedBy = builder.updatedBy;
+        this.objectCount = builder.objectCount;
+        this.frontId = builder.frontId;
+        this.persistedSyncClassId = builder.persistedSyncClassId;
+        this.persistedSyncClassAttributes = builder.persistedSyncClassAttributes;
+        this.persistedSyncStateCaptured = builder.persistedSyncStateCaptured;
+    }
+
     public void setClassAttributes(JSONObject classAttributes) {
         this.classAttributes = classAttributes;
         this.trackId = DataAnnotationObjectTrackId.fromClassAttributes(classAttributes);

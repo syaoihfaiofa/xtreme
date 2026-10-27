@@ -54,7 +54,7 @@ public class ParkingSlotSceneInferenceUseCase {
     @Autowired private ParkingSlotDetectionHttpCaller parkingCaller;
 
     public List<String> runForModelRun(Long runId, Long datasetId, Long sceneId, Model model,
-                               DatasetInferenceConfig config) {
+                               DatasetInferenceConfig config, Runnable progressCallback) {
         List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
                 .eq(DataInfo::getParentId, sceneId).eq(DataInfo::getIsDeleted, false)
                 .orderByAsc(DataInfo::getOrderName).orderByAsc(DataInfo::getId));
@@ -84,6 +84,7 @@ public class ParkingSlotSceneInferenceUseCase {
             List<ImageKeypointLiftedObjectBO.ObjectBO> objects;
             try {
                 objects = detect(runId, datasetId, frame.getId(), model, frameInfo, modelClasses, config);
+                progressCallback.run();
             } catch (RuntimeException exception) {
                 skipped.add(frame.getId() + ": " + exception.getMessage());
                 continue;
@@ -177,7 +178,7 @@ public class ParkingSlotSceneInferenceUseCase {
         JSONObject result = JSONUtil.createObj().set("type", "GROUND_POLYGON").set("contour", JSONUtil.createObj().set("points", jsonPoints))
                 .set("trackId", track.trackId).set("trackName", track.trackName)
                 .set("sourceDataId", track.sourceDataId).set("motionMode", InferenceMotionModeEnum.STATIC.name())
-                .set("syncDistance", PARKING_SLOT_SYNC_DISTANCE_METERS)
+                .set("syncDistance", PARKING_SLOT_SYNC_DISTANCE_METERS).set("syncUseZ", true)
                 .set("parkingOpeningEdge", "P3_P0").set("modelClass", track.modelClass)
                 .set("confidence", track.confidence);
         // Only the representative/source frame has model-authored 2D points.  Keeping
@@ -193,8 +194,23 @@ public class ParkingSlotSceneInferenceUseCase {
     private static boolean complete(SceneLocation p) { return p != null && p.getPosX() != null && p.getPosY() != null && p.getPosZ() != null && p.getYaw() != null; }
     private static String key(String value) { return value == null ? "" : value.trim().toLowerCase(Locale.ROOT); }
     private static Point localToWorld(ImageKeypointLiftedObjectBO.Point p, SceneLocation pose) { return localToWorld(new Point(p.getX().doubleValue(), p.getY().doubleValue(), p.getZ().doubleValue()), pose); }
-    private static Point localToWorld(Point p, SceneLocation pose) { double c=Math.cos(pose.getYaw()), s=Math.sin(pose.getYaw()); return new Point(pose.getPosX()+c*p.x-s*p.y, pose.getPosY()+s*p.x+c*p.y, pose.getPosZ()+p.z); }
-    private static Point worldToLocal(Point p, SceneLocation pose) { double c=Math.cos(pose.getYaw()), s=Math.sin(pose.getYaw()), x=p.x-pose.getPosX(), y=p.y-pose.getPosY(); return new Point(c*x+s*y, -s*x+c*y, p.z-pose.getPosZ()); }
+    private static Point localToWorld(Point p, SceneLocation pose) {
+        double[] world = TrackSyncUseCase.localToWorld(p.x, p.y, p.z, toSyncPose(pose), true);
+        return new Point(world[0], world[1], world[2]);
+    }
+    private static Point worldToLocal(Point p, SceneLocation pose) {
+        double[] local = TrackSyncUseCase.worldToLocal(p.x, p.y, p.z, toSyncPose(pose), true);
+        return new Point(local[0], local[1], local[2]);
+    }
+    private static TrackSyncUseCase.Pose toSyncPose(SceneLocation pose) {
+        return new TrackSyncUseCase.Pose(
+                pose.getPosX(),
+                pose.getPosY(),
+                pose.getPosZ(),
+                pose.getYaw(),
+                pose.getRoll(),
+                pose.getPitch());
+    }
     private List<Point> cameraCenters(ai.basic.x1.entity.DataInfoBO frame) {
         String url = findCameraConfigUrl(frame == null ? null : frame.getContent());
         if (url == null) return List.of(new Point(0, 0, 0));

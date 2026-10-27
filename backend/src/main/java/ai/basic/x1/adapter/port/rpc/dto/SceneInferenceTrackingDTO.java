@@ -53,6 +53,8 @@ public final class SceneInferenceTrackingDTO {
         private Double y;
         private Double z;
         private Double yaw;
+        private Double roll;
+        private Double pitch;
     }
 
     @Data

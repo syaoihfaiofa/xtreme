@@ -2,7 +2,7 @@ import { get, post } from './base';
 import { IModel } from 'pc-editor';
 import { utils } from 'pc-editor';
 
-const IMAGE_KEYPOINT_LIFTED_DETECTION = 'IMAGE_KEYPOINT_LIFTED_DETECTION';
+const FUSION_ONLY_MODEL_CODES = ['IMAGE_KEYPOINT_LIFTED_DETECTION', 'IMAGE_ROD_DETECTION'];
 const LIDAR_FUSION = 'LIDAR_FUSION';
 
 export interface CompletedSceneModelRun {
@@ -42,7 +42,7 @@ export async function getModelList(datasetType?: string) {
     data.forEach((e: any) => {
         if (e.isInteractive || e.datasetType === 'IMAGE') return;
         if (
-            e.modelCode === IMAGE_KEYPOINT_LIFTED_DETECTION &&
+            FUSION_ONLY_MODEL_CODES.includes(e.modelCode) &&
             datasetType !== LIDAR_FUSION
         ) {
             return;

@@ -22,6 +22,7 @@ const zh: ILocale = {
     setting_colorvelocity: '速度',
     setting_brightness: '亮度',
     setting_colorsingle: '单一颜色',
+    setting_colornonground: '非地面点',
 
     title_rect: '创建矩形',
     title_create2DBox: '创建立方体(2D)',

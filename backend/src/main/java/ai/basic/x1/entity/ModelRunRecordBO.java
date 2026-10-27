@@ -115,4 +115,8 @@ public class ModelRunRecordBO {
     private String datasetName;
 
     private BigDecimal completionRate;
+
+    private Long completedCount;
+
+    private Long totalCount;
 }

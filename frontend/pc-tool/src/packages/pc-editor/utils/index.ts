@@ -3,6 +3,7 @@ export * from './data';
 export * from './position';
 export * from './classification';
 export * from './classType';
+export * from './modelClassMapping';
 export * from './error';
 export * from './result';
 export * from './point';

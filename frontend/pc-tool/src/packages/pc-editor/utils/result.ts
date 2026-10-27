@@ -32,6 +32,7 @@ import {
     getGroundPolylineSegmentVisibilityExport,
 } from './groundPolylineVisibility';
 import { copyClassAttrs, isClassAttrHasValue, isClassAttrVisible } from './classType';
+import { getUnmappedModelClassColor } from './modelClassMapping';
 
 let position = new THREE.Vector3();
 let rotation = new THREE.Euler();
@@ -60,13 +61,14 @@ export function getObjectDisplayColor(
     classColor?: string,
     userData?: Pick<
         IUserData,
-        'occluded' | 'syncDirty' | 'reviewedCorrectVisible' | 'sourceType'
+        'occluded' | 'syncDirty' | 'reviewedCorrectVisible' | 'sourceType' | 'modelClass'
     >,
 ) {
     if (isObjectSyncDirty(userData)) return SYNC_DIRTY_OBJECT_COLOR;
     if (isObjectOccluded(userData)) return OCCLUDED_OBJECT_COLOR;
     if (userData?.sourceType === SourceType.INFERENCE) return INFERENCE_OBJECT_COLOR;
-    return isObjectReviewedCorrect(userData) ? REVIEWED_CORRECT_OBJECT_COLOR : classColor || '#ffffff';
+    if (isObjectReviewedCorrect(userData)) return REVIEWED_CORRECT_OBJECT_COLOR;
+    return classColor || getUnmappedModelClassColor(userData?.modelClass) || '#ffffff';
 }
 
 export function getOcclusionAttr(classConfig?: IClassType) {
@@ -367,7 +369,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
                 return;
             }
             const polygon = createUtils.createGroundPolygon(editor, points, userData);
-            if (classConfig) polygon.setColor(getObjectDisplayColor(classConfig.color, userData));
+            polygon.setColor(getObjectDisplayColor(classConfig?.color, userData));
             bindInfo(polygon, obj);
             annotates.push(polygon);
         } else if (objType === ObjectType.TYPE_GROUND_POLYLINE) {
@@ -386,7 +388,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             polyline.setWallHeight(userData.wallHeight || 0);
             applyGroundPolylineSegmentVisibilityImport(polyline, obj.segmentVisibilityByView);
             applyGroundPolylineForceVisibleImport(polyline, obj.segmentForceVisibleByView);
-            if (classConfig) polyline.setColor(getObjectDisplayColor(classConfig.color, userData));
+            polyline.setColor(getObjectDisplayColor(classConfig?.color, userData));
             bindInfo(polyline, obj);
             annotates.push(polyline);
         } else if (objType === ObjectType.TYPE_IRREGULAR_WALL) {
@@ -405,7 +407,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
                 console.warn('skip invalid irregular wall', validationError, obj);
                 return;
             }
-            if (classConfig) wall.setColor(getObjectDisplayColor(classConfig.color, userData));
+            wall.setColor(getObjectDisplayColor(classConfig?.color, userData));
             bindInfo(wall, obj);
             annotates.push(wall);
         } else if (objType === ObjectType.TYPE_3D_BOX || objType === ObjectType.TYPE_3D) {
@@ -423,10 +425,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
 
             let box = createUtils.createAnnotate3D(editor, position, scale, rotation, userData);
             // if (obj.frontId) box.uuid = obj.frontId;
-            if (classConfig) {
-                box.color.setStyle(getObjectDisplayColor(classConfig.color, userData));
-                // box.editConfig.resize = !userData.isStandard && userData.resultType !== Const.Fixed;
-            }
+            box.color.setStyle(getObjectDisplayColor(classConfig?.color, userData));
             bindInfo(box, obj);
             annotates.push(box);
         } else if (objType === ObjectType.TYPE_2D_GROUND_POLYGON) {
@@ -492,7 +491,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             let rect = createUtils.createAnnotateRect(editor, center, size, userData);
 
             rect.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
-            if (classConfig) rect.color = getObjectDisplayColor(classConfig.color, userData);
+            rect.color = getObjectDisplayColor(classConfig?.color, userData);
             bindInfo(rect, obj);
             annotates.push(rect);
         } else if (objType === ObjectType.TYPE_2D_BOX || objType === ObjectType.TYPE_BOX2D) {
@@ -517,7 +516,7 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
             );
             // if (obj.frontId) box2d.uuid = obj.frontId;
             box2d.viewId = `${editor.state.config.imgViewPrefix}-${obj.viewIndex}`;
-            if (classConfig) box2d.color = getObjectDisplayColor(classConfig.color, userData);
+            box2d.color = getObjectDisplayColor(classConfig?.color, userData);
             bindInfo(box2d, obj);
             annotates.push(box2d);
         }

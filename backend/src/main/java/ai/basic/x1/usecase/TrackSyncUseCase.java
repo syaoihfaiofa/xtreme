@@ -164,7 +164,10 @@ public class TrackSyncUseCase {
         List<DataAnnotationObject> matched = dataAnnotationObjectDAO.list(
                         Wrappers.lambdaQuery(DataAnnotationObject.class)
                                 .in(DataAnnotationObject::getDataId, frameIds)
-                                .eq(DataAnnotationObject::getTrackId, trackId))
+                                .and(query -> query
+                                        .eq(DataAnnotationObject::getTrackId, trackId)
+                                        .or()
+                                        .isNull(DataAnnotationObject::getTrackId)))
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
@@ -896,8 +899,11 @@ public class TrackSyncUseCase {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("The selected sync object was not found"));
         String sourceType = source.getClassAttributes().getStr("type");
-        if (!"3D_BOX".equals(sourceType) && !GROUND_POLYGON.equals(sourceType)) {
-            throw new IllegalArgumentException("Only 3D_BOX and GROUND_POLYGON support location segment splits");
+        if (!"3D_BOX".equals(sourceType)
+                && !GROUND_POLYGON.equals(sourceType)
+                && !GROUND_POLYLINE.equals(sourceType)) {
+            throw new IllegalArgumentException(
+                    "Only 3D_BOX, GROUND_POLYGON and GROUND_POLYLINE support location segment splits");
         }
         int sourceSegmentId = manualSyncSegmentId(source.getClassAttributes());
         List<DataAnnotationObject> segmentObjects = sceneObjects.stream()
@@ -2177,6 +2183,7 @@ public class TrackSyncUseCase {
                 sourceAttrs, "showSyncLocationBoundaries", false);
         boolean syncSegmentVisibility = shouldSyncSegmentVisibility(sourceAttrs);
         boolean syncUseZ = getBoolean(sourceAttrs, "syncUseZ", true);
+        Map<Long, Integer> frameIndexes = frameIndexes(frames);
 
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
@@ -2189,6 +2196,11 @@ public class TrackSyncUseCase {
                 continue;
             }
             if (!reachableFrameIds.contains(frame.getId())) {
+                continue;
+            }
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            JSONObject existingAttrs = existing == null ? null : existing.getClassAttributes();
+            if (!isManualSyncSegmentTarget(sourceAttrs, existingAttrs, frameIndexes, frame.getId())) {
                 continue;
             }
             Pose targetPose = poseByDataId.get(frame.getId());
@@ -2204,7 +2216,6 @@ public class TrackSyncUseCase {
                 contour = new JSONObject();
                 attrs.set("contour", contour);
             }
-            DataAnnotationObject existing = existingByDataId.get(frame.getId());
             // Segment visibility is a per-frame camera observation.  A newly created synced
             // row must never inherit either manual or automatic occlusion from its source.
             if (existing == null) {
@@ -3874,6 +3885,16 @@ public class TrackSyncUseCase {
         return manualSyncSegmentId(sourceAttrs) == manualSyncSegmentId(targetAttrs);
     }
 
+    static boolean isManualSyncSegmentTarget(
+            JSONObject sourceAttrs,
+            JSONObject targetAttrs,
+            Map<Long, Integer> frameIndexes,
+            Long targetDataId) {
+        return targetAttrs == null
+                ? isFrameInManualSyncSegment(sourceAttrs, frameIndexes, targetDataId)
+                : isSameManualSyncSegment(sourceAttrs, targetAttrs);
+    }
+
     static boolean isFrameInManualSyncSegment(
             JSONObject sourceAttrs, Map<Long, Integer> frameIndexes, Long targetDataId) {
         Integer targetIndex = frameIndexes.get(targetDataId);
@@ -4276,7 +4297,7 @@ public class TrackSyncUseCase {
         return true;
     }
 
-    private static double[] localToWorld(
+    static double[] localToWorld(
             double localX,
             double localY,
             double localZ,
@@ -4303,7 +4324,7 @@ public class TrackSyncUseCase {
         return new double[]{worldX, worldY, worldZ};
     }
 
-    private static double[] worldToLocal(
+    static double[] worldToLocal(
             double worldX,
             double worldY,
             double worldZ,

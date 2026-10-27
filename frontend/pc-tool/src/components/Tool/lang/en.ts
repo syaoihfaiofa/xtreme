@@ -20,6 +20,7 @@ const en = {
     setting_colorvelocity: 'Speed',
     setting_brightness: 'Brightness',
     setting_colorsingle: 'Single',
+    setting_colornonground: 'Non-ground',
 
     title_rect: 'Create Rect',
     title_create2DBox: 'Create Box(2D)',

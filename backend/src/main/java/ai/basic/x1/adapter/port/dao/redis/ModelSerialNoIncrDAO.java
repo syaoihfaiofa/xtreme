@@ -20,6 +20,7 @@ public class ModelSerialNoIncrDAO extends AbstractRedisDAO<RedisTemplate<String,
     }
 
     public Integer getCount(Long modelSerialNo) {
-        return Integer.valueOf(template.opsForValue().get(prefixedKey(String.valueOf(modelSerialNo))).toString());
+        Object value = template.opsForValue().get(prefixedKey(String.valueOf(modelSerialNo)));
+        return value == null ? null : Integer.valueOf(value.toString());
     }
 }

@@ -47,6 +47,7 @@ export default {
     delete: '删除',
     type: '类型',
     DataCount: 'Data Count',
+    progress: '进度',
     Metrics: 'Metrics',
     CreatedAt: '创建时间',
     runModelWarning: 'The following prerequisites must be met in order to run a mode',

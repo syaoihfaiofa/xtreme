@@ -230,6 +230,7 @@
     () =>
       props.modelCode === 'LIDAR_DETECTION' ||
       props.modelCode === 'IMAGE_KEYPOINT_LIFTED_DETECTION' ||
+      props.modelCode === 'IMAGE_ROD_DETECTION' ||
       props.modelCode === 'PARKING_SLOT_DETECTION',
   );
   const isParkingSlotModel = computed(() => props.modelCode === 'PARKING_SLOT_DETECTION');

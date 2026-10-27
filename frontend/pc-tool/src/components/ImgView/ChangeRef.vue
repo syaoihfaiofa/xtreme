@@ -22,7 +22,7 @@
     import { onMounted, ref, onBeforeUnmount, reactive } from 'vue';
     import { Event, AnnotateObject, Object2D, AnnotateType } from 'pc-render';
     import { Event as EditorEvent } from 'pc-editor';
-    import { IUserData } from 'pc-editor';
+    import { IUserData, utils } from 'pc-editor';
     import { useInjectEditor } from '../../state';
     import useUI from '../../hook/useUI';
     import * as locale from './lang';
@@ -85,8 +85,9 @@
         }
 
         if (trackId && trackName) {
-            let classConfig = editor.state.classTypes.find((e) => e.name === classType);
-            object.color = classConfig ? classConfig.color : '#ffffff';
+            let classConfig = editor.getClassType(classType);
+            object.color =
+                classConfig?.color || utils.getUnmappedModelClassColor(modelClass) || '#ffffff';
             editor.cmdManager.execute('update-object-user-data', {
                 objects: object as AnnotateObject,
                 data: { trackId, trackName, classType, modelClass },

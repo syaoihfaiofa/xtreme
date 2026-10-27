@@ -190,7 +190,7 @@ public class SceneInferenceFinalizer {
                 .set("standardDataId", object.getStandardDataId())
                 .set("motionMode", object.getMotionMode().name())
                 .set("syncDistance", config.getSyncDistance())
-                .set("syncUseZ", false)
+                .set("syncUseZ", true)
                 .set("maxOutsideFrames", config.getMaxOutsideFrames())
                 .set("associationIou", config.getAssociationIou())
                 .set("associationDistance", config.getAssociationDistance())

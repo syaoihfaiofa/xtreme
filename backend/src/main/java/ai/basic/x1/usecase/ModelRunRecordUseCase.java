@@ -6,7 +6,6 @@ import ai.basic.x1.adapter.port.dao.ModelDatasetResultDAO;
 import ai.basic.x1.adapter.port.dao.ModelRunRecordDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.extension.ExtendLambdaQueryWrapper;
 import ai.basic.x1.adapter.port.dao.mybatis.model.*;
-import ai.basic.x1.adapter.port.dao.redis.ModelSerialNoCountDAO;
 import ai.basic.x1.adapter.port.dao.redis.ModelSerialNoIncrDAO;
 import ai.basic.x1.entity.*;
 import ai.basic.x1.entity.RunRecordQueryBO;
@@ -59,9 +58,6 @@ public class ModelRunRecordUseCase {
     private DataAnnotationObjectDAO dataAnnotationObjectDAO;
 
     @Autowired
-    private ModelSerialNoCountDAO modelSerialNoCountDAO;
-
-    @Autowired
     private ModelSerialNoIncrDAO modelSerialNoIncrDAO;
 
     @Autowired
@@ -105,21 +101,32 @@ public class ModelRunRecordUseCase {
     private void setProgressBar(List<ModelRunRecordBO> modelRunRecords) {
         if (CollUtil.isNotEmpty(modelRunRecords)) {
             modelRunRecords.forEach(modelRunRecord -> {
+                long totalCount = modelRunRecord.getDataCount() == null
+                        ? 0L
+                        : Math.max(modelRunRecord.getDataCount(), 0L);
+                modelRunRecord.setTotalCount(totalCount);
+                modelRunRecord.setCompletedCount(0L);
+                modelRunRecord.setCompletionRate(BigDecimal.ZERO);
                 switch (modelRunRecord.getStatus()) {
                     case STARTED:
-                        modelRunRecord.setCompletionRate(new BigDecimal(0));
                         break;
                     case SUCCESS:
                     case SUCCESS_WITH_ERROR:
-                        modelRunRecord.setCompletionRate(new BigDecimal(1));
+                    case FAILURE:
+                        modelRunRecord.setCompletedCount(totalCount);
+                        modelRunRecord.setCompletionRate(totalCount == 0 ? BigDecimal.ZERO : BigDecimal.ONE);
                         break;
                     case RUNNING:
                         try {
-                            var total = modelSerialNoCountDAO.getCount(modelRunRecord.getModelSerialNo());
                             var progress = modelSerialNoIncrDAO.getCount(modelRunRecord.getModelSerialNo());
-                            if (total != null && progress != null && progress > 0) {
-                                var rate = new BigDecimal(progress).divide(new BigDecimal(total), 2, RoundingMode.HALF_UP);
-                                modelRunRecord.setCompletionRate(rate);
+                            if (progress != null && progress > 0) {
+                                long completedCount = Math.min(Math.max(progress.longValue(), 0L), totalCount);
+                                modelRunRecord.setCompletedCount(completedCount);
+                                if (totalCount > 0) {
+                                    var rate = new BigDecimal(completedCount)
+                                            .divide(new BigDecimal(totalCount), 2, RoundingMode.HALF_UP);
+                                    modelRunRecord.setCompletionRate(rate);
+                                }
                             }
                         } catch (Exception e) {
                             log.error("ModelRunRecord setProgressBar fail: " + e);

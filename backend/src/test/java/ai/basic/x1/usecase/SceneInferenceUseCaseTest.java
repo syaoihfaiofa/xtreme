@@ -40,6 +40,7 @@ class SceneInferenceUseCaseTest {
         assertTrue(SceneInferenceUseCase.supportsSceneTracking(ModelCodeEnum.LIDAR_DETECTION));
         assertTrue(SceneInferenceUseCase.supportsSceneTracking(
                 ModelCodeEnum.IMAGE_KEYPOINT_LIFTED_DETECTION));
+        assertTrue(SceneInferenceUseCase.supportsSceneTracking(ModelCodeEnum.IMAGE_ROD_DETECTION));
         assertFalse(SceneInferenceUseCase.supportsSceneTracking(ModelCodeEnum.IMAGE_DETECTION));
     }
 

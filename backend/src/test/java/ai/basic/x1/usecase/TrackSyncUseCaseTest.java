@@ -70,6 +70,26 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void isManualSyncSegmentTarget_allowsOnlyTargetsInSourceSegment() {
+        JSONObject source = new JSONObject();
+        source.set("manualSyncSegmentId", 1);
+        source.set("manualSyncSegmentStartDataId", 20L);
+        source.set("manualSyncSegmentEndDataId", 30L);
+        JSONObject sameSegment = new JSONObject().set("manualSyncSegmentId", 1);
+        JSONObject otherSegment = new JSONObject().set("manualSyncSegmentId", 2);
+        Map<Long, Integer> frameIndexes = Map.of(10L, 0, 20L, 1, 30L, 2, 40L, 3);
+
+        assertTrue(TrackSyncUseCase.isManualSyncSegmentTarget(
+                source, sameSegment, frameIndexes, 20L));
+        assertTrue(TrackSyncUseCase.isManualSyncSegmentTarget(
+                source, null, frameIndexes, 30L));
+        assertFalse(TrackSyncUseCase.isManualSyncSegmentTarget(
+                source, otherSegment, frameIndexes, 40L));
+        assertFalse(TrackSyncUseCase.isManualSyncSegmentTarget(
+                source, null, frameIndexes, 40L));
+    }
+
+    @Test
     void splitAtFraction_insertsOneSharedCutPoint() {
         JSONArray points = new JSONArray();
         points.add(point(0, 0, 0));

@@ -11,7 +11,7 @@ import Render from './Render';
 import PointCloud from '../PointCloud';
 import { Event } from '../config';
 import type { ITransform } from '../type';
-import PointsMaterial from '../material/PointsMaterial';
+import PointsMaterial, { ColorModeEnum } from '../material/PointsMaterial';
 
 export let axisUpInfo = {
     x: {
@@ -528,6 +528,10 @@ export default class SideRenderView extends Render {
                 const oldSideViewContrast = material.getUniforms('sideViewContrast');
                 const oldSideViewContrastCenters = material.getUniforms('sideViewContrastCenters');
                 const oldHideNonGroundRgb = material.getUniforms('hideNonGroundRgb');
+                const oldColorMode = material.getUniforms('colorMode');
+                const sideColorMode = oldColorMode === ColorModeEnum.NON_GROUND
+                    ? ColorModeEnum.RGB
+                    : oldColorMode;
                 hasObject3D.updateMatrixWorld();
                 // P annotations always use all four vertices as contrast centres.
                 // Selecting a vertex only controls its editing highlight; it must not
@@ -551,6 +555,7 @@ export default class SideRenderView extends Render {
                     // Keep all context points in side views; the RGB non-ground
                     // filter is a main-cloud viewing aid and would blank wall views.
                     hideNonGroundRgb: -1,
+                    colorMode: sideColorMode,
                 });
                 try {
                     this.renderer.render(groupPoint, this.camera);
@@ -561,6 +566,7 @@ export default class SideRenderView extends Render {
                         sideViewContrast: oldSideViewContrast,
                         sideViewContrastCenters: oldSideViewContrastCenters,
                         hideNonGroundRgb: oldHideNonGroundRgb,
+                        colorMode: oldColorMode,
                         boxInfo: { type: oldType },
                     });
                     material.depthTest = oldDepthTest;
@@ -608,6 +614,10 @@ export default class SideRenderView extends Render {
             let oldHasOcclusionClip = material.getUniforms('hasOcclusionClip');
             const oldSideViewContrast = material.getUniforms('sideViewContrast');
             const oldHideNonGroundRgb = material.getUniforms('hideNonGroundRgb');
+            const oldColorMode = material.getUniforms('colorMode');
+            const sideColorMode = oldColorMode === ColorModeEnum.NON_GROUND
+                ? ColorModeEnum.RGB
+                : oldColorMode;
             const occlusionAxis = new THREE.Vector3();
             const axisValue = this.axis.replace('-', '') as 'x' | 'y' | 'z';
             occlusionAxis[axisValue] = 1;
@@ -621,6 +631,7 @@ export default class SideRenderView extends Render {
                 hasOcclusionClip: 1,
                 sideViewContrast: -1,
                 hideNonGroundRgb: -1,
+                colorMode: sideColorMode,
                 occlusionAxis,
                 occlusionDirection: this.axis.startsWith('-') ? -1 : 1,
                 boxInfo: {
@@ -640,6 +651,7 @@ export default class SideRenderView extends Render {
                     hasOcclusionClip: oldHasOcclusionClip,
                     sideViewContrast: oldSideViewContrast,
                     hideNonGroundRgb: oldHideNonGroundRgb,
+                    colorMode: oldColorMode,
                     boxInfo: { type: oldType },
                 });
                 material.depthTest = oldDepthTest;

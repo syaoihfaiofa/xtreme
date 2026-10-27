@@ -161,7 +161,8 @@ public class SceneInferenceUseCase {
             Long datasetId,
             Long sceneId,
             Model model,
-            DatasetInferenceConfig config) {
+            DatasetInferenceConfig config,
+            Runnable progressCallback) {
         if (model == null || !supportsSceneTracking(model.getModelCode())
                 || model.getUrl() == null || model.getUrl().isBlank()) {
             throw new UsecaseException("Model does not support scene tracking: modelId="
@@ -186,12 +187,14 @@ public class SceneInferenceUseCase {
             DataInfo frame = frames.get(index);
             List<SceneInferenceTrackingDTO.Object> objects = detectForModelRun(
                     modelRunRecordId, datasetId, model, frame, index, mappings, config.getMinConfidence());
+            progressCallback.run();
             SceneLocation pose = poses.get(frame.getId());
             trackingFrames.add(SceneInferenceTrackingDTO.Frame.builder()
                     .dataId(frame.getId())
                     .frameIndex(index)
                     .pose(SceneInferenceTrackingDTO.Pose.builder()
-                            .x(pose.getPosX()).y(pose.getPosY()).z(pose.getPosZ()).yaw(pose.getYaw()).build())
+                            .x(pose.getPosX()).y(pose.getPosY()).z(pose.getPosZ()).yaw(pose.getYaw())
+                            .roll(pose.getRoll()).pitch(pose.getPitch()).build())
                     .objects(objects)
                     .build());
         }
@@ -224,7 +227,8 @@ public class SceneInferenceUseCase {
 
     static boolean supportsSceneTracking(ModelCodeEnum modelCode) {
         return modelCode == ModelCodeEnum.LIDAR_DETECTION
-                || modelCode == ModelCodeEnum.IMAGE_KEYPOINT_LIFTED_DETECTION;
+                || modelCode == ModelCodeEnum.IMAGE_KEYPOINT_LIFTED_DETECTION
+                || modelCode == ModelCodeEnum.IMAGE_ROD_DETECTION;
     }
 
     private List<SceneInferenceTrackingDTO.Object> detectForModelRun(
@@ -398,7 +402,8 @@ public class SceneInferenceUseCase {
                         .dataId(frame.getId())
                         .frameIndex(index)
                         .pose(SceneInferenceTrackingDTO.Pose.builder()
-                                .x(pose.getPosX()).y(pose.getPosY()).z(pose.getPosZ()).yaw(pose.getYaw()).build())
+                                .x(pose.getPosX()).y(pose.getPosY()).z(pose.getPosZ()).yaw(pose.getYaw())
+                                .roll(pose.getRoll()).pitch(pose.getPitch()).build())
                         .objects(objects)
                         .build());
                 updateProgress(runId, index + 1, frames.size());

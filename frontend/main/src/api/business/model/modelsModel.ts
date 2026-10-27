@@ -12,7 +12,8 @@ export type ModelCode =
   | 'LIDAR_DETECTION'
   | 'LIDAR_TRACKING'
   | 'IMAGE_KEYPOINT_LIFTED_DETECTION'
-  | 'PARKING_SLOT_DETECTION';
+  | 'PARKING_SLOT_DETECTION'
+  | 'IMAGE_ROD_DETECTION';
 
 /** list item */
 export interface ModelListItem {
@@ -76,6 +77,9 @@ export interface ModelRunItem {
   runNo: string;
   errorReason: Nullable<string>;
   parameter: string;
+  completedCount: number;
+  totalCount: number;
+  completionRate: number;
 }
 /** table request params */
 export interface GetModelRunParams extends BasicPageParams {

@@ -1,5 +1,5 @@
 import { AttrType } from 'pc-editor';
-import { AnnotateType } from 'pc-render';
+import type { IInstanceVisibilityFilter } from './visibilityFilter';
 
 export interface IItem {
     id: string;
@@ -54,6 +54,7 @@ export interface IState {
     globalClassifyMap: Record<string, IClassify>;
     globalClassMap: Record<string, IClass>;
     expandAll: boolean;
+    visibilityFilter: IInstanceVisibilityFilter;
     // noClassList: IInstanceList;
 }
 

@@ -47,6 +47,7 @@ export default {
     delete: 'Delete',
     type: 'Type',
     DataCount: 'Data Count',
+    progress: 'Progress',
     Metrics: 'Metrics',
     CreatedAt: 'Created At',
     runModelWarning: 'The following prerequisites must be met in order to run a mode',

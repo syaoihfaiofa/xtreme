@@ -17,6 +17,13 @@ class ModelParamUtilsTest {
     }
 
     @Test
+    void valid_acceptsImageRodDetectionFilter() {
+        assertDoesNotThrow(() -> ModelParamUtils.valid(
+                JSONUtil.parseObj("{\"classes\":[\"cone\"],\"minConfidence\":0.5,\"maxConfidence\":0.9}"),
+                ModelCodeEnum.IMAGE_ROD_DETECTION));
+    }
+
+    @Test
     void valid_acceptsParkingSlotDetectionFilter() {
         assertDoesNotThrow(() -> ModelParamUtils.valid(
                 JSONUtil.parseObj("{\"classes\":[\"parkinglot\"],\"minConfidence\":0.3,\"maxConfidence\":1}"),

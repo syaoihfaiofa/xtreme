@@ -1,5 +1,6 @@
 package ai.basic.x1.usecase;
 
+import ai.basic.x1.adapter.port.dao.mybatis.model.SceneLocation;
 import org.junit.jupiter.api.Test;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
@@ -99,6 +100,38 @@ class ParkingSlotSceneInferenceUseCaseTest {
         assertEquals(2.0, center.x, 1e-9);
         assertEquals(3.0, center.y, 1e-9);
         assertEquals(4.0, center.z, 1e-9);
+    }
+
+    @Test
+    void parkingSlotProjectionUsesPitch() throws ReflectiveOperationException {
+        SceneLocation pose = SceneLocation.builder()
+                .posX(0.0).posY(0.0).posZ(0.0).yaw(0.0).roll(0.0).pitch(Math.PI / 2)
+                .build();
+        ParkingSlotSceneInferenceUseCase.Point local =
+                new ParkingSlotSceneInferenceUseCase.Point(2.0, 0.0, 0.5);
+
+        ParkingSlotSceneInferenceUseCase.Point world = transform("localToWorld", local, pose);
+        ParkingSlotSceneInferenceUseCase.Point projectedLocal = transform(
+                "worldToLocal",
+                new ParkingSlotSceneInferenceUseCase.Point(0.5, 0.0, -2.0),
+                pose);
+
+        assertEquals(0.5, world.x, 1e-9);
+        assertEquals(-2.0, world.z, 1e-9);
+        assertEquals(2.0, projectedLocal.x, 1e-9);
+        assertEquals(0.5, projectedLocal.z, 1e-9);
+    }
+
+    private static ParkingSlotSceneInferenceUseCase.Point transform(
+            String methodName,
+            ParkingSlotSceneInferenceUseCase.Point point,
+            SceneLocation pose) throws ReflectiveOperationException {
+        var method = ParkingSlotSceneInferenceUseCase.class.getDeclaredMethod(
+                methodName,
+                ParkingSlotSceneInferenceUseCase.Point.class,
+                SceneLocation.class);
+        method.setAccessible(true);
+        return (ParkingSlotSceneInferenceUseCase.Point) method.invoke(null, point, pose);
     }
 
     private static List<ParkingSlotSceneInferenceUseCase.Point> square(double x, double y) {

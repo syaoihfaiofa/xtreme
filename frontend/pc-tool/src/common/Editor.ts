@@ -306,10 +306,12 @@ export default class Editor extends BaseEditor {
     async splitManualSyncSegment(): Promise<boolean> {
         if (this.state.modeConfig.op !== OPType.EXECUTE) return false;
         const object = this.pc.selection.find(
-            (candidate) => candidate instanceof Box || candidate instanceof GroundPolygon,
-        ) as Box | GroundPolygon | undefined;
+            (candidate) => candidate instanceof Box
+                || candidate instanceof GroundPolygon
+                || candidate instanceof GroundPolyline,
+        ) as Box | GroundPolygon | GroundPolyline | undefined;
         if (!object) {
-            this.showMsg('warning', '请先选中需要拆分位置同步段的 Box 或 GroundPolygon');
+            this.showMsg('warning', '请先选中需要拆分位置同步段的 Box、GroundPolygon 或 GroundPolyline');
             return false;
         }
         const userData = object.userData as IUserData;

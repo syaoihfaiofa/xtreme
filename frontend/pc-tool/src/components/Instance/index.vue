@@ -10,7 +10,13 @@
         >
             <a-collapse-panel :showArrow="false" :key="classify.key">
                 <template #header>
-                    <Header @toggle-attr="onToggleAttr" :data="classify" />
+                    <Header
+                        @toggle-attr="onToggleAttr"
+                        :changeVisibilityFilter="onVisibilityFilterChange"
+                        :data="classify"
+                        :visibility-filter="state.visibilityFilter"
+                        :frame-id="String(editor.getCurrentFrame().id)"
+                    />
                 </template>
                 <div class="operation-instance">
                     <div style="height: 100%; overflow-y: auto">
@@ -123,8 +129,17 @@
     // *********************************************
 
     let { canEdit, canOperate, isPlay } = useUI();
-    let { editor, state, domRef, onTrackTool, onItemTool, onClassTool, onToggleAttr, $$ } =
-        useInstance();
+    let {
+        editor,
+        state,
+        domRef,
+        onTrackTool,
+        onItemTool,
+        onClassTool,
+        onToggleAttr,
+        onVisibilityFilterChange,
+        $$,
+    } = useInstance();
 </script>
 
 <style lang="less">

@@ -37,6 +37,15 @@ class DataAnnotationObjectTrackIdTest {
     }
 
     @Test
+    void dataAnnotationObject_builderMirrorsTrackIdFromAttributes() {
+        DataAnnotationObject object = DataAnnotationObject.builder()
+                .classAttributes(new JSONObject().set("trackId", "track-123"))
+                .build();
+
+        assertEquals("track-123", object.getTrackId());
+    }
+
+    @Test
     void dataAnnotationObject_snapshotDetectsChangedPersistedAttributes() {
         DataAnnotationObject object = new DataAnnotationObject();
         object.setClassId(1L);

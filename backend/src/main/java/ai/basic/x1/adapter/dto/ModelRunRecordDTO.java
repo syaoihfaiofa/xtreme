@@ -117,4 +117,14 @@ public class ModelRunRecordDTO {
      * Model processing progress
      */
     private BigDecimal completionRate;
+
+    /**
+     * Number of processed data items or frames
+     */
+    private Long completedCount;
+
+    /**
+     * Total number of data items or frames
+     */
+    private Long totalCount;
 }

@@ -46,6 +46,7 @@ import BSError from './common/BSError';
 import * as locale from './lang';
 import * as utils from './utils';
 import { getObjectDisplayColor } from './utils/result';
+import { buildClassAliasMap, findClassTypeByModelClass } from './utils/modelClassMapping';
 import { RegisterFn, ModalFn, MsgFn, ConfirmFn, LoadingFn } from './uitype';
 import TaskManager from './common/TaskManager/TaskManager';
 import PerformanceMonitor from './common/PerformanceMonitor';
@@ -64,6 +65,7 @@ export default class Editor extends THREE.EventDispatcher {
     frameMap: Map<string, IFrame> = new Map();
     frameIndexMap: Map<string, number> = new Map();
     classMap: Map<string, IClassType> = new Map();
+    classAliasMap: Map<string, IClassType> = new Map();
     needUpdateFilter: boolean = true;
     eventSource: string = '';
     private selectedGroundPolylineVertex?: { object: GroundPolyline; index: number };
@@ -158,6 +160,7 @@ export default class Editor extends THREE.EventDispatcher {
         this.pc.destroy();
         this.setFrames([]);
         this.classMap.clear();
+        this.classAliasMap.clear();
         (this as any)._listeners = {};
     }
 
@@ -740,15 +743,19 @@ export default class Editor extends THREE.EventDispatcher {
             this.classMap.set(e.name + '', e);
             this.classMap.set(e.id + '', e);
         });
+        this.classAliasMap = buildClassAliasMap(classTypes);
     }
 
     getClassType(name: string | IUserData) {
         if (name instanceof Object) {
-            let { classId, classType } = name;
+            let { classId, classType, modelClass } = name;
             let key = classId || classType;
-            return this.classMap.get(key + '') as IClassType;
+            return (this.classMap.get(key + '') ||
+                findClassTypeByModelClass(this.classAliasMap, classType) ||
+                findClassTypeByModelClass(this.classAliasMap, modelClass)) as IClassType;
         } else {
-            return this.classMap.get(name + '') as IClassType;
+            return (this.classMap.get(name + '') ||
+                findClassTypeByModelClass(this.classAliasMap, name)) as IClassType;
         }
     }
     async getResultSources(frame?: IFrame, shouldApply: () => boolean = () => true): Promise<void> {}

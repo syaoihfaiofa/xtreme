@@ -217,6 +217,45 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+  rod-detection:
+    build:
+      context: ./deploy/rod-detection
+      target: runtime
+    environment:
+      ONNX_MODEL_PATH: /models/rod.onnx
+      LABELS_PATH: /config/labels.json
+      HEIGHTS_PATH: /config/heights.yaml
+      VEHICLE_INFO_PATH: /config/car_info.json
+      ONNX_PROVIDERS: ${ROD_ONNX_PROVIDERS:-CUDAExecutionProvider,CPUExecutionProvider}
+      SCORE_THRESHOLD: ${ROD_SCORE_THRESHOLD:-0.25}
+      NMS_IOU_THRESHOLD: ${ROD_NMS_IOU_THRESHOLD:-0.7}
+      KPT_CONF_THRESHOLD: ${ROD_KPT_CONF_THRESHOLD:-0.5}
+      MAX_DETECTIONS: ${ROD_MAX_DETECTIONS:-100}
+      CROP_WINDOWS_PATH: /config/crop_windows.yaml
+      FUSION_IOU_THRESHOLD: ${ROD_FUSION_IOU_THRESHOLD:-0.5}
+      REQUEST_TIMEOUT_SECONDS: ${ROD_REQUEST_TIMEOUT_SECONDS:-30}
+    volumes:
+      - ./deploy/rod-detection/models/rod.onnx:/models/rod.onnx:ro
+      - ./deploy/rod-detection/config/labels.json:/config/labels.json:ro
+      - ./deploy/rod-detection/config/heights.yaml:/config/heights.yaml:ro
+      - ./deploy/rod-detection/config/crop_windows.yaml:/config/crop_windows.yaml:ro
+      - type: bind
+        source: ../car_info.json
+        target: /config/car_info.json
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - 8301:5000
+    profiles:
+      - model
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
   parking-slot-detection:
     build: ./deploy/parking-slot-detection
     environment:

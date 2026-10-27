@@ -236,6 +236,19 @@ function getShaderCode(
                 vPointSize+=2.0;
             }
             #endif
+        } else if(colorMode == 4.0) {
+            #ifdef FLAG_COLOR
+            vColor = color / 255.0;
+            #ifdef FLAG_INTENSITY
+            if(!(
+                abs(color.r - intensity) < 12.0 &&
+                abs(color.g - intensity) < 12.0 &&
+                abs(color.b - intensity) < 12.0
+            )){
+                vDiscard = 1.0;
+            }
+            #endif
+            #endif
         } else {
             vColor = getColor(position.z);
         }
@@ -333,6 +346,7 @@ export enum ColorModeEnum {
     PURE = 1.0,
     RGB = 2.0,
     VELOCITY = 3.0,
+    NON_GROUND = 4.0,
 }
 export interface IUniformOption {
     groundColor?: THREE.Color;

@@ -1,18 +1,19 @@
-import { reactive, ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
+import { reactive, ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import * as _ from 'lodash';
 import * as THREE from 'three';
 // import { colord } from 'colord';
-import { AnnotateObject, Event, MainRenderView, Object2D } from 'pc-render';
+import { AnnotateObject } from 'pc-render';
 import {
     IUserData,
     Event as EditorEvent,
     IClassType,
     AttrType,
+    ObjectType,
     StatusType,
     IFrame,
+    utils as editorUtils,
 } from 'pc-editor';
 import type { IClass, IState, IItem, IClassify } from './type';
-import { AnnotateType, Rect } from 'pc-render';
 import { useInjectEditor } from '../../state';
 import * as locale from './lang';
 
@@ -20,6 +21,12 @@ import useItem from './useItem';
 import useClassItem from './useClassItem';
 import useTrackItem from './useTrackItem';
 import { getClassGroupKey } from './classGroupKey';
+import {
+    createInstanceVisibilityFilter,
+    getHiddenInstanceTypes,
+    setInstanceTypeHidden,
+} from './visibilityFilter';
+import type { InstanceVisibilityScope, InstanceVisibilityType } from './visibilityFilter';
 
 export const animation = {
     onEnter(node: any, done: any) {},
@@ -62,7 +69,10 @@ export default function useInstance() {
         globalClassMap: {},
         globalTrackMap: {},
         expandAll: false,
+        visibilityFilter: createInstanceVisibilityFilter(),
     });
+
+    let filteredObjectVisibleMap = new WeakMap<AnnotateObject, boolean>();
 
     // @ts-ignore
     window.testState = state;
@@ -75,6 +85,7 @@ export default function useInstance() {
         editor.addEventListener(EditorEvent.ANNOTATE_ADD, onUpdateList);
         editor.addEventListener(EditorEvent.ANNOTATE_CHANGE, onAnnotateChange);
         editor.addEventListener(EditorEvent.ANNOTATE_LOAD, onUpdateList);
+        editor.addEventListener(EditorEvent.FRAME_CHANGE, onFrameChange);
         if (pc.getAnnotate3D().length > 0 || pc.getAnnotate2D().length > 0) {
             update();
         }
@@ -87,6 +98,7 @@ export default function useInstance() {
         editor.removeEventListener(EditorEvent.ANNOTATE_ADD, onUpdateList);
         editor.removeEventListener(EditorEvent.ANNOTATE_CHANGE, onAnnotateChange);
         editor.removeEventListener(EditorEvent.ANNOTATE_LOAD, onUpdateList);
+        editor.removeEventListener(EditorEvent.FRAME_CHANGE, onFrameChange);
     });
 
     // *****life hook******
@@ -145,6 +157,7 @@ export default function useInstance() {
         if (updateListFlag) {
             updateAttrFlag = true;
             updateSelectFlag = true;
+            applyVisibilityFilter();
             updateList();
         }
 
@@ -164,6 +177,11 @@ export default function useInstance() {
     function onUpdateList() {
         updateListFlag = true;
         update();
+    }
+
+    function onFrameChange() {
+        updateListFlag = true;
+        update(false);
     }
 
     function onExpandToggle() {
@@ -203,6 +221,7 @@ export default function useInstance() {
         if (type === 'reviewMode') updateListFlag = true;
         if (type === 'visible') {
             updateListFlag = true;
+            updateFilteredObjectBaseVisibility(objects, data.data.visible);
         }
 
         objects.forEach((e) => {
@@ -215,6 +234,100 @@ export default function useInstance() {
         });
 
         update();
+    }
+
+    function getCurrentFrameId(): string {
+        return String(editor.getCurrentFrame().id);
+    }
+
+    function getInstanceVisibilityType(
+        object: AnnotateObject,
+    ): InstanceVisibilityType | undefined {
+        let objectType = (object as AnnotateObject & { objectType?: ObjectType }).objectType;
+        if (objectType === ObjectType.TYPE_3D_BOX) return '3d-box';
+        if (
+            objectType === ObjectType.TYPE_GROUND_POLYGON ||
+            objectType === ObjectType.TYPE_2D_GROUND_POLYGON
+        ) {
+            return 'polygon';
+        }
+        if (
+            objectType === ObjectType.TYPE_GROUND_POLYLINE ||
+            objectType === ObjectType.TYPE_2D_GROUND_POLYLINE
+        ) {
+            return 'polyline';
+        }
+        if (
+            objectType === ObjectType.TYPE_IRREGULAR_WALL ||
+            objectType === ObjectType.TYPE_2D_IRREGULAR_WALL
+        ) {
+            return 'irregular-wall';
+        }
+        return undefined;
+    }
+
+    function isFilteredByType(object: AnnotateObject): boolean {
+        let type = getInstanceVisibilityType(object);
+        if (!type) return false;
+        return getHiddenInstanceTypes(state.visibilityFilter, getCurrentFrameId()).includes(type);
+    }
+
+    function applyVisibilityFilter(): void {
+        let objects = [...pc.getAnnotate3D(), ...pc.getAnnotate2D()] as AnnotateObject[];
+        let changed = false;
+
+        objects.forEach((object) => {
+            if (isFilteredByType(object)) {
+                if (!filteredObjectVisibleMap.has(object)) {
+                    filteredObjectVisibleMap.set(object, object.visible);
+                }
+                if (object.visible) {
+                    object.visible = false;
+                    changed = true;
+                }
+                return;
+            }
+
+            let visible = filteredObjectVisibleMap.get(object);
+            if (visible !== undefined) {
+                if (object.visible !== visible) {
+                    object.visible = visible;
+                    changed = true;
+                }
+                filteredObjectVisibleMap.delete(object);
+            }
+        });
+
+        if (changed) pc.render();
+    }
+
+    function updateFilteredObjectBaseVisibility(
+        objects: AnnotateObject[],
+        visible: boolean | boolean[],
+    ): void {
+        let multiVisible = Array.isArray(visible);
+        objects.forEach((object, index) => {
+            if (filteredObjectVisibleMap.has(object)) {
+                filteredObjectVisibleMap.set(object, multiVisible ? visible[index] : visible);
+            }
+        });
+    }
+
+    function onVisibilityFilterChange(
+        scope: InstanceVisibilityScope,
+        type: InstanceVisibilityType,
+        hidden: boolean,
+    ): void {
+        state.visibilityFilter = setInstanceTypeHidden(
+            state.visibilityFilter,
+            scope,
+            getCurrentFrameId(),
+            type,
+            hidden,
+        );
+        applyVisibilityFilter();
+        updateListFlag = true;
+        update(false);
     }
 
     function updateList() {
@@ -266,6 +379,8 @@ export default function useInstance() {
         });
 
         objects.forEach((obj) => {
+            if (isFilteredByType(obj)) return;
+
             let uuid = obj.uuid;
             let userData = obj.userData as Required<IUserData>;
 
@@ -313,7 +428,10 @@ export default function useInstance() {
             }
 
             if (!classMap[classMapId]) {
-                let color = classConfig ? classConfig.color : '#ffffff';
+                let color =
+                    classConfig?.color ||
+                    editorUtils.getUnmappedModelClassColor(userData.modelClass) ||
+                    '#ffffff';
                 let insList: IClass = {
                     key: classMapId,
                     classId: classId,
@@ -643,6 +761,7 @@ export default function useInstance() {
         onItemTool,
         onClassTool,
         onTrackTool,
+        onVisibilityFilterChange,
         $$,
         // onEditModelClass,
     };

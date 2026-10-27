@@ -1,0 +1,14 @@
+# Crop bounds as fractions of full-frame width/height, keyed by camera index.
+# The index is the N in camera_image_N, which equals the raw image name suffix _N.
+0:  # front
+  x: [0.25, 0.75]
+  y: [0.125, 0.625]
+1:  # left
+  x: [0.25, 0.75]
+  y: [0.125, 0.625]
+2:  # rear, mounted higher
+  x: [0.25, 0.75]
+  y: [0.25, 0.75]
+3:  # right
+  x: [0.25, 0.75]
+  y: [0.125, 0.625]

@@ -84,6 +84,12 @@ public final class StaticTrackExtrapolation {
             List<SceneInferenceTrackingDTO.Frame> targetFrames,
             double syncDistance) {
         TrackSyncUseCase.Pose sourcePose = toPose(source.frame.getPose());
+        double sourceWorldZ = TrackSyncUseCase.localToWorld(
+                source.object.getX(),
+                source.object.getY(),
+                source.object.getZ(),
+                sourcePose,
+                true)[2];
         for (SceneInferenceTrackingDTO.Frame targetFrame : targetFrames) {
             TrackSyncUseCase.ProjectedPose projected = TrackSyncUseCase.projectPose(
                     source.object.getX(),
@@ -92,15 +98,20 @@ public final class StaticTrackExtrapolation {
                     source.object.getRotZ(),
                     sourcePose,
                     toPose(targetFrame.getPose()),
-                    false);
-            if (Math.hypot(projected.x, projected.y) > syncDistance) {
+                    true);
+            if (!TrackSyncUseCase.isWithinStaticSyncRange(
+                    Math.hypot(projected.x, projected.y),
+                    syncDistance,
+                    sourceWorldZ,
+                    targetFrame.getPose().getZ(),
+                    true)) {
                 continue;
             }
             SceneInferenceTrackingDTO.Object projectedObject = copyObject(source.object);
             projectedObject.setTrackingId(trackingId);
             projectedObject.setX(projected.x);
             projectedObject.setY(projected.y);
-            projectedObject.setZ(source.object.getZ());
+            projectedObject.setZ(projected.z);
             projectedObject.setRotZ(projected.yaw);
             projectedObject.setStandardDataId(source.frame.getDataId());
             targetFrame.getObjects().add(projectedObject);
@@ -117,7 +128,13 @@ public final class StaticTrackExtrapolation {
     }
 
     private static TrackSyncUseCase.Pose toPose(SceneInferenceTrackingDTO.Pose pose) {
-        return new TrackSyncUseCase.Pose(pose.getX(), pose.getY(), pose.getZ(), pose.getYaw());
+        return new TrackSyncUseCase.Pose(
+                pose.getX(),
+                pose.getY(),
+                pose.getZ(),
+                pose.getYaw(),
+                pose.getRoll(),
+                pose.getPitch());
     }
 
     private static SceneInferenceTrackingDTO.Pose copyPose(SceneInferenceTrackingDTO.Pose pose) {
@@ -126,6 +143,8 @@ public final class StaticTrackExtrapolation {
                 .y(pose.getY())
                 .z(pose.getZ())
                 .yaw(pose.getYaw())
+                .roll(pose.getRoll())
+                .pitch(pose.getPitch())
                 .build();
     }
 

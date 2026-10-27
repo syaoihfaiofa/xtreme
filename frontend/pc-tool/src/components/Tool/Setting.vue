@@ -138,6 +138,13 @@
                         >
                             {{ 'RGB' }}
                         </a-radio-button>
+                        <a-radio-button
+                            v-if="config.pointInfo.hasRGB && config.pointInfo.hasIntensity"
+                            style="width: 100px; text-align: center"
+                            :value="ColorModeEnum.NON_GROUND"
+                        >
+                            {{ $$('setting_colornonground') }}
+                        </a-radio-button>
                     </a-radio-group>
                 </div>
             </div>

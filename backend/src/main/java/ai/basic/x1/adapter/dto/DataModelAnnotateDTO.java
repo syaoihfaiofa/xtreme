@@ -37,9 +37,9 @@ public class DataModelAnnotateDTO {
     private List<Long> dataIds;
 
     /**
-     * Model code LIDAR_DETECTION, IMAGE_DETECTION, LIDAR_TRACKING, IMAGE_KEYPOINT_LIFTED_DETECTION
+     * Model code LIDAR_DETECTION, IMAGE_DETECTION, LIDAR_TRACKING, IMAGE_KEYPOINT_LIFTED_DETECTION, IMAGE_ROD_DETECTION
      */
-    @ValidStringEnum(message = "modelCode must be one of LIDAR_DETECTION,IMAGE_DETECTION,LIDAR_TRACKING,IMAGE_KEYPOINT_LIFTED_DETECTION", enumClass = ModelCodeEnum.class)
+    @ValidStringEnum(message = "modelCode must be one of LIDAR_DETECTION,IMAGE_DETECTION,LIDAR_TRACKING,IMAGE_KEYPOINT_LIFTED_DETECTION,IMAGE_ROD_DETECTION", enumClass = ModelCodeEnum.class)
     private String modelCode;
 
     /**

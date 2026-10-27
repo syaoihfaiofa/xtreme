@@ -5,6 +5,18 @@ import { Event as EditorEvent, IUserData } from 'pc-editor';
 import * as _ from 'lodash';
 import * as locale from './lang';
 
+export function getObjectsForClass(
+    item: Pick<IClass, 'classId' | 'classType'>,
+    objects: AnnotateObject[],
+): AnnotateObject[] {
+    return objects.filter((object) => {
+        const userData = object.userData as IUserData;
+        return item.classId
+            ? userData.classId === item.classId
+            : userData.classType === item.classType;
+    });
+}
+
 export default function useClassItem() {
     let editor = useInjectEditor();
     let pc = editor.pc;
@@ -23,23 +35,18 @@ export default function useClassItem() {
                 okDanger: true,
             })
             .then(
-                () => {
-                    let idMap = {} as Record<string, boolean>;
-                    item.data.forEach((e) => {
-                        idMap[e.id] = true;
+                async () => {
+                    await editor.loadManager.loadAllObjects();
+                    const deleteData = editor.state.frames.flatMap((frame) => {
+                        const objects = getObjectsForClass(
+                            item,
+                            editor.dataManager.getFrameObject(frame.id) || [],
+                        );
+                        return objects.length > 0 ? [{ objects, frame }] : [];
                     });
 
-                    let objects: AnnotateObject[] = [];
-                    let annotate3D = pc.getAnnotate3D();
-                    let annotate2D = pc.getAnnotate2D();
-
-                    [...annotate3D, ...annotate2D].forEach((object) => {
-                        let id = object.userData.trackId;
-                        if (idMap[id]) objects.push(object);
-                    });
-
-                    if (objects.length > 0) {
-                        editor.cmdManager.execute('delete-object', objects);
+                    if (deleteData.length > 0) {
+                        editor.cmdManager.execute('delete-object', deleteData);
                     }
                 },
                 () => {},

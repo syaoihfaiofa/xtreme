@@ -46,17 +46,62 @@ class StaticTrackExtrapolationTest {
     }
 
     @Test
-    void apply_preservesLocalZWhenLocationHeightChanges() {
+    void apply_reprojectsLocalZWhenLocationHeightChanges() {
         SceneInferenceTrackingDTO.Object source =
                 object("t1", InferenceMotionModeEnum.STATIC, 2.0, 0.0, 0.9, 1L);
         List<SceneInferenceTrackingDTO.Frame> frames = List.of(
                 frame(1L, 0, 0.0, 0.0, source),
-                frame(2L, 1, 3.0, 6.0, null));
+                frame(2L, 1, 3.0, 2.0, null));
 
         List<SceneInferenceTrackingDTO.Frame> result =
                 StaticTrackExtrapolation.apply(frames, 12.0);
 
-        assertEquals(0.5, result.get(1).getObjects().get(0).getZ(), 1.0e-9);
+        assertEquals(-1.5, result.get(1).getObjects().get(0).getZ(), 1.0e-9);
+    }
+
+    @Test
+    void apply_skipsStaticBoxAboveVerticalSyncTolerance() {
+        SceneInferenceTrackingDTO.Object source =
+                object("t1", InferenceMotionModeEnum.STATIC, 2.0, 0.0, 0.9, 1L);
+        List<SceneInferenceTrackingDTO.Frame> frames = List.of(
+                frame(1L, 0, 0.0, 0.0, source),
+                frame(2L, 1, 0.0, 2.5, null),
+                frame(3L, 2, 0.0, 2.51, null));
+
+        List<SceneInferenceTrackingDTO.Frame> result =
+                StaticTrackExtrapolation.apply(frames, 12.0);
+
+        assertEquals(1, result.get(1).getObjects().size());
+        assertEquals(0, result.get(2).getObjects().size());
+    }
+
+    @Test
+    void apply_reprojectsLocalZWithinVerticalSyncRange() {
+        SceneInferenceTrackingDTO.Object source =
+                object("t1", InferenceMotionModeEnum.STATIC, 2.0, 0.0, 0.9, 1L);
+        List<SceneInferenceTrackingDTO.Frame> frames = List.of(
+                frame(1L, 0, 0.0, 6.0, source),
+                frame(2L, 1, 0.0, 5.5, null));
+
+        List<SceneInferenceTrackingDTO.Frame> result =
+                StaticTrackExtrapolation.apply(frames, 12.0);
+
+        assertEquals(1.0, result.get(1).getObjects().get(0).getZ(), 1.0e-9);
+    }
+
+    @Test
+    void apply_usesTargetPitchForStaticBoxProjection() {
+        SceneInferenceTrackingDTO.Object source =
+                object("t1", InferenceMotionModeEnum.STATIC, 2.0, 0.0, 0.9, 1L);
+        List<SceneInferenceTrackingDTO.Frame> frames = List.of(
+                frame(1L, 0, 0.0, source),
+                frameWithOrientation(2L, 1, 0.0, 0.0, 0.0, Math.PI / 2, null));
+
+        List<SceneInferenceTrackingDTO.Frame> result =
+                StaticTrackExtrapolation.apply(frames, 12.0);
+
+        assertEquals(-0.5, result.get(1).getObjects().get(0).getX(), 1.0e-9);
+        assertEquals(2.0, result.get(1).getObjects().get(0).getZ(), 1.0e-9);
     }
 
     @Test
@@ -85,11 +130,22 @@ class StaticTrackExtrapolationTest {
             double poseX,
             double poseZ,
             SceneInferenceTrackingDTO.Object object) {
+        return frameWithOrientation(dataId, index, poseX, poseZ, 0.0, 0.0, object);
+    }
+
+    private static SceneInferenceTrackingDTO.Frame frameWithOrientation(
+            Long dataId,
+            int index,
+            double poseX,
+            double poseZ,
+            double roll,
+            double pitch,
+            SceneInferenceTrackingDTO.Object object) {
         return SceneInferenceTrackingDTO.Frame.builder()
                 .dataId(dataId)
                 .frameIndex(index)
                 .pose(SceneInferenceTrackingDTO.Pose.builder()
-                        .x(poseX).y(0.0).z(poseZ).yaw(0.0).build())
+                        .x(poseX).y(0.0).z(poseZ).yaw(0.0).roll(roll).pitch(pitch).build())
                 .objects(object == null ? List.of() : List.of(object))
                 .build();
     }

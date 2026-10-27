@@ -203,6 +203,11 @@ public class JobConfig {
     }
 
     @Bean
+    public ImageRodDetectionModelMessageHandler imageRodDetectionModelMessageHandler() {
+        return new ImageRodDetectionModelMessageHandler();
+    }
+
+    @Bean
     public ParkingSlotDetectionModelMessageHandler parkingSlotDetectionModelMessageHandler() {
         return new ParkingSlotDetectionModelMessageHandler();
     }

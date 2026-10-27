@@ -210,6 +210,17 @@ export function getBasicColumns(): BasicColumn[] {
       dataIndex: 'dataCount',
       align: 'left',
     },
+    {
+      title: t('business.models.run.progress'),
+      width: '100px',
+      dataIndex: 'completedCount',
+      align: 'left',
+      customRender: ({ record }) => {
+        const completedCount = Number(record.completedCount ?? 0);
+        const totalCount = Number(record.totalCount ?? record.dataCount ?? 0);
+        return <span>{`${completedCount} / ${totalCount}`}</span>;
+      },
+    },
 
     {
       title: t('business.models.run.Metrics'),

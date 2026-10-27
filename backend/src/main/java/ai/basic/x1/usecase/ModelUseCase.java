@@ -294,6 +294,7 @@ public class ModelUseCase {
                 .dataCount(totalFrames)
                 .build();
         modelRunRecordDAO.save(modelRunRecord);
+        initializeSceneRunProgress(modelRunRecord);
         DatasetInferenceConfig config = trackingParam.toInferenceConfig(model.getId());
         executorService.execute(() -> executeSceneTrackingModelRun(
                 modelRunRecord, model, sceneIds, config));
@@ -432,10 +433,12 @@ public class ModelUseCase {
                 List<String> skippedFrames = Collections.emptyList();
                 if (model.getModelCode() == ModelCodeEnum.PARKING_SLOT_DETECTION) {
                     skippedFrames = parkingSlotSceneInferenceUseCase.runForModelRun(modelRunRecord.getId(),
-                            modelRunRecord.getDatasetId(), sceneId, model, config);
+                            modelRunRecord.getDatasetId(), sceneId, model, config,
+                            () -> incrementSceneRunProgress(modelRunRecord.getModelSerialNo()));
                 } else {
                     sceneInferenceUseCase.runForModelRun(
-                            modelRunRecord.getId(), modelRunRecord.getDatasetId(), sceneId, model, config);
+                            modelRunRecord.getId(), modelRunRecord.getDatasetId(), sceneId, model, config,
+                            () -> incrementSceneRunProgress(modelRunRecord.getModelSerialNo()));
                 }
                 successCount++;
                 if (!skippedFrames.isEmpty()) {
@@ -566,8 +569,24 @@ public class ModelUseCase {
                 .parse(modelRunRecord.getResultFilterParam())
                 .toInferenceConfig(model.getId());
         modelRunRecord.setDataCount(totalFrames);
+        initializeSceneRunProgress(modelRunRecord);
         executorService.execute(() -> executeSceneTrackingModelRun(
                 modelRunRecord, model, sceneIds, config));
+    }
+
+    private void initializeSceneRunProgress(ModelRunRecord modelRunRecord) {
+        long totalCount = modelRunRecord.getDataCount() == null ? 0L : modelRunRecord.getDataCount();
+        if (totalCount > Integer.MAX_VALUE) {
+            throw new UsecaseException(PARAM_ERROR,
+                    "Model Run has too many frames for progress tracking: runId="
+                            + modelRunRecord.getId() + ", totalCount=" + totalCount);
+        }
+        modelSerialNoIncrDAO.removeModelSerialNo(modelRunRecord.getModelSerialNo());
+        modelSerialNoCountDAO.setCount(modelRunRecord.getModelSerialNo(), (int) totalCount);
+    }
+
+    private void incrementSceneRunProgress(Long modelSerialNo) {
+        modelSerialNoIncrDAO.incrModelSerialNo(modelSerialNo);
     }
 
     public ModelResponseBO testModelUrlConnection(Long modelId, String url) {
@@ -601,6 +620,7 @@ public class ModelUseCase {
                 requestBody = JSONUtil.toJsonStr(PointCloudTrackingModelReqConverter.buildRequestParam(trackingMessage, dataInfoBO));
                 break;
             case IMAGE_KEYPOINT_LIFTED_DETECTION:
+            case IMAGE_ROD_DETECTION:
                 dataInfoBO = dataInfoUseCase.getInitDataInfoBO(pointCloudDatasetInitialInfo);
                 requestBody = JSONUtil.toJsonStr(ImageKeypointLiftedModelReqConverter.convert(
                         ModelMessageBO.builder().dataInfo(dataInfoBO).build()));
@@ -799,6 +819,7 @@ public class ModelUseCase {
             case LIDAR_DETECTION:
             case LIDAR_TRACKING:
             case IMAGE_KEYPOINT_LIFTED_DETECTION:
+            case IMAGE_ROD_DETECTION:
             case PARKING_SLOT_DETECTION:
                 var missFiled = new ArrayList<>();
                 var content = modelResponseBO.getContent();

@@ -25,5 +25,9 @@ public enum ModelCodeEnum {
     /**
      * CenterNet parking-slot detection from a stitched surround-view image.
      */
-    PARKING_SLOT_DETECTION
+    PARKING_SLOT_DETECTION,
+    /**
+     * ROD YOLO11 pose detection on fisheye center crops, lifted to ground 3D boxes.
+     */
+    IMAGE_ROD_DETECTION
 }
