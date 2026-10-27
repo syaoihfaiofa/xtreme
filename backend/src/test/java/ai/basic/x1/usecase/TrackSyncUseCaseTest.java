@@ -90,6 +90,43 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void supportsLocationSegmentSplit_allowsLegacyBoxWithoutType() {
+        JSONObject attributes = new JSONObject()
+                .set("contour", new JSONObject()
+                        .set("center3D", point(1, 2, 3))
+                        .set("size3D", point(4, 5, 6)));
+
+        assertTrue(TrackSyncUseCase.supportsLocationSegmentSplit(attributes));
+    }
+
+    @Test
+    void supportsLocationSegmentSplit_allowsIrregularWall() {
+        JSONArray bottomPoints = new JSONArray();
+        bottomPoints.add(point(0, 0, 0));
+        bottomPoints.add(point(1, 0, 0));
+        JSONObject attributes = new JSONObject()
+                .set("type", "IRREGULAR_WALL")
+                .set("contour", new JSONObject()
+                        .set("bottomPoints", bottomPoints));
+
+        assertTrue(TrackSyncUseCase.supportsLocationSegmentSplit(attributes));
+    }
+
+    @Test
+    void sameObjectType_matchesLegacyBoxesWithoutType() {
+        JSONObject source = new JSONObject()
+                .set("contour", new JSONObject()
+                        .set("center3D", point(1, 2, 3))
+                        .set("size3D", point(4, 5, 6)));
+        JSONObject candidate = new JSONObject()
+                .set("contour", new JSONObject()
+                        .set("center3D", point(2, 3, 4))
+                        .set("size3D", point(4, 5, 6)));
+
+        assertTrue(TrackSyncUseCase.sameObjectType(source, candidate));
+    }
+
+    @Test
     void splitAtFraction_insertsOneSharedCutPoint() {
         JSONArray points = new JSONArray();
         points.add(point(0, 0, 0));
@@ -519,7 +556,7 @@ class TrackSyncUseCaseTest {
         JSONArray top = new JSONArray();
         top.add(point(0, 0, 3));
         top.add(point(4, 0, 7));
-        TrackSyncUseCase.Pose pose = new TrackSyncUseCase.Pose(0, 0, 0, 0);
+        TrackSyncUseCase.Pose pose = new TrackSyncUseCase.Pose(0D, 0D, 0D, 0D);
 
         TrackSyncUseCase.IrregularWallSyncGeometry geometry =
                 TrackSyncUseCase.clipIrregularWallToSyncRange(

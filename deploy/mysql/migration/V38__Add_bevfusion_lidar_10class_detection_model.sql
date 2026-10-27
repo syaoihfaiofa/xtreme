@@ -6,7 +6,7 @@ SELECT 'BEVFusion LiDAR 10-Class Detection',
        'LIDAR',
        'DETECTION',
        'LIDAR_DETECTION',
-       'http://point-cloud-bevfusion-10class-detection:5000/pointCloud/recognition',
+       'http://point-cloud-bevfusion-detection:5000/pointCloud/recognition',
        b'0',
        0,
        current_timestamp,
@@ -14,7 +14,7 @@ SELECT 'BEVFusion LiDAR 10-Class Detection',
        NULL,
        NULL
 WHERE NOT EXISTS (
-    SELECT 1 FROM `model` WHERE `url` = 'http://point-cloud-bevfusion-10class-detection:5000/pointCloud/recognition' AND `is_deleted` = b'0'
+    SELECT 1 FROM `model` WHERE `url` = 'http://point-cloud-bevfusion-detection:5000/pointCloud/recognition' AND `is_deleted` = b'0'
 );
 
 INSERT INTO model_class (model_id, name, code, created_by)
@@ -32,7 +32,7 @@ JOIN (
     UNION ALL SELECT 'Pillar', 'pillar'
     UNION ALL SELECT 'Pole', 'pole'
 ) v ON 1 = 1
-WHERE m.url = 'http://point-cloud-bevfusion-10class-detection:5000/pointCloud/recognition'
+WHERE m.url = 'http://point-cloud-bevfusion-detection:5000/pointCloud/recognition'
 AND NOT EXISTS (
     SELECT 1 FROM model_class mc WHERE mc.model_id = m.id AND mc.code = v.code
 );

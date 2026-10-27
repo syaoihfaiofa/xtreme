@@ -228,7 +228,7 @@
                         {{ $$('sync-now') }}
                     </a-button>
                     <a-button
-                        v-if="!state.isBatch && !state.isGroundPolyline && !state.isIrregularWall"
+                        v-if="!state.isBatch && !state.isGroundPolyline"
                         block
                         style="margin-top: 8px"
                         @click="onSplitManualSyncSegment"

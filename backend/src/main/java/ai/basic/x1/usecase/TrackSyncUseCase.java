@@ -898,10 +898,8 @@ public class TrackSyncUseCase {
                 .filter(object -> request.classId == null || sameClassId(object, request.classId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("The selected sync object was not found"));
-        String sourceType = source.getClassAttributes().getStr("type");
-        if (!"3D_BOX".equals(sourceType)
-                && !GROUND_POLYGON.equals(sourceType)
-                && !GROUND_POLYLINE.equals(sourceType)) {
+        JSONObject sourceAttributes = source.getClassAttributes();
+        if (!supportsLocationSegmentSplit(sourceAttributes)) {
             throw new IllegalArgumentException(
                     "Only 3D_BOX, GROUND_POLYGON and GROUND_POLYLINE support location segment splits");
         }
@@ -909,7 +907,7 @@ public class TrackSyncUseCase {
         List<DataAnnotationObject> segmentObjects = sceneObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> sourceType.equals(object.getClassAttributes().getStr("type")))
+                .filter(object -> sameObjectType(sourceAttributes, object.getClassAttributes()))
                 .filter(object -> request.classId == null || sameClassId(object, request.classId))
                 .filter(object -> manualSyncSegmentId(object.getClassAttributes()) == sourceSegmentId)
                 .collect(Collectors.toList());
@@ -934,7 +932,7 @@ public class TrackSyncUseCase {
         int nextSegmentId = sceneObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> sourceType.equals(object.getClassAttributes().getStr("type")))
+                .filter(object -> sameObjectType(sourceAttributes, object.getClassAttributes()))
                 .filter(object -> request.classId == null || sameClassId(object, request.classId))
                 .map(DataAnnotationObject::getClassAttributes)
                 .filter(ObjectUtil::isNotNull)
@@ -1007,8 +1005,11 @@ public class TrackSyncUseCase {
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("The selected sync object was not found"));
         String sourceType = source.getClassAttributes().getStr("type");
-        if (!"3D_BOX".equals(sourceType) && !GROUND_POLYGON.equals(sourceType)) {
-            throw new IllegalArgumentException("Only 3D_BOX and GROUND_POLYGON support location segment merges");
+        if (!"3D_BOX".equals(sourceType)
+                && !GROUND_POLYGON.equals(sourceType)
+                && !IRREGULAR_WALL.equals(sourceType)) {
+            throw new IllegalArgumentException(
+                    "Only 3D_BOX, GROUND_POLYGON and IRREGULAR_WALL support location segment merges");
         }
         int currentSegmentId = manualSyncSegmentId(source.getClassAttributes());
         int currentStart = manualSegmentStartIndex(source.getClassAttributes(), frameIndexById, frames.size());
@@ -2318,6 +2319,7 @@ public class TrackSyncUseCase {
                 // Ground-shape identity is trackId plus shape type, not class.
                 .filter(object -> isIrregularWall(object.getClassAttributes()))
                 .collect(Collectors.toMap(DataAnnotationObject::getDataId, object -> object, (first, ignored) -> first));
+        Map<Long, Integer> frameIndexes = frameIndexes(frames);
         List<DataAnnotationObject> inserts = new ArrayList<>();
         List<DataAnnotationObject> updates = new ArrayList<>();
         List<Long> deleteIds = new ArrayList<>();
@@ -2325,6 +2327,11 @@ public class TrackSyncUseCase {
             // As with ground polylines, the source wall is not a propagation target.
             // It must never be removed merely because it lies outside syncDistance.
             if (frame.getId().equals(source.getDataId())) {
+                continue;
+            }
+            DataAnnotationObject existing = existingByDataId.get(frame.getId());
+            JSONObject existingAttrs = existing == null ? null : existing.getClassAttributes();
+            if (!isManualSyncSegmentTarget(sourceAttrs, existingAttrs, frameIndexes, frame.getId())) {
                 continue;
             }
             Pose targetPose = poseByDataId.get(frame.getId());
@@ -2338,11 +2345,9 @@ public class TrackSyncUseCase {
                     syncRadius,
                     getBoolean(sourceAttrs, "syncUseZ", true));
             if (geometry.bottomPoints.size() < 2) {
-                DataAnnotationObject existing = existingByDataId.get(frame.getId());
                 if (existing != null) deleteIds.add(existing.getId());
                 continue;
             }
-            DataAnnotationObject existing = existingByDataId.get(frame.getId());
             JSONObject attrs = JSONUtil.parseObj(JSONUtil.toJsonStr(
                     existing == null ? sourceAttrs : existing.getClassAttributes()));
             JSONObject contour = attrs.getJSONObject("contour");
@@ -4471,11 +4476,29 @@ public class TrackSyncUseCase {
     }
 
     private static boolean hasSyncableBox(DataAnnotationObject object) {
-        JSONObject attrs = object.getClassAttributes();
+        return hasSyncableBox(object.getClassAttributes());
+    }
+
+    private static boolean hasSyncableBox(JSONObject attrs) {
         JSONObject contour = attrs == null ? null : attrs.getJSONObject("contour");
         return contour != null
                 && contour.getJSONObject("center3D") != null
                 && contour.getJSONObject("size3D") != null;
+    }
+
+    static boolean supportsLocationSegmentSplit(JSONObject attrs) {
+        String type = attrs == null ? null : attrs.getStr("type");
+        return "3D_BOX".equals(type)
+                || GROUND_POLYGON.equals(type)
+                || GROUND_POLYLINE.equals(type)
+                || IRREGULAR_WALL.equals(type)
+                || (StrUtil.isBlank(type) && hasSyncableBox(attrs));
+    }
+
+    static boolean sameObjectType(JSONObject sourceAttributes, JSONObject candidateAttributes) {
+        String sourceType = sourceAttributes == null ? null : sourceAttributes.getStr("type");
+        String candidateType = candidateAttributes == null ? null : candidateAttributes.getStr("type");
+        return ObjectUtil.equal(sourceType, candidateType);
     }
 
     private static boolean hasSyncableObject(DataAnnotationObject object) {

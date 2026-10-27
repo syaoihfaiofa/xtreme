@@ -2,9 +2,11 @@ local/
 application-local.yml
 target/
 .worktrees/
-
+.ops/
 dist/
 node_modules/
+__pycache__/
+data/
 
 docker-compose.develop.yml
 docker-compose.override.yml

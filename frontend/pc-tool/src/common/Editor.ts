@@ -308,10 +308,14 @@ export default class Editor extends BaseEditor {
         const object = this.pc.selection.find(
             (candidate) => candidate instanceof Box
                 || candidate instanceof GroundPolygon
-                || candidate instanceof GroundPolyline,
-        ) as Box | GroundPolygon | GroundPolyline | undefined;
+                || candidate instanceof GroundPolyline
+                || candidate instanceof IrregularWall,
+        ) as Box | GroundPolygon | GroundPolyline | IrregularWall | undefined;
         if (!object) {
-            this.showMsg('warning', '请先选中需要拆分位置同步段的 Box、GroundPolygon 或 GroundPolyline');
+            this.showMsg(
+                'warning',
+                '请先选中需要拆分位置同步段的 Box、GroundPolygon、GroundPolyline 或 IrregularWall',
+            );
             return false;
         }
         const userData = object.userData as IUserData;
@@ -376,10 +380,12 @@ export default class Editor extends BaseEditor {
     async mergeManualSyncSegment(): Promise<boolean> {
         if (this.state.modeConfig.op !== OPType.EXECUTE) return false;
         const object = this.pc.selection.find(
-            (candidate) => candidate instanceof Box || candidate instanceof GroundPolygon,
-        ) as Box | GroundPolygon | undefined;
+            (candidate) => candidate instanceof Box
+                || candidate instanceof GroundPolygon
+                || candidate instanceof IrregularWall,
+        ) as Box | GroundPolygon | IrregularWall | undefined;
         if (!object) {
-            this.showMsg('warning', '请先选中需要合并位置同步段的 Box 或 GroundPolygon');
+            this.showMsg('warning', '请先选中需要合并位置同步段的 Box、GroundPolygon 或 IrregularWall');
             return false;
         }
         const userData = object.userData as IUserData;
