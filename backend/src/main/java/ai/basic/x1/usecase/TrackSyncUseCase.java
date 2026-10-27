@@ -2743,21 +2743,18 @@ public class TrackSyncUseCase {
             JSONObject end = requireGroundPoint(points, index);
             double segmentX = getDouble(end, "x") - getDouble(start, "x");
             double segmentY = getDouble(end, "y") - getDouble(start, "y");
-            double segmentZ = getDouble(end, "z") - getDouble(start, "z");
-            double segmentLengthSquared = segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
+            double segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
             double segmentLength = Math.sqrt(segmentLengthSquared);
             if (segmentLength <= GEOMETRY_EPSILON) {
                 continue;
             }
             double pointX = getDouble(point, "x") - getDouble(start, "x");
             double pointY = getDouble(point, "y") - getDouble(start, "y");
-            double pointZ = getDouble(point, "z") - getDouble(start, "z");
             double ratio = Math.max(0, Math.min(1,
-                    (pointX * segmentX + pointY * segmentY + pointZ * segmentZ) / segmentLengthSquared));
+                    (pointX * segmentX + pointY * segmentY) / segmentLengthSquared));
             double deltaX = pointX - ratio * segmentX;
             double deltaY = pointY - ratio * segmentY;
-            double deltaZ = pointZ - ratio * segmentZ;
-            double distanceSquared = deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ;
+            double distanceSquared = deltaX * deltaX + deltaY * deltaY;
             if (distanceSquared < nearestDistanceSquared) {
                 nearestDistanceSquared = distanceSquared;
                 nearestParameter = (accumulatedLength + ratio * segmentLength) / totalLength;

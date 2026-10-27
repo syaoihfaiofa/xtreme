@@ -512,6 +512,25 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void clipIrregularWallToSyncRange_usesPlanarBottomLengthForTopInterpolation() {
+        JSONArray bottom = new JSONArray();
+        bottom.add(point(0, 0, 0));
+        bottom.add(point(4, 0, 4));
+        JSONArray top = new JSONArray();
+        top.add(point(0, 0, 3));
+        top.add(point(4, 0, 7));
+        TrackSyncUseCase.Pose pose = new TrackSyncUseCase.Pose(0, 0, 0, 0);
+
+        TrackSyncUseCase.IrregularWallSyncGeometry geometry =
+                TrackSyncUseCase.clipIrregularWallToSyncRange(
+                        bottom, bottom, top, pose, 10, true);
+
+        assertEquals(2, geometry.topPoints.size());
+        assertPoint(geometry.topPoints.getJSONObject(0), 0, 0, 3);
+        assertPoint(geometry.topPoints.getJSONObject(1), 2, 0, 5);
+    }
+
+    @Test
     void isGroundPolylineFullyOutside_returnsTrueOnlyWhenEverySegmentIsOutside() {
         assertTrue(TrackSyncUseCase.isGroundPolylineFullyOutside(List.of(true, true)));
         assertFalse(TrackSyncUseCase.isGroundPolylineFullyOutside(List.of(true, false)));
