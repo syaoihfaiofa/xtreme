@@ -7,6 +7,7 @@ import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -132,6 +133,7 @@ class TrackSyncUseCaseTest {
     @Test
     void sameObjectType_matchesLegacyBoxesWithoutType() {
         JSONObject source = new JSONObject()
+                .set("type", "3D_BOX")
                 .set("contour", new JSONObject()
                         .set("center3D", point(1, 2, 3))
                         .set("size3D", point(4, 5, 6)));
@@ -141,6 +143,28 @@ class TrackSyncUseCaseTest {
                         .set("size3D", point(4, 5, 6)));
 
         assertTrue(TrackSyncUseCase.sameObjectType(source, candidate));
+    }
+
+    @Test
+    void matchesManualSegmentObjectType_matchesLegacyBoxAsThreeDBox() {
+        JSONObject legacyBox = new JSONObject().set("contour", new JSONObject()
+                .set("center3D", point(1, 2, 3))
+                .set("size3D", point(4, 5, 6)));
+
+        assertTrue(TrackSyncUseCase.matchesManualSegmentObjectType(legacyBox, "3D_BOX"));
+        assertFalse(TrackSyncUseCase.matchesManualSegmentObjectType(legacyBox, "GROUND_POLYLINE"));
+    }
+
+    @Test
+    void addManualSegmentFrames_includesSegmentStartWithoutObject() {
+        Map<Long, Integer> segmentByDataId = new HashMap<>();
+        JSONObject attributes = new JSONObject()
+                .set("manualSyncSegmentId", 1)
+                .set("manualSyncSegmentStartDataId", 353L);
+
+        TrackSyncUseCase.addManualSegmentFrames(segmentByDataId, 354L, attributes);
+
+        assertEquals(Map.of(353L, 1, 354L, 1), segmentByDataId);
     }
 
     @Test

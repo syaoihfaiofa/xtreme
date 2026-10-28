@@ -714,13 +714,30 @@ export default function useBottom() {
             const sceneFrameId = editor.state.frames[0]?.id;
             const cacheKey = `${sceneFrameId}:${locationGapMs}`;
             const cachedBoundaries = segmentBoundaryCache.get(cacheKey);
+            const sourceObjects = (editor.dataManager.getFrameObject(sourceFrame.id) || []).filter(
+                (object) => (object.userData as IUserData)?.trackId === trackId,
+            );
+            const sourceObject = getPrimaryTrackFrameObject(sourceObjects);
+            const sourceUserData = sourceObject?.userData as IUserData | undefined;
+            const sourceObjectType = sourceObject?.objectType
+                || sourceObject?.objType
+                || sourceObject?.type;
+            const manualSegmentsRequest =
+                sourceUserData?.classId !== undefined && typeof sourceObjectType === 'string'
+                    ? api.getManualSyncSegments(
+                        String(sourceFrame.id),
+                        trackId,
+                        sourceUserData.classId,
+                        sourceObjectType,
+                    )
+                    : Promise.resolve<Record<string, number>>({});
             const requestId = ++segmentBoundaryRequest;
             try {
                 const [segmentByDataId, manualSegmentByDataId] = await Promise.all([
                     cachedBoundaries
                         ? Promise.resolve<Record<string, number>>({})
                         : api.getSyncSegments(String(sourceFrame.id), trackId),
-                    api.getManualSyncSegments(String(sourceFrame.id), trackId),
+                    manualSegmentsRequest,
                 ]);
                 if (requestId !== segmentBoundaryRequest || editor.currentTrack !== trackId) return;
                 const poseBoundaries = cachedBoundaries || getSegmentBoundariesFromFrames(segmentByDataId);
@@ -986,6 +1003,8 @@ export default function useBottom() {
         if (event?.data?.trackId !== editor.currentTrack) return;
         // Sync can create/remove this track in frames that have never been opened locally.
         // Refresh its compact frame-id index immediately instead of waiting for deselect/reselect.
+        trackLineCache.delete(event.data.trackId);
+        segmentBoundaryCache.clear();
         updateTrackLine(true, true, true);
         updateReviewProgress();
     }

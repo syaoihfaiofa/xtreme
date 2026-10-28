@@ -17,6 +17,8 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.collection.CollectionUtil;
 import cn.hutool.core.collection.ListUtil;
 import cn.hutool.core.util.ObjectUtil;
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -155,6 +157,8 @@ public class DataAnnotationObjectUseCase {
         if (ObjectUtil.isEmpty(dataAnnotationObjectBOs)) {
             return new ArrayList<>();
         }
+        dataAnnotationObjectBOs.forEach(
+                object -> normalizeMissingBoxType(object.getClassAttributes()));
         Set<Long> dataIds = dataAnnotationObjectBOs.stream().map(DataAnnotationObjectBO::getDataId).collect(Collectors.toSet());
         var lambdaQueryWrapper = Wrappers.lambdaQuery(DataAnnotationObject.class)
                 .in(DataAnnotationObject::getDataId, dataIds);
@@ -203,6 +207,18 @@ public class DataAnnotationObjectUseCase {
             dataAnnotationObjectDAO.removeBatchByIds(oldIds);
         }
         return insertObjectBOs;
+    }
+
+    static void normalizeMissingBoxType(JSONObject attributes) {
+        if (attributes == null || !StrUtil.isBlank(attributes.getStr("type"))) {
+            return;
+        }
+        JSONObject contour = attributes.getJSONObject("contour");
+        if (contour != null
+                && contour.getJSONObject("center3D") != null
+                && contour.getJSONObject("size3D") != null) {
+            attributes.set("type", "3D_BOX");
+        }
     }
 
     private void removeAllObjectByDataIds(Set<Long> dataIds) {

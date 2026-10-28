@@ -156,8 +156,12 @@ public class DataAnnotationController {
     }
 
     @GetMapping("sync/manualSegments")
-    public Map<Long, Integer> manualSyncSegments(@RequestParam Long dataId, @RequestParam String trackId) {
-        return trackSyncUseCase.findManualSyncSegments(dataId, trackId);
+    public Map<Long, Integer> manualSyncSegments(
+            @RequestParam Long dataId,
+            @RequestParam String trackId,
+            @RequestParam(required = false) Long classId,
+            @RequestParam(required = false) String objectType) {
+        return trackSyncUseCase.findManualSyncSegments(dataId, trackId, classId, objectType);
     }
 
     @PostMapping("review")
