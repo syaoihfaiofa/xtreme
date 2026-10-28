@@ -1341,8 +1341,6 @@ public class TrackSyncUseCase {
                 "syncMaxDisappearGap",
                 DEFAULT_SYNC_MAX_DISAPPEAR_GAP
         );
-        Set<Long> reachableFrameIds =
-                computeReachableFrameIds(source.getDataId(), frames, existingByDataId, maxDisappearGap);
         int dynamicSyncPreviousFrames = getNonNegativeInt(
                 attrs,
                 "dynamicSyncPreviousFrames",
@@ -1382,7 +1380,7 @@ public class TrackSyncUseCase {
             double syncYOffset = getDouble(attrs, "syncYOffsetM");
             return syncStatic(source, trackId, center3D, size3D, contour.getJSONObject("rotation3D"),
                     syncRadius, syncUseZ, syncWorldVertical, syncYawOffset, syncXOffset, syncYOffset, frames,
-                    poseByDataId, existingByDataId, existingRows.duplicateObjectIds, reachableFrameIds,
+                    poseByDataId, existingByDataId, existingRows.duplicateObjectIds,
                     maxDisappearGap, segmentByDataId, locationGapMs, segmentsInitialized);
         } else if (MOTION_SEMI_STATIC.equals(motionMode)) {
             requireScenePose(poseByDataId, source.getDataId());
@@ -1416,7 +1414,6 @@ public class TrackSyncUseCase {
                     poseByDataId,
                     existingByDataId,
                     existingRows.duplicateObjectIds,
-                    reachableFrameIds,
                     maxDisappearGap,
                     segmentByDataId,
                     locationGapMs,
@@ -2182,8 +2179,6 @@ public class TrackSyncUseCase {
                 sourceAttrs,
                 "syncMaxDisappearGap",
                 DEFAULT_SYNC_MAX_DISAPPEAR_GAP);
-        Set<Long> reachableFrameIds = computeReachableFrameIds(
-                source.getDataId(), frames, existingByDataId, maxDisappearGap);
         double wallHeight = Math.max(0D, getDouble(sourceAttrs, "wallHeight"));
         boolean showSyncLocationBoundaries = getBoolean(
                 sourceAttrs, "showSyncLocationBoundaries", false);
@@ -2199,9 +2194,6 @@ public class TrackSyncUseCase {
             // truth. Propagation radius rules apply only to target frames; otherwise a
             // curb drawn farther than its configured radius can delete its own source.
             if (frame.getId().equals(source.getDataId())) {
-                continue;
-            }
-            if (!reachableFrameIds.contains(frame.getId())) {
                 continue;
             }
             DataAnnotationObject existing = existingByDataId.get(frame.getId());
@@ -3213,7 +3205,6 @@ public class TrackSyncUseCase {
             Map<Long, Pose> poseByDataId,
             Map<Long, DataAnnotationObject> existingByDataId,
             List<Long> duplicateObjectIds,
-            Set<Long> reachableFrameIds,
             int maxDisappearGap,
             Map<Long, Integer> segmentByDataId,
             int locationGapMs,
@@ -3246,10 +3237,13 @@ public class TrackSyncUseCase {
             boolean sameManualSegment = existing == null
                     ? isFrameInManualSyncSegment(source.getClassAttributes(), frameIndexes, frame.getId())
                     : isSameManualSyncSegment(source.getClassAttributes(), existing.getClassAttributes());
-            boolean canProjectPosition = poseByDataId.containsKey(frame.getId())
-                    && reachableFrameIds.contains(frame.getId())
-                    && (!segmentsInitialized || ObjectUtil.equal(sourceSegmentId, targetSegmentId))
-                    && sameManualSegment;
+            boolean canProjectPosition = isStaticProjectionEligible(
+                    sourcePose,
+                    poseByDataId.get(frame.getId()),
+                    segmentsInitialized,
+                    sourceSegmentId,
+                    targetSegmentId,
+                    sameManualSegment);
             if (!canProjectPosition) {
                 updateSemiStaticExisting(
                         existing,
@@ -3494,7 +3488,7 @@ public class TrackSyncUseCase {
                              JSONObject rotation3D, double syncRadius, boolean syncUseZ, boolean syncWorldVertical,
                              double syncYawOffset, double syncXOffset, double syncYOffset, List<DataInfo> frames,
                              Map<Long, Pose> poseByDataId, Map<Long, DataAnnotationObject> existingByDataId,
-                             List<Long> duplicateObjectIds, Set<Long> reachableFrameIds, int maxDisappearGap,
+                             List<Long> duplicateObjectIds, int maxDisappearGap,
                              Map<Long, Integer> segmentByDataId, int locationGapMs, boolean segmentsInitialized) {
         double localX = getDouble(center3D, "x");
         double localY = getDouble(center3D, "y");
@@ -3527,11 +3521,13 @@ public class TrackSyncUseCase {
             boolean sameManualSegment = existing == null
                     ? isFrameInManualSyncSegment(source.getClassAttributes(), frameIndexes, frame.getId())
                     : isSameManualSyncSegment(source.getClassAttributes(), existing.getClassAttributes());
-            boolean canSyncPosition = srcPose != null
-                    && poseByDataId.containsKey(frame.getId())
-                    && reachableFrameIds.contains(frame.getId())
-                    && (!segmentsInitialized || sameSegment)
-                    && sameManualSegment;
+            boolean canSyncPosition = isStaticProjectionEligible(
+                    srcPose,
+                    poseByDataId.get(frame.getId()),
+                    segmentsInitialized,
+                    sourceSegmentId,
+                    targetSegmentId,
+                    sameManualSegment);
 
             if (!canSyncPosition) {
                 if (existing != null && ObjectUtil.isNotNull(existing.getClassAttributes())) {
@@ -4112,31 +4108,18 @@ public class TrackSyncUseCase {
         return segmentByDataId;
     }
 
-    /**
-     * Keep propagation within the contiguous track segment around the source frame. A track may
-     * disappear while the ego vehicle turns around and later return to a similar pose; continuing
-     * the static projection through that gap accumulates pose error and creates false boxes.
-     */
-    static Set<Long> computeReachableFrameIds(
-            Long sourceDataId,
-            List<DataInfo> frames,
-            Map<Long, DataAnnotationObject> existingByDataId,
-            int maxDisappearGap) {
-        Set<Long> reachable = new HashSet<>();
-        int sourceIndex = -1;
-        for (int index = 0; index < frames.size(); index++) {
-            if (frames.get(index).getId().equals(sourceDataId)) {
-                sourceIndex = index;
-                reachable.add(sourceDataId);
-                break;
-            }
-        }
-        if (sourceIndex < 0) {
-            return reachable;
-        }
-        addReachableFrames(frames, sourceIndex, -1, existingByDataId, maxDisappearGap, reachable);
-        addReachableFrames(frames, sourceIndex, 1, existingByDataId, maxDisappearGap, reachable);
-        return reachable;
+    static boolean isStaticProjectionEligible(
+            Pose sourcePose,
+            Pose targetPose,
+            boolean segmentsInitialized,
+            Integer sourceSegmentId,
+            Integer targetSegmentId,
+            boolean sameManualSegment) {
+        return sourcePose != null
+                && targetPose != null
+                && targetPose.complete
+                && (!segmentsInitialized || ObjectUtil.equal(sourceSegmentId, targetSegmentId))
+                && sameManualSegment;
     }
 
     private static int findFrameIndex(List<DataInfo> frames, Long dataId) {
@@ -4387,25 +4370,6 @@ public class TrackSyncUseCase {
                 pose.pitch,
                 pose.explicitRoll,
                 pose.explicitPitch);
-    }
-
-    private static void addReachableFrames(
-            List<DataInfo> frames,
-            int sourceIndex,
-            int direction,
-            Map<Long, DataAnnotationObject> existingByDataId,
-            int maxDisappearGap,
-            Set<Long> reachable) {
-        int disappearedFrames = 0;
-        for (int index = sourceIndex + direction; index >= 0 && index < frames.size(); index += direction) {
-            Long frameId = frames.get(index).getId();
-            if (existingByDataId.containsKey(frameId)) {
-                disappearedFrames = 0;
-            } else if (++disappearedFrames > maxDisappearGap) {
-                return;
-            }
-            reachable.add(frameId);
-        }
     }
 
     private static boolean sameClassId(DataAnnotationObject obj, Long classId) {

@@ -269,18 +269,6 @@
                             @change="onSyncSegmentVisibilityChange"
                         />
                     </div>
-                    <div v-if="state.motionMode === 'STATIC'" class="sync-distance-row">
-                        <span class="sync-distance-label">{{ $$('sync-max-disappear-gap') }}</span>
-                        <a-input-number
-                            v-model:value="state.syncMaxDisappearGap"
-                            :min="0"
-                            :step="1"
-                            :precision="0"
-                            addon-after="frames"
-                            style="width: 100%"
-                            @change="onSyncMaxDisappearGapChange"
-                        />
-                    </div>
                 </a-collapse-panel>
 
                 <a-collapse-panel v-show="state.attrs.length > 0" key="attribute">
