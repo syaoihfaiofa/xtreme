@@ -382,10 +382,14 @@ export default class Editor extends BaseEditor {
         const object = this.pc.selection.find(
             (candidate) => candidate instanceof Box
                 || candidate instanceof GroundPolygon
+                || candidate instanceof GroundPolyline
                 || candidate instanceof IrregularWall,
-        ) as Box | GroundPolygon | IrregularWall | undefined;
+        ) as Box | GroundPolygon | GroundPolyline | IrregularWall | undefined;
         if (!object) {
-            this.showMsg('warning', '请先选中需要合并位置同步段的 Box、GroundPolygon 或 IrregularWall');
+            this.showMsg(
+                'warning',
+                '请先选中需要合并位置同步段的 Box、GroundPolygon、GroundPolyline 或 IrregularWall',
+            );
             return false;
         }
         const userData = object.userData as IUserData;

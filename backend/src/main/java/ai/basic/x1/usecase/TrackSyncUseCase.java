@@ -1004,12 +1004,10 @@ public class TrackSyncUseCase {
                 .filter(object -> request.classId == null || sameClassId(object, request.classId))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("The selected sync object was not found"));
-        String sourceType = source.getClassAttributes().getStr("type");
-        if (!"3D_BOX".equals(sourceType)
-                && !GROUND_POLYGON.equals(sourceType)
-                && !IRREGULAR_WALL.equals(sourceType)) {
+        JSONObject sourceAttributes = source.getClassAttributes();
+        if (!supportsLocationSegmentMerge(sourceAttributes)) {
             throw new IllegalArgumentException(
-                    "Only 3D_BOX, GROUND_POLYGON and IRREGULAR_WALL support location segment merges");
+                    "Only 3D_BOX, GROUND_POLYGON, GROUND_POLYLINE and IRREGULAR_WALL support location segment merges");
         }
         int currentSegmentId = manualSyncSegmentId(source.getClassAttributes());
         int currentStart = manualSegmentStartIndex(source.getClassAttributes(), frameIndexById, frames.size());
@@ -1017,7 +1015,7 @@ public class TrackSyncUseCase {
         List<DataAnnotationObject> trackObjects = sceneObjects.stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> request.trackId.equals(object.getClassAttributes().getStr("trackId")))
-                .filter(object -> sourceType.equals(object.getClassAttributes().getStr("type")))
+                .filter(object -> sameObjectType(sourceAttributes, object.getClassAttributes()))
                 .filter(object -> request.classId == null || sameClassId(object, request.classId))
                 .collect(Collectors.toList());
         DataAnnotationObject previous = trackObjects.stream()
@@ -4487,6 +4485,15 @@ public class TrackSyncUseCase {
     }
 
     static boolean supportsLocationSegmentSplit(JSONObject attrs) {
+        String type = attrs == null ? null : attrs.getStr("type");
+        return "3D_BOX".equals(type)
+                || GROUND_POLYGON.equals(type)
+                || GROUND_POLYLINE.equals(type)
+                || IRREGULAR_WALL.equals(type)
+                || (StrUtil.isBlank(type) && hasSyncableBox(attrs));
+    }
+
+    static boolean supportsLocationSegmentMerge(JSONObject attrs) {
         String type = attrs == null ? null : attrs.getStr("type");
         return "3D_BOX".equals(type)
                 || GROUND_POLYGON.equals(type)

@@ -100,6 +100,23 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
+    void supportsLocationSegmentMerge_allowsLegacyBoxWithoutType() {
+        JSONObject attributes = new JSONObject()
+                .set("contour", new JSONObject()
+                        .set("center3D", point(1, 2, 3))
+                        .set("size3D", point(4, 5, 6)));
+
+        assertTrue(TrackSyncUseCase.supportsLocationSegmentMerge(attributes));
+    }
+
+    @Test
+    void supportsLocationSegmentMerge_allowsGroundPolyline() {
+        JSONObject attributes = new JSONObject().set("type", "GROUND_POLYLINE");
+
+        assertTrue(TrackSyncUseCase.supportsLocationSegmentMerge(attributes));
+    }
+
+    @Test
     void supportsLocationSegmentSplit_allowsIrregularWall() {
         JSONArray bottomPoints = new JSONArray();
         bottomPoints.add(point(0, 0, 0));
