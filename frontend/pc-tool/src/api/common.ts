@@ -176,10 +176,12 @@ export async function getSyncSegments(
 export async function getManualSyncSegments(
     dataId: string,
     trackId: string,
+    classId?: string | number,
+    objectType?: string,
 ): Promise<Record<string, number>> {
     const response = await get<{ data?: Record<string, number> }>(
         '/api/annotate/data/sync/manualSegments',
-        { dataId, trackId },
+        { dataId, trackId, classId, objectType },
     );
     return response.data || {};
 }

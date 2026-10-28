@@ -1098,6 +1098,11 @@ public class TrackSyncUseCase {
     }
 
     public Map<Long, Integer> findManualSyncSegments(Long dataId, String trackId) {
+        return findManualSyncSegments(dataId, trackId, null, null);
+    }
+
+    public Map<Long, Integer> findManualSyncSegments(
+            Long dataId, String trackId, Long classId, String objectType) {
         if (ObjectUtil.isNull(dataId) || StrUtil.isBlank(trackId)) {
             return Map.of();
         }
@@ -1111,17 +1116,19 @@ public class TrackSyncUseCase {
                 .stream()
                 .map(DataInfo::getId)
                 .collect(Collectors.toList());
-        return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
+        Map<Long, Integer> segmentByDataId = new HashMap<>();
+        dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
                         .in(DataAnnotationObject::getDataId, frameIds)
                         .eq(DataAnnotationObject::getTrackId, trackId))
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .filter(object -> classId == null || sameClassId(object, classId))
+                .filter(object -> matchesManualSegmentObjectType(object.getClassAttributes(), objectType))
                 .filter(object -> object.getClassAttributes().containsKey(MANUAL_SYNC_SEGMENT_ID))
-                .collect(Collectors.toMap(
-                        DataAnnotationObject::getDataId,
-                        object -> manualSyncSegmentId(object.getClassAttributes()),
-                        (first, ignored) -> first));
+                .forEach(object -> addManualSegmentFrames(
+                        segmentByDataId, object.getDataId(), object.getClassAttributes()));
+        return segmentByDataId;
     }
 
     /**
@@ -3943,6 +3950,20 @@ public class TrackSyncUseCase {
         return segmentId == null ? 0 : segmentId;
     }
 
+    static void addManualSegmentFrames(
+            Map<Long, Integer> segmentByDataId, Long objectDataId, JSONObject attributes) {
+        int segmentId = manualSyncSegmentId(attributes);
+        if (objectDataId != null) {
+            segmentByDataId.putIfAbsent(objectDataId, segmentId);
+        }
+        Long segmentStartDataId = attributes == null
+                ? null
+                : attributes.getLong(MANUAL_SYNC_SEGMENT_START_DATA_ID);
+        if (segmentStartDataId != null) {
+            segmentByDataId.putIfAbsent(segmentStartDataId, segmentId);
+        }
+    }
+
     private static Map<Long, Integer> frameIndexes(List<DataInfo> frames) {
         Map<Long, Integer> indexes = new HashMap<>();
         for (int index = 0; index < frames.size(); index++) {
@@ -4503,9 +4524,25 @@ public class TrackSyncUseCase {
     }
 
     static boolean sameObjectType(JSONObject sourceAttributes, JSONObject candidateAttributes) {
-        String sourceType = sourceAttributes == null ? null : sourceAttributes.getStr("type");
-        String candidateType = candidateAttributes == null ? null : candidateAttributes.getStr("type");
+        String sourceType = normalizedSyncObjectType(sourceAttributes);
+        String candidateType = normalizedSyncObjectType(candidateAttributes);
         return ObjectUtil.equal(sourceType, candidateType);
+    }
+
+    static boolean matchesManualSegmentObjectType(JSONObject attributes, String objectType) {
+        if (StrUtil.isBlank(objectType)) {
+            return true;
+        }
+        String type = normalizedSyncObjectType(attributes);
+        if ("3D_BOX".equals(objectType) || "3D".equals(objectType)) {
+            return "3D_BOX".equals(type);
+        }
+        return objectType.equals(type);
+    }
+
+    private static String normalizedSyncObjectType(JSONObject attributes) {
+        String type = attributes == null ? null : attributes.getStr("type");
+        return StrUtil.isBlank(type) && hasSyncableBox(attributes) ? "3D_BOX" : type;
     }
 
     private static boolean hasSyncableObject(DataAnnotationObject object) {
