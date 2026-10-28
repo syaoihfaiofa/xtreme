@@ -23,6 +23,9 @@ import UpdateGroundPolylineHeight from './UpdateGroundPolylineHeight';
 import UpdateGroundPolylineSegmentVisibility from './UpdateGroundPolylineSegmentVisibility';
 import UpdateGroundPolylineVisibilityRange from './UpdateGroundPolylineVisibilityRange';
 import UpdateIrregularWallPoints from './UpdateIrregularWallPoints';
+import UpdateGroundCorrectionMask, {
+    IUpdateGroundCorrectionMaskOption,
+} from './UpdateGroundCorrectionMask';
 export interface ICmdOption {
     'add-object': IAddObjectOption;
     'delete-object': IDeleteObjectOption;
@@ -69,6 +72,7 @@ export interface ICmdOption {
         points: THREE.Vector3[];
         beforePoints?: THREE.Vector3[];
     };
+    'update-ground-correction-mask': IUpdateGroundCorrectionMaskOption;
     'update-2d-rect': {
         object: Rect;
         option: { center: THREE.Vector2; size?: THREE.Vector2 };
@@ -103,6 +107,7 @@ const CMD: Record<Name, any> = {
     'update-ground-polyline-segment-visibility': UpdateGroundPolylineSegmentVisibility,
     'update-ground-polyline-visibility-range': UpdateGroundPolylineVisibilityRange,
     'update-irregular-wall-points': UpdateIrregularWallPoints,
+    'update-ground-correction-mask': UpdateGroundCorrectionMask,
     'update-2d-rect': Update2DRect,
     'update-2d-box': Update2DBox,
     'update-object-user-data': UpdateObjectDataBatch,

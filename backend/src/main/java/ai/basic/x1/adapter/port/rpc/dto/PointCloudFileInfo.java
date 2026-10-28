@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import cn.hutool.json.JSONObject;
 import java.util.List;
 
 @Data
@@ -18,6 +19,7 @@ public class PointCloudFileInfo {
     private String uploadPreviewPcdPath;
     private String uploadChunkManifestPath;
     private List<ChunkUpload> chunkUploads;
+    private JSONObject groundCorrectionMask;
 
     @Data
     @Builder

@@ -10,6 +10,7 @@ import Editor from '../../../Editor';
 import { IAnnotationInfo, StatusType } from '../../../type';
 import { CreateAction } from 'pc-render';
 import Event from '../../../config/event';
+import { isGroundCorrectionMaskBevActive } from '../../../utils/groundCorrectionMaskEditing';
 // import * as THREE from 'three';
 
 export const toggleTranslate = define({
@@ -169,6 +170,39 @@ export const togglePointDistanceMeasure = define({
         });
         editor.showMsg('warning', enabled ? '距离测量：依次点击两个点云点，Esc 退出' : '已退出距离测量', 3);
         editor.pc.render();
+    },
+});
+
+export const editGroundCorrectionPolygon = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    async execute(editor: Editor): Promise<void> {
+        await editor.groundCorrectionMaskManager.start('polygon');
+    },
+    end(editor: Editor): void {
+        editor.groundCorrectionMaskManager.cancel();
+    },
+});
+
+export const editGroundCorrectionBrush = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    async execute(editor: Editor): Promise<void> {
+        await editor.groundCorrectionMaskManager.start('brush');
+    },
+    end(editor: Editor): void {
+        editor.groundCorrectionMaskManager.cancel();
+    },
+});
+
+export const deleteGroundCorrectionOperation = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    execute(editor: Editor): void {
+        editor.groundCorrectionMaskManager.deleteLastOperation();
     },
 });
 export const pickObject = define({

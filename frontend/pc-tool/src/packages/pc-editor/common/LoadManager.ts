@@ -6,6 +6,7 @@ import { ResourceLoader } from './DataResource';
 import { AnnotateObject } from 'pc-render';
 import Event from '../config/event';
 import { expandKeypointLiftedCandidates } from '../../../utils/keypointLiftedResult';
+import { isGroundCorrectionMaskObjectType } from '../utils/groundCorrectionMask';
 
 export default class LoadManager {
     editor: Editor;
@@ -128,11 +129,21 @@ export default class LoadManager {
 
                 let objects = this.expandSourceKeypoints(utils.objectsMapForFrame(data.objectsMap, frame.id));
                 let annotates = utils.convertObject2Annotate(objects, this.editor);
+                annotates = this.editor.dataManager.mergePendingGroundCorrectionMask(
+                    frame.id,
+                    annotates,
+                );
                 this.editor.dataManager.setFrameObject(frame.id, annotates);
                 this.editor.dataManager.markFrameObjectsComplete(frame.id);
                 this.editor.dataManager.updateFrameId(frame.id);
                 if (this.editor.state.isSeriesFrame) {
-                    this.editor.trackManager.addTrackCount(annotates, frame);
+                    this.editor.trackManager.addTrackCount(
+                        annotates.filter(
+                            (annotate) =>
+                                !isGroundCorrectionMaskObjectType((annotate as any).objectType),
+                        ),
+                        frame,
+                    );
                 }
                 if (bsState?.inferenceMode) this.updateTrackMap();
             } catch (error: any) {
@@ -159,21 +170,28 @@ export default class LoadManager {
         this.editor.trackManager.trackInfo.clear();
         frames.forEach((frame) => {
             const objects = this.editor.dataManager.getFrameObject(frame.id) || [];
-            this.editor.trackManager.addTrackCount(objects, frame);
-            objectMap[frame.id] = objects.map((e) => e.userData as IObject);
+            const trackableObjects = objects.filter(
+                (object) => !isGroundCorrectionMaskObjectType((object as any).objectType),
+            );
+            this.editor.trackManager.addTrackCount(trackableObjects, frame);
+            objectMap[frame.id] = trackableObjects.map((e) => e.userData as IObject);
         });
         this.setTrackData(objectMap);
     }
     setTrackData(objectsMap: Record<string, IObject[]>) {
         // update trackId
+        const trackObjectsMap: Record<string, IObject[]> = {};
         Object.keys(objectsMap).forEach((frameId) => {
-            const objects = objectsMap[frameId] || [];
+            const objects = (objectsMap[frameId] || []).filter(
+                (object) => !isGroundCorrectionMaskObjectType(object.objType),
+            );
             objects.forEach((obj) => {
                 if (!obj.trackId) obj.trackId = this.editor.createTrackId();
             });
+            trackObjectsMap[frameId] = objects;
         });
 
-        const trackInfo = utils.getTrackFromObject(objectsMap);
+        const trackInfo = utils.getTrackFromObject(trackObjectsMap);
         const objects = Object.keys(trackInfo.globalTrack).map((id) => trackInfo.globalTrack[id]);
         // update editor Id
         const maxId = getMaxId(objects);
@@ -203,13 +221,18 @@ export default class LoadManager {
      * elsewhere in the Scene. This is used by Track's target-frame preload.
      */
     mergeTrackData(objectsMap: Record<string, IObject[]>) {
-        Object.values(objectsMap).forEach((objects) => {
-            objects.forEach((object) => {
+        const trackObjectsMap: Record<string, IObject[]> = {};
+        Object.entries(objectsMap).forEach(([frameId, objects]) => {
+            const trackableObjects = objects.filter(
+                (object) => !isGroundCorrectionMaskObjectType(object.objType),
+            );
+            trackableObjects.forEach((object) => {
                 if (!object.trackId) object.trackId = this.editor.createTrackId();
             });
+            trackObjectsMap[frameId] = trackableObjects;
         });
 
-        const trackInfo = utils.getTrackFromObject(objectsMap);
+        const trackInfo = utils.getTrackFromObject(trackObjectsMap);
         const newTracks = Object.values(trackInfo.globalTrack);
         let maxId = 0;
         this.editor.trackManager.trackMap.forEach((track) => {

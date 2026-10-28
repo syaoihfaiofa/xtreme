@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { getColorTable } from '../utils';
+import {
+    AUTO_NON_GROUND_TOLERANCE,
+    FORCE_GROUND_THRESHOLD,
+} from '../points/forceGround';
 
 interface IOption {
     hasIntensity: boolean;
@@ -52,11 +56,13 @@ function getShaderCode(
     uniform float rgbHighlightThreshold;
     uniform float rgbHighlightStrength;
     uniform float hideNonGroundRgb;
+    uniform float hideGround;
     uniform float sideViewContrast;
     uniform vec3 sideViewContrastCenters[4];
     uniform float sideViewContrastRadius;
 
     attribute float road;
+    attribute float forceGround;
     uniform float colorRoad;
 
     #ifdef FLAG_COLOR
@@ -185,12 +191,13 @@ function getShaderCode(
             #ifdef FLAG_INTENSITY
             if(
                 hideNonGroundRgb > 0.0 &&
+                forceGround <= ${FORCE_GROUND_THRESHOLD} &&
                 // PCD RGB/intensity channels often pass through a float-to-uint8
                 // conversion independently.  Keep a practical tolerance so sky
                 // points encoded as RGB=intensity do not leak through as white.
-                abs(color.r - intensity) < 12.0 &&
-                abs(color.g - intensity) < 12.0 &&
-                abs(color.b - intensity) < 12.0
+                abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
             ){
                 vDiscard = 1.0;
             }
@@ -236,22 +243,30 @@ function getShaderCode(
                 vPointSize+=2.0;
             }
             #endif
-        } else if(colorMode == 4.0) {
-            #ifdef FLAG_COLOR
-            vColor = color / 255.0;
-            #ifdef FLAG_INTENSITY
-            if(!(
-                abs(color.r - intensity) < 12.0 &&
-                abs(color.g - intensity) < 12.0 &&
-                abs(color.b - intensity) < 12.0
-            )){
-                vDiscard = 1.0;
-            }
-            #endif
-            #endif
         } else {
             vColor = getColor(position.z);
         }
+        if(
+            hideGround > 0.0 && (colorMode == 0.0 || colorMode == 1.0) &&
+            forceGround > ${FORCE_GROUND_THRESHOLD}
+        ){
+            vDiscard = 1.0;
+        }
+        #ifdef FLAG_COLOR
+        #ifdef FLAG_INTENSITY
+        if(
+            hideGround > 0.0 && (colorMode == 0.0 || colorMode == 1.0) &&
+            forceGround <= ${FORCE_GROUND_THRESHOLD} &&
+            !(
+                abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
+            )
+        ){
+            vDiscard = 1.0;
+        }
+        #endif
+        #endif
         if(openIntensity > 0.0){
             #ifdef FLAG_INTENSITY
             if(intensityRange.x > intensity || intensityRange.y < intensity){
@@ -346,7 +361,6 @@ export enum ColorModeEnum {
     PURE = 1.0,
     RGB = 2.0,
     VELOCITY = 3.0,
-    NON_GROUND = 4.0,
 }
 export interface IUniformOption {
     groundColor?: THREE.Color;
@@ -383,6 +397,7 @@ export interface IUniformOption {
     rgbHighlightThreshold?: number;
     rgbHighlightStrength?: number;
     hideNonGroundRgb?: 1 | -1;
+    hideGround?: 1 | -1;
     sideViewContrast?: 1 | -1;
     sideViewContrastCenters?: THREE.Vector3[];
     sideViewContrastRadius?: number;
@@ -431,6 +446,7 @@ export default class PointsMaterial extends THREE.RawShaderMaterial {
                 rgbHighlightThreshold: { value: 0.12 },
                 rgbHighlightStrength: { value: 3.5 },
                 hideNonGroundRgb: { value: 1 },
+                hideGround: { value: -1 },
                 sideViewContrast: { value: -1 },
                 sideViewContrastCenters: {
                     value: Array.from({ length: 4 }, () => new THREE.Vector3(1e6, 1e6, 1e6)),

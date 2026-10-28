@@ -29,6 +29,16 @@ class LocationSegmenterTest {
     }
 
     @Test
+    void test_segmentFrames_splitsAtDefaultOneSecondGap() {
+        List<Integer> segments = LocationSegmenter.segmentFrames(
+                List.of(0L, 1_000_000_000L, 1_001_000_000L),
+                List.of(0L, 1_001_000_000L),
+                1000);
+
+        assertEquals(List.of(0, 1, 1), segments);
+    }
+
+    @Test
     void test_segmentFrames_startsNextSegmentAfterSecondRecoverySample() {
         List<Integer> segments = LocationSegmenter.segmentFrames(
                 List.of(0L, 1L, 201_000_000L, 220_000_000L, 220_000_001L),

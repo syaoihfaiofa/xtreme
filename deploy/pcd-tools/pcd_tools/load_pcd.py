@@ -99,7 +99,7 @@ class PointCloud:
         typenames = []
 
         # process dulipcated names
-        fields = metadata['fields']
+        fields = list(metadata['fields'])
         fields_dict = set()
         for i in range(len(fields)):
             name = fields[i]
@@ -154,7 +154,7 @@ class PointCloud:
             elif key in ('width', 'height', 'points'):
                 metadata[key] = int(value)
             elif key == 'viewpoint':
-                metadata[key] = map(float, value.split())
+                metadata[key] = list(map(float, value.split()))
             elif key == 'data':
                 metadata[key] = value.strip().lower()
             # TODO apparently count is not required?
@@ -189,7 +189,7 @@ class PointCloud:
         for dti in range(len(dtype)):
             dt = dtype[dti]
             bytes = dt.itemsize * num_points
-            column = np.fromstring(buf[ix:(ix+bytes)], dt)
+            column = np.frombuffer(buf[ix:(ix+bytes)], dtype=dt)
             pc_data[dtype.names[dti]] = column
             ix += bytes
         return pc_data
@@ -201,6 +201,7 @@ class PointCloud:
             header.append(ln)
             if ln.startswith('DATA'):
                 metadata = self.parse_header(header)
+                self.metadata = metadata
                 self.code = code = metadata['data']
                 dtype = self._build_dtype(metadata)
                 break
@@ -227,16 +228,16 @@ class PointCloud:
         return pc
 
     @staticmethod
-    def save_pcd(pc: np.ndarray, file):
+    def save_pcd(pc: np.ndarray, file, metadata=None):
         """
         :param structured ndarray
         :param file: str for file object
         """
         f = open(file, 'wb') if isinstance(file, str) else file
 
-        fields = pc.dtype.names
-        dtypes = [pc.dtype[f] for f in fields]
-        num_fields = len(fields)
+        if pc.dtype.names is None:
+            raise ValueError('PCD output must be a structured array')
+        fields, dtypes, counts = PointCloud._output_schema(pc, metadata)
         num_points = len(pc)
         headers = [
             '# .PCD v0.7 - Point Cloud Data file format',
@@ -244,10 +245,13 @@ class PointCloud:
             f'FIELDS {" ".join(fields)}',
             f'SIZE {" ".join([str(d.itemsize) for d in dtypes])}',
             f'TYPE {" ".join([d.kind.upper() for d in dtypes])}',
-            f'COUNT {" ".join(["1"]*num_fields)}',
-            f'WIDTH {num_points}',
-            'HEIGHT 1',
-            'VIEWPOINT 0 0 0 1 0 0 0',
+            f'COUNT {" ".join([str(count) for count in counts])}',
+            f'WIDTH {metadata["width"] if metadata else num_points}',
+            f'HEIGHT {metadata["height"] if metadata else 1}',
+            'VIEWPOINT {}'.format(' '.join(
+                [str(value) for value in metadata['viewpoint']]
+                if metadata else ['0', '0', '0', '1', '0', '0', '0']
+            )),
             f'POINTS {num_points}',
             'DATA binary'
         ]
@@ -257,6 +261,34 @@ class PointCloud:
 
         if isinstance(file, str):
             f.close()
+
+    @staticmethod
+    def _output_schema(pc, metadata):
+        if metadata is None:
+            fields = list(pc.dtype.names)
+            dtypes = [pc.dtype[field] for field in fields]
+            return fields, dtypes, [1] * len(fields)
+
+        fields = list(metadata['fields'])
+        sizes = list(metadata['size'])
+        types = list(metadata.get('type', ['F'] * len(fields)))
+        counts = list(metadata['count'])
+        expanded_fields = []
+        for field, count in zip(fields, counts):
+            expanded_fields.extend(
+                [field] if count == 1 else ['%s_%04d' % (field, index) for index in range(count)]
+            )
+        if any(field not in pc.dtype.names for field in expanded_fields):
+            raise ValueError('PCD output does not contain all source fields')
+        appended_fields = [field for field in pc.dtype.names if field not in expanded_fields]
+        for field in appended_fields:
+            fields.append(field)
+            dtype = pc.dtype[field]
+            sizes.append(dtype.itemsize)
+            types.append(dtype.kind.upper())
+            counts.append(1)
+        dtypes = [np.dtype(pcd_type_to_numpy_type[(type_, size)]) for type_, size in zip(types, sizes)]
+        return fields, dtypes, counts
 
 def main():
     import argparse

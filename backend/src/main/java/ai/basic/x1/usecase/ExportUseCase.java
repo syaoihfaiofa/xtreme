@@ -5,6 +5,9 @@ import ai.basic.x1.adapter.port.dao.ExportRecordDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.model.ExportRecord;
 import ai.basic.x1.adapter.port.minio.MinioProp;
 import ai.basic.x1.adapter.port.minio.MinioService;
+import ai.basic.x1.adapter.port.rpc.PointCloudConvertRenderHttpCaller;
+import ai.basic.x1.adapter.port.rpc.dto.PointCloudCRReqDTO;
+import ai.basic.x1.adapter.port.rpc.dto.PointCloudFileInfo;
 import ai.basic.x1.entity.*;
 import ai.basic.x1.entity.enums.DataFormatEnum;
 import ai.basic.x1.entity.enums.ExportStatusEnum;
@@ -51,6 +54,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -86,6 +90,9 @@ public class ExportUseCase {
     @Autowired
     private LidarSceneFormatExportUseCase lidarSceneFormatExportUseCase;
 
+    @Autowired
+    private PointCloudConvertRenderHttpCaller pointCloudConvertRenderHttpCaller;
+
     @Value("${file.tempPath:/tmp/xtreme1/}")
     private String tempPath;
 
@@ -108,16 +115,175 @@ public class ExportUseCase {
         return serialNumber;
     }
 
+    public void failExportRecord(Long serialNumber, String message) {
+        var record = exportRecordDAO.getOne(new LambdaQueryWrapper<ExportRecord>()
+                .eq(ExportRecord::getSerialNumber, serialNumber));
+        if (record == null) {
+            logger.error("Unable to mark missing export record as failed: serialNumber={}", serialNumber);
+            return;
+        }
+        exportRecordUsecase.saveOrUpdate(ExportRecordBO.builder()
+                .id(record.getId())
+                .updatedBy(record.getCreatedBy())
+                .status(ExportStatusEnum.FAILED)
+                .errorMessage(StrUtil.subWithLength(
+                        StrUtil.blankToDefault(message, "Export initialization failed"),
+                        0,
+                        4000))
+                .updatedAt(OffsetDateTime.now())
+                .build());
+    }
+
+    static String groundLabeledPcdZipEntry(Long frameId, int pointCloudIndex) {
+        if (frameId == null || frameId <= 0 || pointCloudIndex < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid ground-labeled PCD export entry: frameId=" + frameId
+                            + ", pointCloudIndex=" + pointCloudIndex);
+        }
+        return String.format("frame-%d-pointcloud-%d.pcd", frameId, pointCloudIndex);
+    }
+
 
     public <Q extends BaseQueryBO> Long asyncExportDataZip(String fileName, Long serialNumber, Map<Long, String> classMap, Map<Long, String> resultMap,
                                                            Q query, Function<Q, List<Long>> fun, Function4<List<Long>, Q, Map<Long, String>, Map<Long, String>, List<DataExportBO>> processData) {
-        var lambdaQueryWrapper = new LambdaQueryWrapper<ExportRecord>();
-        lambdaQueryWrapper.in(ExportRecord::getSerialNumber, serialNumber);
-        var exportRecord = exportRecordDAO.getOne(lambdaQueryWrapper);
-        var srcPath = String.format("%s%s", tempPath, FileUtil.getPrefix(fileName));
-        FileUtil.mkdir(srcPath);
-        getDataAndUpload(exportRecord, srcPath, classMap, resultMap, query, fun, processData);
+        try {
+            var lambdaQueryWrapper = new LambdaQueryWrapper<ExportRecord>();
+            lambdaQueryWrapper.in(ExportRecord::getSerialNumber, serialNumber);
+            var exportRecord = exportRecordDAO.getOne(lambdaQueryWrapper);
+            if (exportRecord == null) {
+                throw new IllegalStateException("Export record was not found: serialNumber=" + serialNumber);
+            }
+            var srcPath = String.format("%s%s", tempPath, FileUtil.getPrefix(fileName));
+            FileUtil.mkdir(srcPath);
+            getDataAndUpload(exportRecord, srcPath, classMap, resultMap, query, fun, processData);
+        } catch (RuntimeException exception) {
+            logger.error("Export worker failed before ZIP generation: serialNumber={}", serialNumber, exception);
+            failExportRecord(
+                    serialNumber,
+                    "Export worker failed before ZIP generation. Please retry or contact an administrator.");
+        }
         return serialNumber;
+    }
+
+    public void exportGroundLabeledPcdZip(
+            String fileName,
+            Long serialNumber,
+            List<GroundLabeledPcdExportFrame> frames) {
+        ExportRecord record;
+        try {
+            record = exportRecordDAO.getOne(new LambdaQueryWrapper<ExportRecord>()
+                    .eq(ExportRecord::getSerialNumber, serialNumber));
+        } catch (RuntimeException exception) {
+            logger.error("Unable to load ground-labeled PCD export record: serialNumber={}", serialNumber, exception);
+            failExportRecord(
+                    serialNumber,
+                    "Ground-labeled PCD export could not start. Please retry or contact an administrator.");
+            return;
+        }
+        if (record == null) {
+            logger.error("Ground-labeled PCD export record is missing: serialNumber={}", serialNumber);
+            return;
+        }
+        var exportRecord = ExportRecordBO.builder()
+                .id(record.getId())
+                .updatedBy(record.getCreatedBy())
+                .updatedAt(OffsetDateTime.now());
+        var sourcePath = String.format("%s%s", tempPath, FileUtil.getPrefix(fileName));
+        var temporaryPrefix = String.format("temporary/ground-labeled-pcd/%s/", UUID.randomUUID());
+        FileUtil.mkdir(sourcePath);
+        try {
+            if (CollUtil.isEmpty(frames)) {
+                throw new IllegalArgumentException("No LiDAR point clouds matched this export request");
+            }
+            var manifestFrames = JSONUtil.createArray();
+            for (GroundLabeledPcdExportFrame frame : frames) {
+                var safeEntry = requireSafeGroundLabeledPcdZipEntry(frame.getZipEntry());
+                var objectPath = temporaryPrefix + UUID.randomUUID() + ".pcd";
+                var upload = minioService.generatePresignedUrl(
+                        minioProp.getBucketName(), objectPath, Boolean.FALSE);
+                var request = PointCloudCRReqDTO.builder()
+                        .type(4)
+                        .data(Collections.singletonList(PointCloudFileInfo.builder()
+                                .pointCloudFile(frame.getPointCloudUrl())
+                                .uploadBinaryPcdPath(upload.getPresignedUrl())
+                                .groundCorrectionMask(frame.getGroundCorrectionMask())
+                                .build()))
+                        .build();
+                var result = pointCloudConvertRenderHttpCaller.callConvertRender(request);
+                if (!UsecaseCode.OK.equals(result.getCode())
+                        || CollUtil.isEmpty(result.getData())
+                        || result.getData().get(0).getCode() == null
+                        || result.getData().get(0).getCode() != 0) {
+                    var message = CollUtil.isEmpty(result.getData()) ? result.getMessage()
+                            : result.getData().get(0).getMessage();
+                    throw new IllegalStateException("PCD ground-label conversion failed for "
+                            + safeEntry + ": " + StrUtil.blankToDefault(message, "unknown error"));
+                }
+                var converted = result.getData().get(0);
+                var destination = FileUtil.file(sourcePath, safeEntry);
+                FileUtil.mkParentDirs(destination);
+                HttpUtil.downloadFile(upload.getAccessUrl(), destination);
+                manifestFrames.add(JSONUtil.createObj()
+                        .set("file", safeEntry)
+                        .set("rule", converted.getGroundRule())
+                        .set("pointCount", converted.getPointCount()));
+            }
+            FileUtil.writeString(
+                    JSONUtil.createObj().set("version", 1).set("frames", manifestFrames).toString(),
+                    FileUtil.file(sourcePath, "manifest.json"),
+                    StandardCharsets.UTF_8);
+            var zipFile = ZipUtil.zip(sourcePath, sourcePath + ".zip", true);
+            var path = String.format("%s/%s",
+                    record.getCreatedBy(),
+                    FileUtil.getName(zipFile));
+            var fileBO = FileBO.builder()
+                    .name(FileUtil.getName(zipFile))
+                    .originalName(FileUtil.getName(zipFile))
+                    .bucketName(minioProp.getBucketName())
+                    .size(zipFile.length())
+                    .path(path)
+                    .type(FileUtil.getMimeType(path))
+                    .build();
+            minioService.uploadFile(
+                    minioProp.getBucketName(),
+                    path,
+                    FileUtil.getInputStream(zipFile),
+                    FileUtil.getMimeType(path),
+                    zipFile.length());
+            var exportedFile = CollectionUtil.getFirst(
+                    fileUseCase.saveBatchFile(record.getCreatedBy(), Collections.singletonList(fileBO)));
+            exportRecordUsecase.saveOrUpdate(exportRecord
+                    .fileId(exportedFile.getId())
+                    .status(ExportStatusEnum.COMPLETED)
+                    .generatedNum(frames.size())
+                    .totalNum(frames.size())
+                    .updatedAt(OffsetDateTime.now())
+                    .build());
+        } catch (Exception exception) {
+            logger.error("Ground-labeled PCD export failed", exception);
+            exportRecordUsecase.saveOrUpdate(exportRecord
+                    .status(ExportStatusEnum.FAILED)
+                    .errorMessage("Ground-labeled PCD export failed. Please retry or contact an administrator.")
+                    .updatedAt(OffsetDateTime.now())
+                    .build());
+        } finally {
+            minioService.removeObjectsByPrefix(minioProp.getBucketName(), temporaryPrefix);
+            FileUtil.del(sourcePath + ".zip");
+            FileUtil.del(sourcePath);
+        }
+    }
+
+    static String requireSafeGroundLabeledPcdZipEntry(String zipEntry) {
+        if (StrUtil.isBlank(zipEntry)
+                || zipEntry.startsWith("/")
+                || zipEntry.startsWith("\\")
+                || zipEntry.contains("..")
+                || zipEntry.contains("/")
+                || zipEntry.contains("\\")
+                || !zipEntry.matches("frame-[1-9][0-9]*-pointcloud-[0-9]+\\.pcd")) {
+            throw new IllegalArgumentException("Unsafe ground-labeled PCD ZIP entry: " + zipEntry);
+        }
+        return zipEntry;
     }
 
     private <Q extends BaseQueryBO> void getDataAndUpload(ExportRecord record, String srcPath, Map<Long, String> classMap, Map<Long, String> resultMap, Q query,

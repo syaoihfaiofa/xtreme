@@ -701,6 +701,20 @@ public class SceneVisibilityUseCase {
         }
     }
 
+    public void requireSceneAccess(Long sceneId, Long userId) {
+        DataInfo scene = dataInfoDAO.getById(sceneId);
+        if (scene == null
+                || Boolean.TRUE.equals(scene.getIsDeleted())
+                || scene.getType() != ItemTypeEnum.SCENE
+                || scene.getDatasetId() == null) {
+            throw new UsecaseException(
+                    UsecaseCode.DATA_NOT_FOUND,
+                    "Scene not found: sceneId=" + sceneId);
+        }
+        requireDatasetAccess(scene.getDatasetId(), userId);
+        validateScene(scene.getDatasetId(), sceneId);
+    }
+
     private void requireDatasetAccess(Long datasetId, Long userId) {
         Dataset dataset = datasetDAO.getById(datasetId);
         User user = userDAO.getById(userId);

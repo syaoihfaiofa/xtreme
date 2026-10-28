@@ -32,6 +32,15 @@
             Include auto occlusion results
           </Checkbox>
         </div>
+        <div
+          v-if="props.datasetType === 'LIDAR_FUSION' || props.datasetType === 'LIDAR_BASIC'"
+          class="flex items-center gap-10px"
+        >
+          <div class="whitespace-nowrap" style="color: #333; width: 100px">Label PCD</div>
+          <Checkbox v-model:checked="exportGroundLabeledPcd">
+            Export PCD files with ground labels
+          </Checkbox>
+        </div>
         <div class="flex items-center gap-10px">
           <div class="whitespace-nowrap" style="color: #333; width: 100px">Results</div>
 
@@ -147,6 +156,7 @@
   let dataType = ref<string>('');
   let includeSourceData = ref<boolean>(false);
   let includeAutoOcclusionResults = ref<boolean>(false);
+  let exportGroundLabeledPcd = ref<boolean>(false);
 
   const isLoading = ref<boolean>(false);
   const handleSubmit = async () => {
@@ -203,6 +213,7 @@
     selectModelRunIds.value = [];
     includeSourceData.value = false;
     includeAutoOcclusionResults.value = false;
+    exportGroundLabeledPcd.value = false;
   };
 
   let fliterPa = (data) => {
@@ -222,6 +233,7 @@
     res.dataFormat = dataFormat.value;
     res.includeSourceData = includeSourceData.value;
     res.includeAutoOcclusionResults = includeAutoOcclusionResults.value;
+    res.exportGroundLabeledPcd = exportGroundLabeledPcd.value;
     return res;
   };
 </script>

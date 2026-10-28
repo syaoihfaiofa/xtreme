@@ -15,6 +15,7 @@ import {
 import { IModelResult, IModel } from 'pc-editor';
 import * as api from '../../api';
 import * as locale from './lang';
+import { requestGroundCorrectionMaskPropagation } from '../../packages/pc-editor/utils/groundCorrectionMaskEditing';
 
 let createActions: IActionName[] = [
     'create2DBox',
@@ -80,6 +81,18 @@ export default function useTool() {
                 break;
             case 'pointDistanceMeasure':
                 editor.actionManager.execute('togglePointDistanceMeasure');
+                break;
+            case 'groundCorrectionPolygon':
+                editor.actionManager.execute('editGroundCorrectionPolygon');
+                break;
+            case 'groundCorrectionBrush':
+                editor.actionManager.execute('editGroundCorrectionBrush');
+                break;
+            case 'deleteGroundCorrectionOperation':
+                editor.actionManager.execute('deleteGroundCorrectionOperation');
+                break;
+            case 'propagateGroundCorrectionMask':
+                propagateGroundCorrectionMask();
                 break;
             case 'createRect':
                 stopOtherCreateAction('create2DRect');
@@ -159,6 +172,13 @@ export default function useTool() {
             ?.getAction('split-ground-shape') as SplitGroundShapeAction | undefined;
         action?.toggle(false);
         editor.pc.render();
+    }
+
+    function propagateGroundCorrectionMask(): void {
+        requestGroundCorrectionMaskPropagation(
+            editor,
+            () => window.prompt('应用到前后各 N 帧（正整数）', '1'),
+        );
     }
 
     function deleteProjections() {

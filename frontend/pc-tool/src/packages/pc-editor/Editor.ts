@@ -22,6 +22,7 @@ import DataResource from './common/DataResource';
 import ModelManager from './common/ModelManager';
 import PlayManager from './common/PlayManager';
 import TrackManager from './common/TrackManager';
+import GroundCorrectionMaskManager from './common/GroundCorrectionMaskManager';
 
 import { getDefaultState } from './state';
 import type { IState } from './state';
@@ -107,6 +108,7 @@ export default class Editor extends THREE.EventDispatcher {
     trackManager: TrackManager;
     taskManager: TaskManager;
     performanceMonitor: PerformanceMonitor;
+    groundCorrectionMaskManager: GroundCorrectionMaskManager;
 
     // ui
     registerModal: RegisterFn = () => {};
@@ -137,6 +139,7 @@ export default class Editor extends THREE.EventDispatcher {
         this.trackManager = new TrackManager(this);
         this.taskManager = new TaskManager(this);
         this.performanceMonitor = new PerformanceMonitor();
+        this.groundCorrectionMaskManager = new GroundCorrectionMaskManager(this);
 
         handleHack(this);
 
@@ -152,6 +155,7 @@ export default class Editor extends THREE.EventDispatcher {
         this.lastMainViewPointer = undefined;
         this.playManager.stop();
         this.taskManager.destroy();
+        this.groundCorrectionMaskManager.destroy();
         this.dataManager.destroy();
         this.modelManager.clear();
         this.dataResource.destroy();
@@ -790,6 +794,7 @@ export default class Editor extends THREE.EventDispatcher {
     }
 
     setPointCloudData(data: any, ground: number, intensityRange?: [number, number]) {
+        this.groundCorrectionMaskManager.refreshCurrentFramePointCloud();
         this.pc.setPointCloudData(data);
         this.configManager.updatePointConfig(ground, intensityRange);
         this.dispatchEvent({ type: Event.POINTS_CHANGE });

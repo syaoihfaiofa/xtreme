@@ -6,6 +6,7 @@ import * as utils from '../utils';
 import Event from '../config/event';
 import { IImgViewConfig } from 'pc-editor';
 import { orderEvictionCandidates, orderPrefetchIndices } from './CachePolicy';
+import { canApplyPointCloudChunk } from './chunkApplyGuard';
 import { shouldScheduleFullLoad } from './FullLoadPolicy';
 
 export type LoadMode = 'near_2' | 'all';
@@ -194,9 +195,10 @@ export default class DataResource {
     private frameConfigPrefetches = new Set<string>();
     private workerJobs = new Map<number, { resolve: (data: any) => void; reject: (error: any) => void }>();
     private backgroundControllers = new Map<string, AbortController>();
+    private frameAbortControllers = new Map<string, Set<AbortController>>();
     private fullUpgradeTimer?: ReturnType<typeof setTimeout>;
     private scheduledFullFrameId?: string;
-    private chunkControllers = new Map<string, AbortController>();
+    private chunkControllers = new Map<string, { controller: AbortController; frameId: string }>();
     private chunkManifest = new Map<string, PointCloudManifest>();
     private loadedChunks = new Map<string, Map<string, { data: any; time: number; byteSize: number }>>();
     private chunkViewTimer?: ReturnType<typeof setTimeout>;
@@ -233,9 +235,9 @@ export default class DataResource {
         this.loaders = [];
         this.workerJobs.forEach((job) => job.reject(new Error('resource generation changed')));
         this.workerJobs.clear();
-        this.backgroundControllers.forEach((controller) => controller.abort());
+        this.abortFrameRequests();
         this.backgroundControllers.clear();
-        this.chunkControllers.forEach((controller) => controller.abort());
+        this.chunkControllers.forEach(({ controller }) => controller.abort());
         this.chunkControllers.clear();
         this.chunkManifest.clear();
         this.loadedChunks.clear();
@@ -491,14 +493,15 @@ export default class DataResource {
         this.loaders
             .filter((loader) => String(loader.data.id) !== String(frame.id))
             .forEach((loader) => loader.cancel());
-        this.cancelBackgroundFullLoads(frame.id);
+        this.abortFrameRequests(frame.id);
+        this.cancelChunkLoads(frame.id);
         const resource = this.dataMap[frame.id];
         if (resource) this.scheduleFullUpgrade(frame, resource, this.generation);
     }
 
     onPlaybackStarted() {
         this.clearScheduledFullUpgrade();
-        this.cancelBackgroundFullLoads();
+        this.abortFrameRequests();
     }
 
     onPlaybackStopped() {
@@ -508,15 +511,34 @@ export default class DataResource {
         if (resource) this.scheduleFullUpgrade(frame, resource, this.generation);
     }
 
-    private cancelBackgroundFullLoads(keepFrameId?: string) {
-        this.backgroundControllers.forEach((controller, frameId) => {
+    private registerFrameAbortController(frameId: string, controller: AbortController): void {
+        const controllers = this.frameAbortControllers.get(frameId) || new Set<AbortController>();
+        controllers.add(controller);
+        this.frameAbortControllers.set(frameId, controllers);
+    }
+
+    private unregisterFrameAbortController(frameId: string, controller: AbortController): void {
+        const controllers = this.frameAbortControllers.get(frameId);
+        if (!controllers) return;
+        controllers.delete(controller);
+        if (controllers.size === 0) this.frameAbortControllers.delete(frameId);
+    }
+
+    private abortFrameRequests(keepFrameId?: string): void {
+        this.frameAbortControllers.forEach((controllers, frameId) => {
             if (frameId === keepFrameId) return;
-            const frame = this.editor.state.frames.find((item) => item.id === frameId);
-            // A dirty frame may need the complete cloud for a later save/edit operation.
-            if (frame?.needSave) return;
-            controller.abort();
+            controllers.forEach((controller) => controller.abort());
+            this.frameAbortControllers.delete(frameId);
             const resource = this.dataMap[frameId];
             if (resource?.resourceState === 'full-loading') resource.resourceState = 'preview-ready';
+        });
+    }
+
+    private cancelChunkLoads(keepFrameId?: string): void {
+        this.chunkControllers.forEach(({ controller, frameId }, key) => {
+            if (frameId === keepFrameId) return;
+            controller.abort();
+            this.chunkControllers.delete(key);
         });
     }
 
@@ -550,6 +572,7 @@ export default class DataResource {
         const signal = controller.signal;
         this.backgroundControllers.get(frame.id)?.abort();
         this.backgroundControllers.set(frame.id, controller);
+        this.registerFrameAbortController(String(frame.id), controller);
         try {
             resource.resourceState = 'full-loading';
             this.editor.performanceMonitor.start('full-point-ready', frame.id);
@@ -583,6 +606,7 @@ export default class DataResource {
             if (this.backgroundControllers.get(frame.id) === controller) {
                 this.backgroundControllers.delete(frame.id);
             }
+            this.unregisterFrameAbortController(String(frame.id), controller);
         }
     }
 
@@ -594,7 +618,10 @@ export default class DataResource {
             const resource = frame && this.dataMap[frame.id];
             if (frame && resource?.chunkManifestUrl) {
                 const controller = new AbortController();
-                this.loadVisibleChunks(frame, resource, this.generation, controller.signal).catch(() => undefined);
+                this.registerFrameAbortController(String(frame.id), controller);
+                this.loadVisibleChunks(frame, resource, this.generation, controller.signal)
+                    .catch(() => undefined)
+                    .finally(() => this.unregisterFrameAbortController(String(frame.id), controller));
             }
         }, 120);
     }
@@ -619,7 +646,7 @@ export default class DataResource {
 
     private async loadVisibleChunks(frame: IFrame, resource: IDataResource, generation: number, signal: AbortSignal) {
         const manifest = await this.getChunkManifest(frame, resource, signal);
-        if (!this.isGenerationCurrent(generation) || signal.aborted) return;
+        if (!this.canApplyChunk(frame, generation, signal)) return;
         const visible = new Set(this.editor.pc.getVisibleChunkIds(manifest.chunks));
         // Keep the full-resolution neighbourhood of the selected annotation available while it
         // is being edited, even if a camera orbit momentarily places it outside the frustum.
@@ -652,18 +679,34 @@ export default class DataResource {
             const key = `${frame.id}:${id}`;
             if (this.chunkControllers.has(key)) return;
             const controller = new AbortController();
-            this.chunkControllers.set(key, controller);
+            const abortChild = () => controller.abort();
+            signal.addEventListener('abort', abortChild, { once: true });
+            if (signal.aborted) controller.abort();
+            this.chunkControllers.set(key, { controller, frameId: String(frame.id) });
             try {
                 const data = await this.loadPoints(chunk.url, undefined, controller.signal, frame.id, 'full');
-                if (!this.isGenerationCurrent(generation) || controller.signal.aborted) return;
+                if (!this.canApplyChunk(frame, generation, controller.signal)) return;
                 loaded.set(id, { data, time: Date.now(), byteSize: chunk.byteSize || 0 });
                 this.editor.pc.setPointCloudChunk(id, data);
                 this.editor.performanceMonitor.record('chunk-gpu-buffer-update', frame.id, { chunkId: id, pointBytes: chunk.byteSize });
             } finally {
-                this.chunkControllers.delete(key);
+                signal.removeEventListener('abort', abortChild);
+                if (this.chunkControllers.get(key)?.controller === controller) {
+                    this.chunkControllers.delete(key);
+                }
             }
         }));
         this.editor.performanceMonitor.record('visible-chunks-ready', frame.id, { visible: visible.size, loaded: loaded.size });
+    }
+
+    private canApplyChunk(frame: IFrame, generation: number, signal: AbortSignal): boolean {
+        return canApplyPointCloudChunk(
+            this.editor.getCurrentFrame()?.id,
+            String(frame.id),
+            this.generation,
+            generation,
+            signal.aborted,
+        );
     }
 
     setLoadMode(mode: LoadMode) {

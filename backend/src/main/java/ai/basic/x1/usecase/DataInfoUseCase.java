@@ -67,6 +67,8 @@ import static ai.basic.x1.util.Constants.*;
 @Slf4j
 public class DataInfoUseCase {
 
+    private static final int DEFAULT_LOCATION_SEGMENT_GAP_MS = 1000;
+
     private static final Map<String, String> EXPORTED_CLASS_NAME_MAP = Map.ofEntries(
             Map.entry("Barrel_barrier", "barrel_barrier"),
             Map.entry("Barrier", "barrier"),
@@ -365,6 +367,69 @@ public class DataInfoUseCase {
             }
         });
         return poses;
+    }
+
+    /**
+     * Returns stable scene-qualified location segment IDs for the requested frames.
+     * Segment boundaries are derived from the imported location samples, matching
+     * TrackSyncUseCase rather than relying on frame-name timestamp gaps.
+     */
+    public Map<Long, String> findLocationSegmentIdsByDataIds(
+            Long sceneId,
+            Collection<Long> dataIds,
+            Long userId) {
+        if (sceneId == null || CollUtil.isEmpty(dataIds) || userId == null) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        sceneVisibilityUseCase.requireSceneAccess(sceneId, userId);
+        Set<Long> requestedIds = new HashSet<>(dataIds);
+        List<DataInfo> frames = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
+                .in(DataInfo::getId, requestedIds)
+                .eq(DataInfo::getParentId, sceneId)
+                .eq(DataInfo::getType, ItemTypeEnum.SINGLE_DATA)
+                .eq(DataInfo::getIsDeleted, false));
+        if (frames.size() != requestedIds.size()
+                || frames.stream().anyMatch(frame ->
+                        !sceneId.equals(frame.getParentId())
+                                || !ItemTypeEnum.SINGLE_DATA.equals(frame.getType())
+                                || Boolean.TRUE.equals(frame.getIsDeleted()))) {
+            throw new UsecaseException(
+                    UsecaseCode.DATA_NOT_FOUND,
+                    "Requested data IDs are not active frames of scene: sceneId=" + sceneId);
+        }
+        List<SceneLocationSample> samples = sceneLocationSampleDAO.list(
+                Wrappers.lambdaQuery(SceneLocationSample.class)
+                        .eq(SceneLocationSample::getSceneId, sceneId)
+                        .orderByAsc(SceneLocationSample::getTimestampNs));
+        if (CollUtil.isEmpty(samples)) {
+            throw new UsecaseException(
+                    UsecaseCode.DATA_NOT_FOUND,
+                    "Location samples not found for scene: sceneId=" + sceneId);
+        }
+        List<DataInfo> timestampedFrames = frames.stream()
+                .map(frame -> new AbstractMap.SimpleEntry<>(
+                        frame, SceneLocationImportService.parseTimestampNs(frame.getName())))
+                .filter(entry -> entry.getValue() != null)
+                .sorted(Comparator.comparing(AbstractMap.SimpleEntry::getValue))
+                .map(AbstractMap.SimpleEntry::getKey)
+                .collect(Collectors.toList());
+        if (timestampedFrames.size() != requestedIds.size()) {
+            throw new UsecaseException(
+                    UsecaseCode.DATA_NOT_FOUND,
+                    "Location timestamp not found for requested frame: sceneId=" + sceneId);
+        }
+        List<Long> frameTimestamps = timestampedFrames.stream()
+                .map(frame -> SceneLocationImportService.parseTimestampNs(frame.getName()))
+                .collect(Collectors.toList());
+        List<Integer> segmentIds = LocationSegmenter.segmentFrames(
+                frameTimestamps,
+                samples.stream().map(SceneLocationSample::getTimestampNs).collect(Collectors.toList()),
+                DEFAULT_LOCATION_SEGMENT_GAP_MS);
+        Map<Long, String> segments = new HashMap<>();
+        for (int index = 0; index < timestampedFrames.size(); index++) {
+            segments.put(timestampedFrames.get(index).getId(), sceneId + ":" + segmentIds.get(index));
+        }
+        return segments;
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -1010,8 +1075,33 @@ public class DataInfoUseCase {
      * @param dataInfoQueryBO Query parameters
      * @return Serial number
      */
-    public Long export(DataInfoQueryBO dataInfoQueryBO) {
+    public Long export(DataInfoQueryBO dataInfoQueryBO, Long userId) {
         var dataset = datasetDAO.getById(dataInfoQueryBO.getDatasetId());
+        requireDatasetExportAccess(dataset, userId);
+        if (Boolean.TRUE.equals(dataInfoQueryBO.getExportGroundLabeledPcd())) {
+            if (!DatasetTypeEnum.LIDAR_BASIC.equals(dataset.getType())
+                    && !DatasetTypeEnum.LIDAR_FUSION.equals(dataset.getType())) {
+                throw new UsecaseException(
+                        UsecaseCode.PARAM_ERROR,
+                        "Ground-labeled PCD export is only supported for LiDAR datasets");
+            }
+            var dataIds = findExportDataIds(dataInfoQueryBO);
+            var fileName = String.format(
+                    "%s-ground-labeled-pcd-%s.zip",
+                    dataset.getName(),
+                    TemporalAccessorUtil.format(OffsetDateTime.now(), DatePattern.PURE_DATETIME_PATTERN));
+            var serialNumber = exportUseCase.createExportRecord(fileName);
+            try {
+                var frames = buildGroundLabeledPcdFrames(dataIds, dataset.getType());
+                executorService.execute(Objects.requireNonNull(TtlRunnable.get(() ->
+                        exportUseCase.exportGroundLabeledPcdZip(fileName, serialNumber, frames))));
+            } catch (RuntimeException exception) {
+                exportUseCase.failExportRecord(
+                        serialNumber,
+                        "Unable to start ground-labeled PCD export. Please retry or contact an administrator.");
+            }
+            return serialNumber;
+        }
         if (Boolean.TRUE.equals(dataInfoQueryBO.getIncludeAutoOcclusionResults())) {
             if (!DatasetTypeEnum.LIDAR_FUSION.equals(dataset.getType())) {
                 throw new UsecaseException(
@@ -1053,11 +1143,87 @@ public class DataInfoUseCase {
         } else {
             dataInfoQueryBO.setDataFormat(IMAGE.equals(dataInfoQueryBO.getDatasetType()) ? dataInfoQueryBO.getDataFormat() : DataFormatEnum.XTREME1);
         }
-        executorService.execute(Objects.requireNonNull(TtlRunnable.get(() ->
-                exportUseCase.asyncExportDataZip(fileName, serialNumber, classMap, resultMap, dataInfoQueryBO,
-                        this::findExportDataIds,
-                        this::processData))));
+        try {
+            executorService.execute(Objects.requireNonNull(TtlRunnable.get(() ->
+                    exportUseCase.asyncExportDataZip(fileName, serialNumber, classMap, resultMap, dataInfoQueryBO,
+                            this::findExportDataIds,
+                            this::processData))));
+        } catch (RuntimeException exception) {
+            exportUseCase.failExportRecord(
+                    serialNumber,
+                    "Unable to start export. Please retry or contact an administrator.");
+        }
         return serialNumber;
+    }
+
+    private void requireDatasetExportAccess(Dataset dataset, Long userId) {
+        var user = userUseCase.findById(userId);
+        if (dataset == null || Boolean.TRUE.equals(dataset.getIsDeleted()) || user == null) {
+            throw new UsecaseException(
+                    UsecaseCode.NOT_FOUND,
+                    "Dataset or user not found: datasetId="
+                            + (dataset == null ? null : dataset.getId())
+                            + ", userId=" + userId);
+        }
+        if (userId.equals(dataset.getCreatedBy()) || UserRoleEnum.ADMIN.equals(user.getRole())) {
+            return;
+        }
+        throw new UsecaseException(
+                UsecaseCode.PARAM_ERROR,
+                "User is not authorized for dataset: datasetId=" + dataset.getId() + ", userId=" + userId);
+    }
+
+    private List<GroundLabeledPcdExportFrame> buildGroundLabeledPcdFrames(
+            List<Long> dataIds,
+            DatasetTypeEnum datasetType) {
+        if (CollUtil.isEmpty(dataIds)) {
+            return List.of();
+        }
+        var groundTruthObjects = dataAnnotationObjectUseCase.findByDataIds(
+                dataIds,
+                false,
+                Collections.singletonList(GROUND_TRUTH));
+        var masksByDataId = groundTruthObjects.stream()
+                .map(DataInfoUseCase::groundCorrectionMask)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toMap(
+                        entry -> entry.getKey(),
+                        entry -> entry.getValue(),
+                        (first, ignored) -> first));
+        var frames = new ArrayList<GroundLabeledPcdExportFrame>();
+        for (DataInfoBO dataInfo : listByIds(dataIds, true)) {
+            var exportData = assembleExportDataContent(dataInfo, datasetType);
+            List<ExportDataLidarPointCloudFileBO> pointClouds =
+                    exportData instanceof LidarBasicDataExportBO
+                            ? ((LidarBasicDataExportBO) exportData).getLidarPointClouds()
+                            : ((LidarFusionDataExportBO) exportData).getLidarPointClouds();
+            for (int pointCloudIndex = 0; pointCloudIndex < pointClouds.size(); pointCloudIndex++) {
+                var pointCloud = pointClouds.get(pointCloudIndex);
+                frames.add(GroundLabeledPcdExportFrame.builder()
+                        .zipEntry(ExportUseCase.groundLabeledPcdZipEntry(
+                                dataInfo.getId(),
+                                pointCloudIndex))
+                        .pointCloudUrl(pointCloud.getInternalUrl())
+                        .groundCorrectionMask(masksByDataId.get(dataInfo.getId()))
+                        .build());
+            }
+        }
+        return frames;
+    }
+
+    static Map.Entry<Long, JSONObject> groundCorrectionMask(DataAnnotationObjectBO object) {
+        var attributes = object.getClassAttributes();
+        if (attributes == null) {
+            return null;
+        }
+        var objectType = attributes.getStr("objType");
+        if (!"GROUND_CORRECTION_MASK".equals(objectType)) {
+            objectType = attributes.getStr("type");
+        }
+        var mask = attributes.getJSONObject("groundCorrectionMask");
+        return "GROUND_CORRECTION_MASK".equals(objectType) && mask != null
+                ? Map.entry(object.getDataId(), mask)
+                : null;
     }
 
     /**
@@ -1065,7 +1231,7 @@ public class DataInfoUseCase {
      * root. The requested directory must be relative to that root so this API cannot write to an
      * arbitrary server path.
      */
-    public Long backupLabels(DataLabelBackupDTO dto) {
+    public Long backupLabels(DataLabelBackupDTO dto, Long userId) {
         var query = new DataInfoQueryBO();
         query.setDatasetId(dto.getDatasetId());
         query.setIds(dto.getIds());
@@ -1073,7 +1239,7 @@ public class DataInfoUseCase {
         query.setDataFormat(DataFormatEnum.XTREME1);
         query.setIncludeSourceData(false);
         query.setBackupDirectory(resolveBackupDirectory(dto.getDestinationDirectory()));
-        return export(query);
+        return export(query, userId);
     }
 
     private String resolveBackupDirectory(String destinationDirectory) {

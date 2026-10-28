@@ -69,6 +69,7 @@ export default class TrackManager {
 
         const touchedTrackIds = new Set<string>();
         objects.forEach((obj) => {
+            if (obj.objectType === ObjectType.TYPE_GROUND_CORRECTION_MASK) return;
             const userData = obj.userData as IUserData;
             const trackId = userData.trackId || '';
             touchedTrackIds.add(trackId);
@@ -104,6 +105,7 @@ export default class TrackManager {
 
         if (!Array.isArray(objects)) objects = [objects];
         objects.forEach((obj) => {
+            if (obj.objectType === ObjectType.TYPE_GROUND_CORRECTION_MASK) return;
             const userData = obj.userData as IUserData;
             const trackId = userData.trackId || '';
             if (!this.trackInfo.has(trackId)) return;

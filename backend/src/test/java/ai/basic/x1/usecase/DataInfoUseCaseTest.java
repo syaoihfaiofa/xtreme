@@ -8,10 +8,21 @@ import ai.basic.x1.entity.enums.DataAnnotationObjectSourceTypeEnum;
 import ai.basic.x1.entity.enums.DatasetTypeEnum;
 import ai.basic.x1.entity.enums.ObjectTypeEnum;
 import ai.basic.x1.usecase.exception.UsecaseException;
+import ai.basic.x1.adapter.port.dao.DataInfoDAO;
+import ai.basic.x1.adapter.port.dao.SceneLocationSampleDAO;
+import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
+import ai.basic.x1.adapter.port.dao.mybatis.model.SceneLocationSample;
+import ai.basic.x1.entity.enums.ItemTypeEnum;
 import cn.hutool.json.JSONUtil;
 import cn.hutool.json.JSONObject;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeAll;
 import org.springframework.test.util.ReflectionTestUtils;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.mockito.ArgumentCaptor;
 
 import java.math.BigDecimal;
 import java.util.Arrays;
@@ -25,8 +36,131 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 class DataInfoUseCaseTest {
+
+    @BeforeAll
+    static void initializeMybatisMetadata() {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(configuration, "DataInfoMapper"),
+                DataInfo.class);
+    }
+
+    @Test
+    void groundCorrectionMask_readsPersistedGroundMaskPayload() {
+        JSONObject mask = JSONUtil.createObj()
+                .set("version", 1)
+                .set("operations", JSONUtil.createArray());
+        DataAnnotationObjectBO object = DataAnnotationObjectBO.builder()
+                .dataId(100L)
+                .classAttributes(JSONUtil.createObj()
+                        .set("objType", "GROUND_CORRECTION_MASK")
+                        .set("groundCorrectionMask", mask))
+                .build();
+
+        var result = DataInfoUseCase.groundCorrectionMask(object);
+
+        assertEquals(100L, result.getKey());
+        assertEquals(mask, result.getValue());
+    }
+
+    @Test
+    void groundLabeledPcdZipEntry_usesStableSafeFrameFileName() {
+        assertEquals("frame-42-pointcloud-3.pcd",
+                ExportUseCase.groundLabeledPcdZipEntry(42L, 3));
+    }
+
+    @Test
+    void groundLabeledPcdZipEntry_rejectsPathTraversalAndSeparators() {
+        assertThrows(IllegalArgumentException.class,
+                () -> ExportUseCase.requireSafeGroundLabeledPcdZipEntry("../frame-42.pcd"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ExportUseCase.requireSafeGroundLabeledPcdZipEntry("frame-42/pointcloud-0.pcd"));
+        assertThrows(IllegalArgumentException.class,
+                () -> ExportUseCase.requireSafeGroundLabeledPcdZipEntry("/frame-42-pointcloud-0.pcd"));
+    }
+
+    @Test
+    void findLocationSegmentIds_rejectsFramesOutsideRequestedScene() {
+        DataInfoUseCase useCase = locationSegmentUseCase(List.of(locationFrame(20L, 11L, "frame_0_0")));
+
+        assertThrows(
+                UsecaseException.class,
+                () -> useCase.findLocationSegmentIdsByDataIds(10L, List.of(20L), 1L));
+    }
+
+    @Test
+    void findLocationSegmentIds_rejectsDeletedFrames() {
+        DataInfo deleted = locationFrame(20L, 10L, "frame_0_0");
+        deleted.setIsDeleted(true);
+        DataInfoUseCase useCase = locationSegmentUseCase(List.of(deleted));
+
+        assertThrows(
+                UsecaseException.class,
+                () -> useCase.findLocationSegmentIdsByDataIds(10L, List.of(20L), 1L));
+    }
+
+    @Test
+    void findLocationSegmentIds_rejectsSceneWithoutSamples() {
+        DataInfo frame = locationFrame(20L, 10L, "frame_0_0");
+        DataInfoUseCase useCase = locationSegmentUseCase(List.of(frame));
+
+        assertThrows(
+                UsecaseException.class,
+                () -> useCase.findLocationSegmentIdsByDataIds(10L, List.of(20L), 1L));
+    }
+
+    @Test
+    void findLocationSegmentIds_returnsRealSampleGapSegments() {
+        DataInfo first = locationFrame(20L, 10L, "frame_0_0");
+        DataInfo second = locationFrame(21L, 10L, "frame_1_1000000");
+        DataInfoUseCase useCase = locationSegmentUseCase(List.of(first, second));
+        SceneLocationSampleDAO sampleDAO = ReflectionTestUtils.getField(
+                useCase, "sceneLocationSampleDAO") instanceof SceneLocationSampleDAO
+                ? (SceneLocationSampleDAO) ReflectionTestUtils.getField(useCase, "sceneLocationSampleDAO")
+                : null;
+        when(sampleDAO.list(any())).thenReturn(List.of(
+                SceneLocationSample.builder().sceneId(10L).timestampNs(0L).build(),
+                SceneLocationSample.builder().sceneId(10L).timestampNs(1_001_000_000L).build()));
+
+        assertEquals(
+                java.util.Map.of(20L, "10:0", 21L, "10:1"),
+                useCase.findLocationSegmentIdsByDataIds(10L, List.of(20L, 21L), 1L));
+        ArgumentCaptor<LambdaQueryWrapper<DataInfo>> queryCaptor =
+                ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        DataInfoDAO dataInfoDAO = (DataInfoDAO) ReflectionTestUtils.getField(useCase, "dataInfoDAO");
+        verify(dataInfoDAO).list(queryCaptor.capture());
+        String sql = queryCaptor.getValue().getSqlSegment();
+        assertTrue(sql.contains("parent_id"));
+        assertTrue(sql.contains("type"));
+        assertTrue(sql.contains("is_deleted"));
+    }
+
+    private DataInfoUseCase locationSegmentUseCase(List<DataInfo> frames) {
+        DataInfoUseCase useCase = new DataInfoUseCase();
+        DataInfoDAO dataInfoDAO = mock(DataInfoDAO.class);
+        SceneLocationSampleDAO sampleDAO = mock(SceneLocationSampleDAO.class);
+        SceneVisibilityUseCase visibilityUseCase = mock(SceneVisibilityUseCase.class);
+        ReflectionTestUtils.setField(useCase, "dataInfoDAO", dataInfoDAO);
+        ReflectionTestUtils.setField(useCase, "sceneLocationSampleDAO", sampleDAO);
+        ReflectionTestUtils.setField(useCase, "sceneVisibilityUseCase", visibilityUseCase);
+        when(dataInfoDAO.list(any())).thenReturn(frames);
+        when(sampleDAO.list(any())).thenReturn(List.of());
+        return useCase;
+    }
+
+    private DataInfo locationFrame(Long id, Long sceneId, String name) {
+        return DataInfo.builder()
+                .id(id)
+                .datasetId(7L)
+                .parentId(sceneId)
+                .type(ItemTypeEnum.SINGLE_DATA)
+                .name(name)
+                .isDeleted(false)
+                .build();
+    }
 
     @Test
     void processData_revalidatesVisibilityRunImmediatelyBeforeSidecarMerge() {

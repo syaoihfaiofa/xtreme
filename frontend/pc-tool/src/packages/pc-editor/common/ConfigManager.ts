@@ -30,6 +30,7 @@ export default class ConfigManager {
             rgbHighlightThreshold: config.rgbHighlightThreshold,
             rgbHighlightStrength: config.rgbHighlightStrength,
             hideNonGroundRgb: config.hideNonGroundRgb ? 1 : -1,
+            hideGround: config.hideGround ? 1 : -1,
             sideViewContrastRadius: config.sideViewContrastRadius,
         });
     }

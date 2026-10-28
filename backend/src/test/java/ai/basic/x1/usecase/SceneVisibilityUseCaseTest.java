@@ -442,6 +442,32 @@ class SceneVisibilityUseCaseTest {
     }
 
     @Test
+    void requireSceneAccess_rejectsUnauthorizedUser() {
+        when(dataInfoDAO.getById(9L)).thenReturn(DataInfo.builder()
+                .id(9L)
+                .datasetId(8L)
+                .type(ItemTypeEnum.SCENE)
+                .isDeleted(false)
+                .build());
+        when(datasetDAO.getById(8L)).thenReturn(Dataset.builder()
+                .id(8L)
+                .type(DatasetTypeEnum.LIDAR_FUSION)
+                .createdBy(1L)
+                .isDeleted(false)
+                .build());
+        when(userDAO.getById(2L)).thenReturn(ai.basic.x1.adapter.port.dao.mybatis.model.User.builder()
+                .id(2L)
+                .role(UserRoleEnum.ANNOTATOR)
+                .build());
+
+        UsecaseException exception = assertThrows(
+                UsecaseException.class,
+                () -> useCase().requireSceneAccess(9L, 2L));
+
+        assertTrue(exception.getMessage().contains("not authorized"));
+    }
+
+    @Test
     void ensure_sourceHashUsesCanonicalAnnotationSnapshot() {
         prepareScene(List.of(DataInfo.FileNode.builder()
                 .name("camera_config")

@@ -18,6 +18,8 @@ public class PointCloudCRRespDTO {
     private Long previewPcdSize;
     /** Number of points in the full binary PCD. */
     private Long pointCount;
+    /** Applied ground-labeling rule for a type-4 conversion. */
+    private String groundRule;
     /** Number of points in the preview binary PCD. */
     private Long previewPointCount;
     private Long chunkManifestSize;

@@ -88,6 +88,37 @@ export enum ObjectType {
     TYPE_IRREGULAR_WALL = 'IRREGULAR_WALL',
     TYPE_2D_GROUND_POLYLINE = '2D_GROUND_POLYLINE',
     TYPE_2D_IRREGULAR_WALL = '2D_IRREGULAR_WALL',
+    TYPE_GROUND_CORRECTION_MASK = 'GROUND_CORRECTION_MASK',
+}
+
+export interface GroundCorrectionMaskPoint {
+    x: number;
+    y: number;
+}
+
+export interface GroundCorrectionMaskPolygonOperation {
+    type: 'polygon';
+    vertices: GroundCorrectionMaskPoint[];
+}
+
+export interface GroundCorrectionMaskBrushOperation {
+    type: 'brush';
+    center?: GroundCorrectionMaskPoint;
+    samples?: GroundCorrectionMaskPoint[];
+    radius: number;
+    heightRange?: {
+        min: number;
+        max: number;
+    };
+}
+
+export type GroundCorrectionMaskOperation =
+    | GroundCorrectionMaskPolygonOperation
+    | GroundCorrectionMaskBrushOperation;
+
+export interface GroundCorrectionMask {
+    version: 1;
+    operations: GroundCorrectionMaskOperation[];
 }
 
 // export interface IModelRun {
@@ -248,6 +279,7 @@ export interface IUserData {
     sourceId?: string;
     sourceType?: string;
     viewIndex?: number;
+    groundCorrectionMask?: GroundCorrectionMask;
 }
 
 export interface IObject extends IUserData {
@@ -381,6 +413,7 @@ export interface IConfig {
     rgbHighlightThreshold: number;
     rgbHighlightStrength: number;
     hideNonGroundRgb: boolean;
+    hideGround: boolean;
     sideViewContrastRadius: number;
     /** RGB-only, display-only parking-slot point cloud density controls. */
     parkingDensityAvailable: boolean;

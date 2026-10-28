@@ -77,6 +77,9 @@ public class DataInfoQueryDTO {
     /** Include point cloud and camera image blobs in LiDAR format exports. */
     private Boolean includeSourceData;
 
+    /** Export source PCD files with an appended uint8 ground field. */
+    private Boolean exportGroundLabeledPcd;
+
     /**
      * Data split type TRAINING,VALIDATION,TEST,NOT_SPLIT
      */

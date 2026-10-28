@@ -106,6 +106,9 @@ public class DataInfoQueryBO extends BaseQueryBO {
      */
     private Boolean includeAutoOcclusionResults;
 
+    /** Export source PCD files with an appended uint8 ground field. */
+    private Boolean exportGroundLabeledPcd;
+
     private Boolean isAllResult;
 
     /**

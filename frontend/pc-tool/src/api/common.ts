@@ -694,6 +694,23 @@ export async function getScenePoses(dataIds: Array<string | number>): Promise<Re
     }, {} as Record<string, IScenePose>);
 }
 
+/** Returns scene-qualified IDs from imported location-sample gap segmentation. */
+export async function getSceneLocationSegments(
+    sceneId: string,
+    dataIds: Array<string | number>,
+): Promise<Record<string, string>> {
+    const ids = dataIds.map((id) => String(id)).filter(Boolean);
+    if (!sceneId || !ids.length) return {};
+    const response = await get(
+        `/api/data/sceneLocationSegments?${queryStr({ sceneId, dataIds: ids })}`,
+    );
+    const raw = response?.data || response || {};
+    return Object.entries(raw).reduce((result, [id, segmentId]) => {
+        if (segmentId != null) result[String(id)] = String(segmentId);
+        return result;
+    }, {} as Record<string, string>);
+}
+
 export async function getUserInfo() {
     let url = `/api/user/logged`;
     let { data } = await get(url);

@@ -10,6 +10,7 @@ import { isArray } from 'lodash';
 import TWEEN from '@tweenjs/tween.js';
 import PointsMaterial from './material/PointsMaterial';
 import { Points } from './points';
+import type { ForceGroundOperation } from './points/forceGround';
 import * as _ from 'lodash';
 
 export default class PointCloud extends THREE.EventDispatcher {
@@ -37,6 +38,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     private renderTimer: number = 0;
     private tweenAnimationId: number = 0;
     private chunkPointIds = new Set<string>();
+    private groundCorrectionMask: readonly ForceGroundOperation[] = [];
 
     constructor() {
         super();
@@ -276,6 +278,14 @@ export default class PointCloud extends THREE.EventDispatcher {
     }
 
     // *********************************************
+    setGroundCorrectionMask(operations: readonly ForceGroundOperation[]): void {
+        this.groundCorrectionMask = operations;
+        this.groupPoints.children.forEach((child) => {
+            (child as Points).updateForceGround(this.groundCorrectionMask);
+        });
+        this.render();
+    }
+
     setPointCloudData(data: any) {
         this.clearDistanceMeasure();
         this.clearPointCloudChunks();
@@ -291,7 +301,7 @@ export default class PointCloud extends THREE.EventDispatcher {
             points = this.groupPoints.children[0] as Points;
         }
         // this.dispatchEvent({ type: Event.LOAD_POINT_BEFORE });
-        points.updateData(data);
+        points.updateData(data, this.groundCorrectionMask);
         this.render();
         // this.dispatchEvent({ type: Event.LOAD_POINT_AFTER });
     }
@@ -301,13 +311,18 @@ export default class PointCloud extends THREE.EventDispatcher {
         let points = this.groupPoints.children.find((child) => child.userData.chunkId === id) as Points;
         if (!points) {
             // The preview is replaced once the first high-density chunk arrives.
-            if (this.chunkPointIds.size === 0) this.groupPoints.clear();
+            if (this.chunkPointIds.size === 0) {
+                this.groupPoints.children.forEach((child) => {
+                    ((child as Points).geometry as THREE.BufferGeometry).dispose();
+                });
+                this.groupPoints.clear();
+            }
             points = new Points(this.material);
             points.userData.chunkId = id;
             this.groupPoints.add(points);
             this.chunkPointIds.add(id);
         }
-        points.updateData(data);
+        points.updateData(data, this.groundCorrectionMask);
         this.render();
     }
 

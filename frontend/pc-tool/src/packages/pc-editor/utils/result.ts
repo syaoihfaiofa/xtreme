@@ -33,6 +33,11 @@ import {
 } from './groundPolylineVisibility';
 import { copyClassAttrs, isClassAttrHasValue, isClassAttrVisible } from './classType';
 import { getUnmappedModelClassColor } from './modelClassMapping';
+import {
+    isGroundCorrectionMaskObjectType,
+    restoreGroundCorrectionMask,
+    serializeGroundCorrectionMaskMeta,
+} from './groundCorrectionMask';
 
 let position = new THREE.Vector3();
 let rotation = new THREE.Euler();
@@ -219,7 +224,10 @@ export function translateToObjectV2(object: IObject, baseClassType: IClassType) 
             isProjection: object.isProjection,
             projectedFromId: object.projectedFromId,
             classType: object.classType,
-            color: object.color
+            color: object.color,
+            ...(object.groundCorrectionMask
+                ? serializeGroundCorrectionMaskMeta(object.groundCorrectionMask)
+                : {}),
         },
         contour: {
             viewIndex: object.viewIndex,
@@ -285,8 +293,32 @@ export function convertObject2Annotate(objects: IObject[], editor: Editor) {
     //     classMap[e.name] = e;
     // });
     objects.forEach((obj) => {
-        let userData = {} as IUserData;
         let objType = obj.objType || obj.type;
+        if (isGroundCorrectionMaskObjectType(objType)) {
+            const restoration = restoreGroundCorrectionMask(
+                obj.groundCorrectionMask,
+                obj.backId || obj.frontId || obj.id,
+            );
+            if (!restoration.mask) {
+                console.warn(restoration.warning);
+                return;
+            }
+            const object = new THREE.Object3D() as THREE.Object3D & AnnotateObject;
+            object.visible = false;
+            object.userData = {
+                id: obj.frontId || obj.id,
+                backId: obj.backId,
+                sourceId: obj.sourceId,
+                sourceType: obj.sourceType,
+                groundCorrectionMask: restoration.mask,
+            };
+            if (object.userData.id) object.uuid = object.userData.id;
+            (object as any).objectType = ObjectType.TYPE_GROUND_CORRECTION_MASK;
+            bindInfo(object, obj);
+            annotates.push(object);
+            return;
+        }
+        let userData = {} as IUserData;
         let classConfig = editor.getClassType(obj.classId as string);
         if (!obj.classId && obj.classType) {
             classConfig = editor.getClassType(obj.classType);
@@ -553,6 +585,38 @@ export function convertAnnotate2Object(annotates: AnnotateObject[], editor: Edit
 
     annotates.forEach((obj) => {
         let userData = editor.getObjectUserData(obj) as Required<IUserData>;
+        if (isGroundCorrectionMaskObjectType((obj as any).objectType)) {
+            const mask = restoreGroundCorrectionMask(
+                userData.groundCorrectionMask,
+                userData.backId || userData.id,
+            );
+            if (!mask.mask) {
+                console.warn(mask.warning);
+                return;
+            }
+            updateObjectVersion(obj as any);
+            const bsObj = obj as any;
+            objects.push({
+                frontId: obj.uuid,
+                uuid: userData.backId || undefined,
+                objType: ObjectType.TYPE_GROUND_CORRECTION_MASK,
+                version: bsObj.version,
+                createdBy: bsObj.createdBy,
+                createdAt: bsObj.createdAt,
+                id: userData.id,
+                sourceId: userData.sourceId || editor.state.config.withoutTaskId,
+                sourceType: userData.sourceType || SourceType.DATA_FLOW,
+                groundCorrectionMask: mask.mask,
+                points: [],
+                pointN: 0,
+                viewIndex: 0,
+                attrs: {},
+                center3D: new THREE.Vector3(),
+                rotation3D: new THREE.Vector3(),
+                size3D: new THREE.Vector3(),
+            });
+            return;
+        }
         let points = obj instanceof Box
             ? []
             : obj instanceof GroundPolygon || obj instanceof GroundPolyline

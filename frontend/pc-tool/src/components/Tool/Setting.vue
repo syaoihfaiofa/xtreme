@@ -138,14 +138,18 @@
                         >
                             {{ 'RGB' }}
                         </a-radio-button>
-                        <a-radio-button
-                            v-if="config.pointInfo.hasRGB && config.pointInfo.hasIntensity"
-                            style="width: 100px; text-align: center"
-                            :value="ColorModeEnum.NON_GROUND"
-                        >
-                            {{ $$('setting_colornonground') }}
-                        </a-radio-button>
                     </a-radio-group>
+                    <a-checkbox
+                        v-if="
+                            config.pointInfo.hasRGB &&
+                            config.pointInfo.hasIntensity &&
+                            (config.pointColorMode === ColorModeEnum.PURE ||
+                                config.pointColorMode === ColorModeEnum.HEIGHT)
+                        "
+                        v-model:checked="config.hideGround"
+                    >
+                        {{ $$('setting_hideground') }}
+                    </a-checkbox>
                 </div>
             </div>
             <div
@@ -562,6 +566,9 @@
             case 'hideNonGroundRgb':
                 options.hideNonGroundRgb = config.hideNonGroundRgb ? 1 : -1;
                 break;
+            case 'hideGround':
+                options.hideGround = config.hideGround ? 1 : -1;
+                break;
             case 'sideViewContrastRadius':
                 options.sideViewContrastRadius = config.sideViewContrastRadius;
                 break;
@@ -665,6 +672,12 @@
         },
     );
 
+    watch(
+        () => config.hideGround,
+        () => {
+            update('hideGround');
+        },
+    );
 
     watch(
         () => [

@@ -23,6 +23,8 @@ import * as utils from '../utils';
 import { Const, ICmdName, IFilter, IUserData, SourceType } from '../type';
 import Event from '../config/event';
 import * as THREE from 'three';
+import { isGroundCorrectionMaskObjectType } from '../utils/groundCorrectionMask';
+import { mergePendingGroundCorrectionMask } from '../utils/groundCorrectionMaskEditing';
 
 interface ITransform2DBox {
     positions2?: Record<number, THREE.Vector2>;
@@ -42,6 +44,10 @@ export default class DataManager {
     dataMap: Map<string, AnnotateObject[]> = new Map();
     hasMap: Map<string, Map<string, AnnotateObject>> = new Map();
     private deletedObjectIdsByFrame: Map<string, Set<string>> = new Map();
+    // Propagation may update a frame before its normal annotation load finishes.
+    // Keep the hidden mask (or an explicit deletion) until LoadManager merges it
+    // into the complete server response.
+    private pendingGroundCorrectionMasks: Map<string, AnnotateObject | null> = new Map();
     // `dataMap` may temporarily contain only objects propagated by Track. Keep that distinct
     // from a frame whose complete annotation set was fetched from the server.
     private completeFrameObjectIds: Set<string> = new Set();
@@ -70,6 +76,20 @@ export default class DataManager {
             object instanceof GroundPolygon ||
             object instanceof GroundPolyline ||
             object instanceof IrregularWall
+        );
+    }
+
+    private isGroundCorrectionMaskObject(object: AnnotateObject): boolean {
+        return isGroundCorrectionMaskObjectType((object as any).objectType);
+    }
+
+    private capturePendingGroundCorrectionMask(frame: IFrame): void {
+        const frameKey = this.normalizeFrameId(frame.id);
+        if (this.completeFrameObjectIds.has(frameKey)) return;
+        const objects = this.dataMap.get(frameKey) || [];
+        this.pendingGroundCorrectionMasks.set(
+            frameKey,
+            objects.find((object) => this.isGroundCorrectionMaskObject(object)) || null,
         );
     }
 
@@ -111,6 +131,7 @@ export default class DataManager {
         const annotate2D: Object2D[] = [];
         const annotate3D: Array<Box | GroundPolygon | GroundPolyline | IrregularWall> = [];
         objects.forEach((object) => {
+            if (this.isGroundCorrectionMaskObject(object)) return;
             const userData = object.userData as Required<IUserData>;
             const sourceId = userData.sourceId || withoutTaskId;
             const sourceKey =
@@ -566,6 +587,7 @@ export default class DataManager {
         this.dataMap.clear();
         this.hasMap.clear();
         this.deletedObjectIdsByFrame.clear();
+        this.pendingGroundCorrectionMasks.clear();
         this.completeFrameObjectIds.clear();
     }
 
@@ -580,6 +602,7 @@ export default class DataManager {
     ) {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
+        this.capturePendingGroundCorrectionMask(frame);
         this.editor.pc.render();
 
         if (data?.type === 'transform') {
@@ -600,18 +623,26 @@ export default class DataManager {
     onAnnotatesAdd(objects: AnnotateObject[], frame?: IFrame) {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
+        this.capturePendingGroundCorrectionMask(frame);
         this.clearDisplayCache();
         this.editor.pc.render();
-        this.editor.trackManager.addTrackCount(objects, frame);
+        this.editor.trackManager.addTrackCount(
+            objects.filter((object) => !this.isGroundCorrectionMaskObject(object)),
+            frame,
+        );
         this.editor.dispatchEvent({ type: Event.ANNOTATE_ADD, data: { objects, frame } });
     }
 
     onAnnotatesRemove(objects: AnnotateObject[], frame?: IFrame) {
         frame = frame || this.editor.getCurrentFrame();
         frame.needSave = true;
+        this.capturePendingGroundCorrectionMask(frame);
         this.clearDisplayCache();
         this.editor.pc.render();
-        this.editor.trackManager.removeTrackCount(objects, frame);
+        this.editor.trackManager.removeTrackCount(
+            objects.filter((object) => !this.isGroundCorrectionMaskObject(object)),
+            frame,
+        );
         this.editor.dispatchEvent({ type: Event.ANNOTATE_REMOVE, data: { objects, frame } });
     }
 
@@ -635,7 +666,19 @@ export default class DataManager {
     }
 
     markFrameObjectsComplete(frameId: string | number): void {
-        this.completeFrameObjectIds.add(this.normalizeFrameId(frameId));
+        const frameKey = this.normalizeFrameId(frameId);
+        this.completeFrameObjectIds.add(frameKey);
+        this.pendingGroundCorrectionMasks.delete(frameKey);
+    }
+
+    mergePendingGroundCorrectionMask(
+        frameId: string | number,
+        objects: AnnotateObject[],
+    ): AnnotateObject[] {
+        return mergePendingGroundCorrectionMask(
+            objects,
+            this.pendingGroundCorrectionMasks.get(this.normalizeFrameId(frameId)),
+        );
     }
 
     /** Drop annotation-only caches so a server-side scene mutation is fetched on next visit. */
@@ -646,6 +689,7 @@ export default class DataManager {
             this.hasMap.delete(frameKey);
             this.completeFrameObjectIds.delete(frameKey);
             this.deletedObjectIdsByFrame.delete(frameKey);
+            this.pendingGroundCorrectionMasks.delete(frameKey);
             const frame = this.editor.getFrame(String(frameId));
             if (frame) frame.needSave = false;
         });
@@ -791,6 +835,7 @@ export default class DataManager {
         let startId = this.getMaxId(frameId) + 1;
         objects.forEach((e) => {
             let userData = e.userData as IUserData;
+            if (this.isGroundCorrectionMaskObject(e)) return;
             userData.id = userData.id || THREE.MathUtils.generateUUID();
 
             if (userData.trackId) return;

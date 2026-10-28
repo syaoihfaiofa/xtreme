@@ -155,6 +155,7 @@ function getDefaultConfig(): IConfig {
         rgbHighlightThreshold: 0.12,
         rgbHighlightStrength: 3.5,
         hideNonGroundRgb: true,
+        hideGround: false,
         sideViewContrastRadius: 0.6,
         parkingDensityAvailable: false,
         parkingDensityMotion: false,

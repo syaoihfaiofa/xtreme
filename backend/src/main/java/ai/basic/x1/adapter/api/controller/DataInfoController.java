@@ -16,6 +16,7 @@ import ai.basic.x1.entity.enums.SplitTargetDataTypeEnum;
 import ai.basic.x1.entity.enums.SplitTypeEnum;
 import ai.basic.x1.usecase.*;
 import ai.basic.x1.usecase.exception.UsecaseCode;
+import ai.basic.x1.usecase.exception.UsecaseException;
 import ai.basic.x1.util.DefaultConverter;
 import ai.basic.x1.util.ModelParamUtils;
 import ai.basic.x1.util.Page;
@@ -233,6 +234,21 @@ public class DataInfoController extends BaseDatasetController {
         return dataInfoUsecase.findPoseByDataIds(dataIds);
     }
 
+    /**
+     * Read-only location segment lookup for frame-local operations. IDs are
+     * scene-qualified and use the same imported-sample gap segmentation as sync.
+     */
+    @GetMapping("sceneLocationSegments")
+    public Map<Long, String> getSceneLocationSegments(
+            @RequestParam @NotNull(message = "sceneId cannot be null") Long sceneId,
+            @NotEmpty(message = "dataIds cannot be null") @RequestParam(required = false) List<Long> dataIds,
+            @LoggedUser LoggedUserDTO user) {
+        if (sceneId == null || CollectionUtil.isEmpty(dataIds)) {
+            throw new UsecaseException(UsecaseCode.PARAM_ERROR);
+        }
+        return dataInfoUsecase.findLocationSegmentIdsByDataIds(sceneId, dataIds, user.getId());
+    }
+
     @PostMapping("importSceneResult/{sceneId}")
     public SceneResultImportResultDTO importSceneResult(@PathVariable Long sceneId,
                                                         @RequestParam("file") MultipartFile file,
@@ -255,15 +271,19 @@ public class DataInfoController extends BaseDatasetController {
     }
 
     @GetMapping("export")
-    public String export(@Validated DataInfoQueryDTO dataInfoQueryDTO) {
+    public String export(
+            @Validated DataInfoQueryDTO dataInfoQueryDTO,
+            @LoggedUser LoggedUserDTO userDTO) {
         var dataInfoQueryBO = DefaultConverter.convert(dataInfoQueryDTO, DataInfoQueryBO.class);
         assert dataInfoQueryBO != null;
-        return String.valueOf(dataInfoUsecase.export(dataInfoQueryBO));
+        return String.valueOf(dataInfoUsecase.export(dataInfoQueryBO, userDTO.getId()));
     }
 
     @PostMapping("backupLabels")
-    public String backupLabels(@Validated @RequestBody DataLabelBackupDTO dto) {
-        return String.valueOf(dataInfoUsecase.backupLabels(dto));
+    public String backupLabels(
+            @Validated @RequestBody DataLabelBackupDTO dto,
+            @LoggedUser LoggedUserDTO userDTO) {
+        return String.valueOf(dataInfoUsecase.backupLabels(dto, userDTO.getId()));
     }
 
     @PostMapping("mergeModelRunsToGt")

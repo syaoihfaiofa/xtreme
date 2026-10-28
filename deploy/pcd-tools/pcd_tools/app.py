@@ -7,6 +7,7 @@ from functools import partial
 
 from pcd_tools.service import *
 from pcd_tools import *
+from pcd_tools.ground_label_export import append_ground_labels
 from pcd_tools.metrics.map import build_metrics
 
 
@@ -75,7 +76,7 @@ class AppHandler(BaseApiHandler):
         args = self.args
         data = self.get_field(args, key='data', type_=list, check_empty=True)
         task_type = self.get_field(args, key='type', type_=int)
-        if task_type < 1 or task_type > 3:
+        if task_type < 1 or task_type > 4:
             raise ValueError(f"invalid 'type' value: {task_type}")
 
         # renderParam
@@ -129,13 +130,13 @@ class AppHandler(BaseApiHandler):
             t.log_interval(f"DOWNLOAD pcd({len(r.content)/1024/1024:.1f}MB)")
 
             pcd_path = io.BytesIO(r.content)
-            pc = PointCloud(pcd_path)
+            pc = PointCloud(pcd_path, valid_points=task_type != 4)
             if pc.invalid_points > 0:
                 logging.info(f"\t{pc.invalid_points} invalid points removed")
             t.log_interval(f'LOAD pcd')
 
             # bev image
-            if task_type != 2:
+            if task_type not in (2, 4):
                 upload_image_path = item.get("uploadImagePath", None)
                 if upload_image_path is None:
                     return _build_item_error(1, "missing 'uploadImagePath'")
@@ -164,8 +165,31 @@ class AppHandler(BaseApiHandler):
 
                 t.log_interval(f"UPLOAD image({len(contents)/1024:.0f}KB)")
 
+            # Export a source PCD with an appended ground label while preserving all fields.
+            if task_type == 4:
+                upload_ground_pcd_path = item.get("uploadBinaryPcdPath")
+                if not isinstance(upload_ground_pcd_path, str) or not upload_ground_pcd_path:
+                    return _build_item_error(1, "missing 'uploadBinaryPcdPath'")
+                labeled, rule = append_ground_labels(pc.data, item.get("groundCorrectionMask"))
+                with io.BytesIO() as output:
+                    pc.save_pcd(labeled, output, pc.metadata)
+                    contents = output.getvalue()
+                response = requests.put(
+                    upload_ground_pcd_path,
+                    data=contents,
+                    headers={"Content-Type": "application/binary"},
+                )
+                if response.status_code != 200:
+                    return _build_item_error(
+                        2,
+                        f"upload labeled PCD failed({response.status_code}): '{upload_ground_pcd_path}'",
+                    )
+                result['binaryPcdSize'] = len(contents)
+                result['pointCount'] = len(labeled)
+                result['groundRule'] = rule
+                t.log_interval(f"UPLOAD labeled PCD({len(contents)/1024/1024:.1f}MB)")
             # normalize point cloud
-            if task_type != 3:
+            elif task_type != 3:
                 upload_binary_pcd_path = item.get("uploadBinaryPcdPath", None)
                 if upload_binary_pcd_path is None:
                     return _build_item_error(1, "missing 'uploadBinaryPcdPath'")
