@@ -43,6 +43,16 @@ function cloneMask(mask: GroundCorrectionMask | undefined): GroundCorrectionMask
                 return {
                     type: 'polygon',
                     vertices: operation.vertices.map((point) => ({ ...point })),
+                    ...(operation.heightRange
+                        ? { heightRange: { ...operation.heightRange } }
+                        : {}),
+                };
+            }
+            if (operation.type === 'cluster') {
+                return {
+                    type: 'cluster',
+                    points: operation.points.map((point) => ({ ...point })),
+                    radius: operation.radius,
                 };
             }
             return {
@@ -52,6 +62,7 @@ function cloneMask(mask: GroundCorrectionMask | undefined): GroundCorrectionMask
                     : { center: { ...operation.center! } }),
                 radius: operation.radius,
                 ...(operation.heightRange ? { heightRange: { ...operation.heightRange } } : {}),
+                ...(operation.erase ? { erase: true as const } : {}),
             };
         }),
     };

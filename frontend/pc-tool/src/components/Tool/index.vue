@@ -18,6 +18,7 @@
                         <component v-if="item.extra" :is="item.extra()" />
                     </div>
                 </template>
+                <GroundCorrectionPanel />
                 <div
                     v-show="editor.state.status === StatusType.Play"
                     class="over-not-allowed"
@@ -39,6 +40,7 @@
 
 <script setup lang="ts">
     import Setting from './base.vue';
+    import GroundCorrectionPanel from './GroundCorrectionPanel.vue';
     import useTool from './useTool';
     import { useInjectEditor } from '../../state';
     import { StatusType } from 'pc-editor';
@@ -55,6 +57,7 @@
         display: flex;
         flex-direction: column;
         align-items: center;
+        position: relative;
 
         .item {
             width: 38px;

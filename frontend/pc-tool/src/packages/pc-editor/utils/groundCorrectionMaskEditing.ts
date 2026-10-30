@@ -1,6 +1,7 @@
 import type {
     GroundCorrectionMask,
     GroundCorrectionMaskOperation,
+    GroundCorrectionMaskClusterPoint,
     GroundCorrectionMaskPoint,
 } from '../type';
 
@@ -53,7 +54,7 @@ export interface GroundCorrectionMaskToolContext {
 
 export function isGroundCorrectionMaskBevActive(editor: GroundCorrectionMaskToolContext): boolean {
     const mainView = editor.viewManager.getMainView();
-    return !!mainView && editor.activeView === mainView && !editor.state.config.showSingleImgView;
+    return !!mainView && !editor.state.config.showSingleImgView;
 }
 
 export function requestGroundCorrectionMaskPropagation(
@@ -96,6 +97,14 @@ export function transformGroundCorrectionMaskOperation(
         return {
             type: 'polygon',
             vertices: operation.vertices.map((point) => transformPoint(point, transform)),
+            ...(operation.heightRange ? { heightRange: { ...operation.heightRange } } : {}),
+        };
+    }
+    if (operation.type === 'cluster') {
+        return {
+            type: 'cluster',
+            points: operation.points.map((point) => transformClusterPoint(point, transform)),
+            radius: operation.radius,
         };
     }
     if (operation.samples) {
@@ -104,6 +113,7 @@ export function transformGroundCorrectionMaskOperation(
             samples: operation.samples.map((point) => transformPoint(point, transform)),
             radius: operation.radius,
             ...(operation.heightRange ? { heightRange: { ...operation.heightRange } } : {}),
+            ...(operation.erase ? { erase: true as const } : {}),
         };
     }
     return {
@@ -111,6 +121,7 @@ export function transformGroundCorrectionMaskOperation(
         center: transformPoint(operation.center!, transform),
         radius: operation.radius,
         ...(operation.heightRange ? { heightRange: { ...operation.heightRange } } : {}),
+        ...(operation.erase ? { erase: true as const } : {}),
     };
 }
 
@@ -201,6 +212,14 @@ function cloneOperation(operation: GroundCorrectionMaskOperation): GroundCorrect
         return {
             type: 'polygon',
             vertices: operation.vertices.map((point) => ({ ...point })),
+            ...(operation.heightRange ? { heightRange: { ...operation.heightRange } } : {}),
+        };
+    }
+    if (operation.type === 'cluster') {
+        return {
+            type: 'cluster',
+            points: operation.points.map((point) => ({ ...point })),
+            radius: operation.radius,
         };
     }
     return {
@@ -210,6 +229,7 @@ function cloneOperation(operation: GroundCorrectionMaskOperation): GroundCorrect
             : { center: { ...operation.center! } }),
         radius: operation.radius,
         ...(operation.heightRange ? { heightRange: { ...operation.heightRange } } : {}),
+        ...(operation.erase ? { erase: true as const } : {}),
     };
 }
 
@@ -269,6 +289,18 @@ function transformPoint(point: GroundCorrectionMaskPoint, transform: TransformMa
     return {
         x: transformed[0] + transform.translation[0],
         y: transformed[1] + transform.translation[1],
+    };
+}
+
+function transformClusterPoint(
+    point: GroundCorrectionMaskClusterPoint,
+    transform: TransformMatrix,
+): GroundCorrectionMaskClusterPoint {
+    const transformed = multiplyMatrixVector(transform.rotation, [point.x, point.y, point.z]);
+    return {
+        x: transformed[0] + transform.translation[0],
+        y: transformed[1] + transform.translation[1],
+        z: transformed[2] + transform.translation[2],
     };
 }
 

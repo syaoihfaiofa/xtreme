@@ -2,7 +2,7 @@ import { reactive, ref, onMounted, onBeforeUnmount, computed } from 'vue';
 import * as _ from 'lodash';
 import * as THREE from 'three';
 // import { colord } from 'colord';
-import { AnnotateObject } from 'pc-render';
+import { AnnotateObject, Rect } from 'pc-render';
 import {
     IUserData,
     Event as EditorEvent,

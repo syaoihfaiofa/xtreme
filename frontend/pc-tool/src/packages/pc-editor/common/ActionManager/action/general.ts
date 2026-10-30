@@ -185,6 +185,19 @@ export const editGroundCorrectionPolygon = define({
     },
 });
 
+export const toggleGroundCorrectionMode = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    execute(editor: Editor): void {
+        if (editor.state.config.groundCorrectionMode) {
+            editor.groundCorrectionMaskManager.deactivate();
+        } else {
+            editor.groundCorrectionMaskManager.activate();
+        }
+    },
+});
+
 export const editGroundCorrectionBrush = define({
     valid(editor: Editor) {
         return isGroundCorrectionMaskBevActive(editor);
@@ -194,6 +207,39 @@ export const editGroundCorrectionBrush = define({
     },
     end(editor: Editor): void {
         editor.groundCorrectionMaskManager.cancel();
+    },
+});
+
+export const editGroundCorrectionEraser = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    async execute(editor: Editor): Promise<void> {
+        await editor.groundCorrectionMaskManager.start('eraser');
+    },
+    end(editor: Editor): void {
+        editor.groundCorrectionMaskManager.cancel();
+    },
+});
+
+export const editGroundCorrectionCluster = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    async execute(editor: Editor): Promise<void> {
+        await editor.groundCorrectionMaskManager.start('cluster');
+    },
+    end(editor: Editor): void {
+        editor.groundCorrectionMaskManager.cancel();
+    },
+});
+
+export const applyGroundCorrectionBelowGround = define({
+    valid(editor: Editor) {
+        return isGroundCorrectionMaskBevActive(editor);
+    },
+    execute(editor: Editor): void {
+        editor.groundCorrectionMaskManager.applyBelowGround();
     },
 });
 

@@ -145,9 +145,9 @@ export const allItems: IItemConfig[] = [
         },
     },
     {
-        action: 'groundCorrectionPolygon',
-        label: '地面纠正区域',
-        title: () => '地面纠正区域：BEV 点击顶点，双击或 Enter 提交，Esc 取消',
+        action: 'groundCorrectionMode',
+        label: '地面纠正',
+        title: () => '地面纠正：设置 Z 范围后以区域或笔刷标记地面点',
         getIcon: function () {
             return 'iconfont icon-polygon1';
         },
@@ -155,49 +155,7 @@ export const allItems: IItemConfig[] = [
             return editor.state.modeConfig.actions['deleteObject'] && isGroundCorrectionMaskBevActive(editor);
         },
         isActive: function (editor: Editor) {
-            return editor.actionManager.currentAction?.name === 'editGroundCorrectionPolygon';
-        },
-    },
-    {
-        action: 'groundCorrectionBrush',
-        label: '地面纠正笔刷',
-        title: () => '地面纠正笔刷：在 BEV 拖动采样，松开鼠标提交',
-        getIcon: function () {
-            return 'iconfont icon-biaozhunkuang';
-        },
-        isDisplay: function (editor: Editor) {
-            return editor.state.modeConfig.actions['deleteObject'] && isGroundCorrectionMaskBevActive(editor);
-        },
-        isActive: function (editor: Editor) {
-            return editor.actionManager.currentAction?.name === 'editGroundCorrectionBrush';
-        },
-    },
-    {
-        action: 'deleteGroundCorrectionOperation',
-        label: '删除纠正',
-        title: () => '删除当前帧最后一条地面纠正操作',
-        getIcon: function () {
-            return 'iconfont icon-shanchuicon';
-        },
-        isDisplay: function (editor: Editor) {
-            return editor.state.modeConfig.actions['deleteObject'] && isGroundCorrectionMaskBevActive(editor);
-        },
-        isActive: function () {
-            return false;
-        },
-    },
-    {
-        action: 'propagateGroundCorrectionMask',
-        label: '应用纠正',
-        title: () => '应用当前帧地面纠正到前后 N 帧',
-        getIcon: function () {
-            return 'iconfont icon-fuzhuxian';
-        },
-        isDisplay: function (editor: Editor) {
-            return editor.state.modeConfig.actions['deleteObject'] && isGroundCorrectionMaskBevActive(editor);
-        },
-        isActive: function () {
-            return false;
+            return editor.state.config.groundCorrectionMode;
         },
     },
     {

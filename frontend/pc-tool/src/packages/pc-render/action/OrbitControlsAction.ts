@@ -12,6 +12,13 @@ export default class OrbitControlsAction extends Action {
     control: OrbitControls;
     private isInteracting: boolean = false;
     private orbitEndTimer?: number;
+    private rotationLocked = false;
+    private rotateEnabledBeforeLock?: boolean;
+    private cameraStateBeforeLock?: {
+        position: THREE.Vector3;
+        up: THREE.Vector3;
+        target: THREE.Vector3;
+    };
     private readonly controlStart = (): void => {
         this.clearOrbitEndTimer();
         this.startInteraction();
@@ -75,6 +82,46 @@ export default class OrbitControlsAction extends Action {
 
     toggle(enabled: boolean) {
         this.control.enabled = enabled;
+    }
+
+    lockTopDown(): void {
+        if (this.rotationLocked) return;
+        this.rotationLocked = true;
+        this.rotateEnabledBeforeLock = this.control.enableRotate;
+        this.cameraStateBeforeLock = {
+            position: this.renderView.camera.position.clone(),
+            up: this.renderView.camera.up.clone(),
+            target: this.control.target.clone(),
+        };
+        const distance = Math.max(this.renderView.camera.position.distanceTo(this.control.target), 10);
+        this.renderView.camera.position.copy(this.control.target).add(new THREE.Vector3(0, 0, distance));
+        this.renderView.camera.lookAt(this.control.target);
+        this.control.enableRotate = false;
+        this.control.update();
+        this.renderView.render();
+    }
+
+    unlockRotation(): void {
+        if (!this.rotationLocked) return;
+        this.rotationLocked = false;
+        this.control.enableRotate = this.rotateEnabledBeforeLock ?? true;
+        this.rotateEnabledBeforeLock = undefined;
+        if (this.cameraStateBeforeLock) {
+            this.renderView.camera.position.copy(this.cameraStateBeforeLock.position);
+            this.renderView.camera.up.copy(this.cameraStateBeforeLock.up);
+            this.control.target.copy(this.cameraStateBeforeLock.target);
+            this.renderView.camera.lookAt(this.control.target);
+            this.cameraStateBeforeLock = undefined;
+        }
+        this.control.update();
+        this.renderView.render();
+    }
+
+    rotateTopDown(horizontalDelta: number): void {
+        if (!this.rotationLocked) return;
+        const angle = horizontalDelta * Math.PI * 2 / this.control.domElement.clientHeight;
+        this.renderView.camera.rotateOnWorldAxis(new THREE.Vector3(0, 0, 1), angle);
+        this.renderView.render();
     }
 
     useDrawingElement(domElement: HTMLElement): void {

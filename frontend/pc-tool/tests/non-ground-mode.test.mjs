@@ -39,7 +39,7 @@ test('filters ground points without changing the single or height color mode', a
     assert.match(vertexShader, /forceGround > 0\.5/);
     assert.match(
         vertexShader,
-        /hideGround > 0\.0 && \(colorMode == 0\.0 \|\| colorMode == 1\.0\)[\s\S]*?forceGround > 0\.5[\s\S]*?vDiscard = 1\.0/,
+        /hideGround > 0\.0[\s\S]*?\(colorMode == 0\.0 \|\| colorMode == 1\.0\)[\s\S]*?forceGround > 0\.5[\s\S]*?vDiscard = 1\.0/,
     );
 });
 
@@ -103,6 +103,15 @@ test('shows the ground filter only for single and height modes', async () => {
     );
     assert.match(source, /v-model:checked="config\.hideGround"/);
     assert.doesNotMatch(source, /ColorModeEnum\.NON_GROUND/);
+});
+
+test('syncs the initial color mode uniform so ground hiding works before any mode switch', async () => {
+    const source = await readFile(
+        new URL('../src/packages/pc-editor/common/ConfigManager.ts', import.meta.url),
+        'utf8',
+    );
+
+    assert.match(source, /initConfig\(\) \{[\s\S]*?colorMode: config\.pointColorMode \|\| 0,/);
 });
 
 test('does not override side-view colors for a removed dedicated mode', async () => {

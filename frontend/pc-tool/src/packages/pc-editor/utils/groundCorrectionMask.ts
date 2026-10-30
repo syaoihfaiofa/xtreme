@@ -3,8 +3,11 @@ import type {
     GroundCorrectionMaskOperation,
     GroundCorrectionMaskPolygonOperation,
     GroundCorrectionMaskBrushOperation,
+    GroundCorrectionMaskClusterOperation,
     ObjectType,
 } from '../type';
+
+const MAX_CLUSTER_POINTS = 10_000;
 
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value);
@@ -16,14 +19,26 @@ function isPoint(value: unknown): value is { x: number; y: number } {
     return isFiniteNumber(point.x) && isFiniteNumber(point.y);
 }
 
+function hasValidHeightRange(value: unknown): boolean {
+    if (value === undefined) return true;
+    if (!value || typeof value !== 'object') return false;
+    const heightRange = value as { min?: unknown; max?: unknown };
+    return (
+        isFiniteNumber(heightRange.min) &&
+        isFiniteNumber(heightRange.max) &&
+        heightRange.min <= heightRange.max
+    );
+}
+
 function validatePolygonOperation(value: unknown): value is GroundCorrectionMaskPolygonOperation {
     if (!value || typeof value !== 'object') return false;
-    const operation = value as { type?: unknown; vertices?: unknown };
+    const operation = value as { type?: unknown; vertices?: unknown; heightRange?: unknown };
     return (
         operation.type === 'polygon' &&
         Array.isArray(operation.vertices) &&
         operation.vertices.length >= 3 &&
-        operation.vertices.every(isPoint)
+        operation.vertices.every(isPoint) &&
+        hasValidHeightRange(operation.heightRange)
     );
 }
 
@@ -35,9 +50,11 @@ function validateBrushOperation(value: unknown): value is GroundCorrectionMaskBr
         samples?: unknown;
         radius?: unknown;
         heightRange?: unknown;
+        erase?: unknown;
     };
     if (
         operation.type !== 'brush' ||
+        (operation.erase !== undefined && operation.erase !== true) ||
         (!isPoint(operation.center) &&
             (!Array.isArray(operation.samples) ||
                 operation.samples.length === 0 ||
@@ -47,18 +64,33 @@ function validateBrushOperation(value: unknown): value is GroundCorrectionMaskBr
     ) {
         return false;
     }
-    if (operation.heightRange === undefined) return true;
-    if (!operation.heightRange || typeof operation.heightRange !== 'object') return false;
-    const heightRange = operation.heightRange as { min?: unknown; max?: unknown };
+    return hasValidHeightRange(operation.heightRange);
+}
+
+function validateClusterOperation(value: unknown): value is GroundCorrectionMaskClusterOperation {
+    if (!value || typeof value !== 'object') return false;
+    const operation = value as { type?: unknown; points?: unknown; radius?: unknown };
     return (
-        isFiniteNumber(heightRange.min) &&
-        isFiniteNumber(heightRange.max) &&
-        heightRange.min <= heightRange.max
+        operation.type === 'cluster' &&
+        Array.isArray(operation.points) &&
+        operation.points.length > 0 &&
+        operation.points.length <= MAX_CLUSTER_POINTS &&
+        operation.points.every(
+            (point) =>
+                isPoint(point) &&
+                isFiniteNumber((point as { z?: unknown }).z),
+        ) &&
+        isFiniteNumber(operation.radius) &&
+        operation.radius > 0
     );
 }
 
 function validateOperation(value: unknown): value is GroundCorrectionMaskOperation {
-    return validatePolygonOperation(value) || validateBrushOperation(value);
+    return (
+        validatePolygonOperation(value) ||
+        validateBrushOperation(value) ||
+        validateClusterOperation(value)
+    );
 }
 
 export function isGroundCorrectionMaskObjectType(type: ObjectType | undefined): boolean {
@@ -84,6 +116,16 @@ export function deserializeGroundCorrectionMask(value: unknown): GroundCorrectio
                 return {
                     type: 'polygon',
                     vertices: operation.vertices.map((vertex) => ({ ...vertex })),
+                    ...(operation.heightRange
+                        ? { heightRange: { ...operation.heightRange } }
+                        : {}),
+                };
+            }
+            if (operation.type === 'cluster') {
+                return {
+                    type: 'cluster',
+                    points: operation.points.map((point) => ({ ...point })),
+                    radius: operation.radius,
                 };
             }
             return {
@@ -95,6 +137,7 @@ export function deserializeGroundCorrectionMask(value: unknown): GroundCorrectio
                 ...(operation.heightRange
                     ? { heightRange: { ...operation.heightRange } }
                     : {}),
+                ...(operation.erase ? { erase: true as const } : {}),
             };
         }),
     };

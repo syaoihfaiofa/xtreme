@@ -102,7 +102,32 @@ test('applies automatic and forced ground filtering without changing independent
             hideGround: true,
             hideNonGroundRgb: false,
             forceGround: 1,
+            groundCorrectionPreview: true,
             ...automaticNonGround,
+        }),
+        false,
+    );
+    assert.equal(
+        shouldDiscardByGroundFilter({
+            colorMode: 1,
+            hideGround: true,
+            hideNonGroundRgb: false,
+            forceGround: 1,
+            groundCorrectionPreview: true,
+            ...automaticNonGround,
+            color: [23, 23, 23],
+        }),
+        true,
+    );
+    assert.equal(
+        shouldDiscardByGroundFilter({
+            colorMode: 1,
+            hideGround: true,
+            hideNonGroundRgb: false,
+            forceGround: 1,
+            groundCorrectionPreview: true,
+            hasColor: false,
+            hasIntensity: false,
         }),
         true,
     );
@@ -314,16 +339,18 @@ test('marks points inside polygons and leaves points outside unmarked', async ()
     const forceGround = calculateForceGround(
         new Float32Array([
             0.5, 0.5, 0,
+            0.5, 0.5, 2,
             1.5, 0.5, 0,
             0, 0.5, 0,
         ]),
         [{
             type: 'polygon',
             vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }],
+            heightRange: { min: -1, max: 1 },
         }],
     );
 
-    assert.deepEqual([...forceGround], [1, 0, 1]);
+    assert.deepEqual([...forceGround], [1, 0, 0, 1]);
 });
 
 test('marks brush boundaries and respects optional height ranges', async () => {
@@ -365,6 +392,61 @@ test('combines overlapping polygon and brush operations', async () => {
     );
 
     assert.deepEqual([...forceGround], [1, 1, 0]);
+});
+
+test('marks only exact persisted cluster points using a spatial hash', async () => {
+    const { calculateForceGround } = await loadForceGround();
+
+    const forceGround = calculateForceGround(
+        new Float32Array([
+            0, 0, 0,
+            0.29, 0, 0,
+            0.31, 0, 0,
+            0, 0, 0.31,
+            10, 10, 10,
+        ]),
+        [{
+            type: 'cluster',
+            points: [{ x: 0, y: 0, z: 0 }],
+            radius: 0.3,
+        }],
+    );
+
+    assert.deepEqual([...forceGround], [1, 1, 0, 0, 0]);
+});
+
+test('eraser strokes undo only earlier corrections and later operations can re-mark', async () => {
+    const { calculateForceGround } = await loadForceGround();
+    const square = {
+        type: 'polygon',
+        vertices: [{ x: 0, y: 0 }, { x: 4, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 }],
+    };
+    const eraser = {
+        type: 'brush',
+        samples: [{ x: 1, y: 1 }],
+        radius: 0.5,
+        heightRange: { min: -1, max: 1 },
+        erase: true,
+    };
+    const positions = new Float32Array([
+        1, 1, 0,
+        1, 1, 2,
+        3, 3, 0,
+        6, 6, 0,
+    ]);
+
+    assert.deepEqual(
+        [...calculateForceGround(positions, [square, eraser])],
+        [0, 1, 1, 0],
+    );
+    assert.deepEqual(
+        [...calculateForceGround(positions, [square, eraser, square])],
+        [1, 1, 1, 0],
+    );
+    assert.deepEqual(
+        [...calculateForceGround(positions, [eraser, square])],
+        [1, 1, 1, 0],
+    );
 });
 
 test('creates matching forceGround attributes for full and late chunk point clouds', async () => {

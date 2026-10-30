@@ -57,6 +57,7 @@ function getShaderCode(
     uniform float rgbHighlightStrength;
     uniform float hideNonGroundRgb;
     uniform float hideGround;
+    uniform float groundCorrectionPreview;
     uniform float sideViewContrast;
     uniform vec3 sideViewContrastCenters[4];
     uniform float sideViewContrastRadius;
@@ -246,24 +247,63 @@ function getShaderCode(
         } else {
             vColor = getColor(position.z);
         }
+        #ifdef FLAG_COLOR
+        #ifdef FLAG_INTENSITY
         if(
-            hideGround > 0.0 && (colorMode == 0.0 || colorMode == 1.0) &&
+            hideGround > 0.0 &&
+            (colorMode == 0.0 || colorMode == 1.0) &&
+            (
+                (
+                    forceGround > ${FORCE_GROUND_THRESHOLD} &&
+                    (
+                        groundCorrectionPreview <= 0.0 ||
+                        !(
+                            abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                            abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                            abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
+                        )
+                    )
+                ) ||
+                (
+                    forceGround <= ${FORCE_GROUND_THRESHOLD} &&
+                    !(
+                        abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                        abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                        abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
+                    )
+                )
+            )
+        ){
+            vDiscard = 1.0;
+        }
+        #else
+        if(
+            hideGround > 0.0 &&
+            (colorMode == 0.0 || colorMode == 1.0) &&
             forceGround > ${FORCE_GROUND_THRESHOLD}
         ){
             vDiscard = 1.0;
         }
+        #endif
+        #else
+        if(
+            hideGround > 0.0 &&
+            (colorMode == 0.0 || colorMode == 1.0) &&
+            forceGround > ${FORCE_GROUND_THRESHOLD}
+        ){
+            vDiscard = 1.0;
+        }
+        #endif
         #ifdef FLAG_COLOR
         #ifdef FLAG_INTENSITY
         if(
-            hideGround > 0.0 && (colorMode == 0.0 || colorMode == 1.0) &&
-            forceGround <= ${FORCE_GROUND_THRESHOLD} &&
-            !(
-                abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
-                abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
-                abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
-            )
+            groundCorrectionPreview > 0.0 &&
+            forceGround > ${FORCE_GROUND_THRESHOLD} &&
+            abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+            abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+            abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
         ){
-            vDiscard = 1.0;
+            vColor = vec3(0.5);
         }
         #endif
         #endif
@@ -398,6 +438,7 @@ export interface IUniformOption {
     rgbHighlightStrength?: number;
     hideNonGroundRgb?: 1 | -1;
     hideGround?: 1 | -1;
+    groundCorrectionPreview?: 1 | -1;
     sideViewContrast?: 1 | -1;
     sideViewContrastCenters?: THREE.Vector3[];
     sideViewContrastRadius?: number;
@@ -447,6 +488,7 @@ export default class PointsMaterial extends THREE.RawShaderMaterial {
                 rgbHighlightStrength: { value: 3.5 },
                 hideNonGroundRgb: { value: 1 },
                 hideGround: { value: -1 },
+                groundCorrectionPreview: { value: -1 },
                 sideViewContrast: { value: -1 },
                 sideViewContrastCenters: {
                     value: Array.from({ length: 4 }, () => new THREE.Vector3(1e6, 1e6, 1e6)),

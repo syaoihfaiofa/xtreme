@@ -96,9 +96,19 @@ export interface GroundCorrectionMaskPoint {
     y: number;
 }
 
+export interface GroundCorrectionMaskClusterPoint extends GroundCorrectionMaskPoint {
+    z: number;
+}
+
+export interface GroundCorrectionMaskHeightRange {
+    min: number;
+    max: number;
+}
+
 export interface GroundCorrectionMaskPolygonOperation {
     type: 'polygon';
     vertices: GroundCorrectionMaskPoint[];
+    heightRange?: GroundCorrectionMaskHeightRange;
 }
 
 export interface GroundCorrectionMaskBrushOperation {
@@ -106,15 +116,21 @@ export interface GroundCorrectionMaskBrushOperation {
     center?: GroundCorrectionMaskPoint;
     samples?: GroundCorrectionMaskPoint[];
     radius: number;
-    heightRange?: {
-        min: number;
-        max: number;
-    };
+    heightRange?: GroundCorrectionMaskHeightRange;
+    /** Restores the automatic classification for points corrected by earlier operations. */
+    erase?: true;
+}
+
+export interface GroundCorrectionMaskClusterOperation {
+    type: 'cluster';
+    points: GroundCorrectionMaskClusterPoint[];
+    radius: number;
 }
 
 export type GroundCorrectionMaskOperation =
     | GroundCorrectionMaskPolygonOperation
-    | GroundCorrectionMaskBrushOperation;
+    | GroundCorrectionMaskBrushOperation
+    | GroundCorrectionMaskClusterOperation;
 
 export interface GroundCorrectionMask {
     version: 1;
@@ -378,6 +394,11 @@ export interface IConfig {
     activeTranslate: boolean;
     groundShapeSplitEdit: boolean;
     pointDistanceMeasure: boolean;
+    groundCorrectionMode: boolean;
+    groundCorrectionHeightRange: [number, number];
+    groundCorrectionClusterRadius: number;
+    groundCorrectionPickZ: number;
+    groundCorrectionClusterHeightTolerance: number;
     activeTrack: boolean;
     circleRadius: number;
     activeHelper2d: IHelper2D[];

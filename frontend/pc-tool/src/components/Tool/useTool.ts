@@ -82,6 +82,9 @@ export default function useTool() {
             case 'pointDistanceMeasure':
                 editor.actionManager.execute('togglePointDistanceMeasure');
                 break;
+            case 'groundCorrectionMode':
+                editor.actionManager.execute('toggleGroundCorrectionMode');
+                break;
             case 'groundCorrectionPolygon':
                 editor.actionManager.execute('editGroundCorrectionPolygon');
                 break;

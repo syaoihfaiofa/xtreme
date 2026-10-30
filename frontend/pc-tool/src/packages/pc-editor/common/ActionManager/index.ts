@@ -23,6 +23,7 @@ export default class ActionManager {
     editor: Editor;
     actions: Record<string, IAction>;
     currentAction: IAction | null = null;
+    private currentRunId = 0;
     constructor(editor: Editor) {
         this.editor = editor;
         this.actions = { ...Actions };
@@ -52,15 +53,19 @@ export default class ActionManager {
             console.log('action start:', action.name);
 
             this.currentAction = action;
+            const runId = ++this.currentRunId;
             try {
                 result = await action.execute(this.editor, args);
             } catch (e) {
                 console.error('action error:', name);
                 console.error(e);
             }
-            this.currentAction = null;
-            action.end(this.editor);
-            (this.editor as any).parkingDensityManager?.refresh();
+            // A run stopped via stopCurrentAction already ended; another action may be running now.
+            if (this.currentRunId === runId && this.currentAction === action) {
+                this.currentAction = null;
+                action.end(this.editor);
+                (this.editor as any).parkingDensityManager?.refresh();
+            }
             console.log('action end:', name);
         }
 
@@ -85,10 +90,12 @@ export default class ActionManager {
     stopCurrentAction() {
         if (!this.currentAction) return;
 
-        this.currentAction.end(this.editor);
-        console.log(`stop action: ${this.currentAction.name}`);
-
+        const action = this.currentAction;
         this.currentAction = null;
+        this.currentRunId++;
+        action.end(this.editor);
+        console.log(`stop action: ${action.name}`);
+
         (this.editor as any).parkingDensityManager?.refresh();
     }
 

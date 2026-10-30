@@ -37,6 +37,7 @@ test('serializes and restores ordered polygon and brush mask operations', async 
                     { x: 3, y: 4 },
                     { x: 5, y: 6 },
                 ],
+                heightRange: { min: -2, max: 1 },
             },
             {
                 type: 'brush',
@@ -82,6 +83,36 @@ test('round-trips a mask through classAttributes.meta', async () => {
     };
 
     assert.deepEqual(deserializeGroundCorrectionMaskMeta(classAttributes.meta), payload);
+});
+
+test('serializes bounded three-dimensional cluster point sets', async () => {
+    const {
+        deserializeGroundCorrectionMask,
+        serializeGroundCorrectionMask,
+    } = await loadGroundCorrectionMask();
+    const payload = {
+        version: 1,
+        operations: [{
+            type: 'cluster',
+            points: [{ x: 1, y: 2, z: 3 }, { x: 1.1, y: 2, z: 3 }],
+            radius: 0.3,
+        }],
+    };
+
+    const serialized = serializeGroundCorrectionMask(payload);
+    assert.deepEqual(serialized, payload);
+    assert.notEqual(serialized.operations[0].points, payload.operations[0].points);
+    assert.throws(
+        () => deserializeGroundCorrectionMask({
+            version: 1,
+            operations: [{
+                type: 'cluster',
+                points: Array.from({ length: 10_001 }, () => ({ x: 0, y: 0, z: 0 })),
+                radius: 0.3,
+            }],
+        }),
+        /GROUND_CORRECTION_MASK/,
+    );
 });
 
 test('reports invalid mask payloads without mutating the source object', async () => {

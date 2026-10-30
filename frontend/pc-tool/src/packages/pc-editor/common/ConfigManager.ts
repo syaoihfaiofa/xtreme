@@ -18,6 +18,8 @@ export default class ConfigManager {
         this.editor.pc.material.setUniforms({
             // trimType: config.type === 'range-only' ? 1 : 2,
             pointSize: config.pointSize * 10,
+            // Ground hiding requires colorMode 0/1; the material default (-1) silently disables it.
+            colorMode: config.pointColorMode || 0,
             edgeColor: config.edgeColor,
             pointHeight: new THREE.Vector2().fromArray(config.pointHeight),
             rgbEnhance: config.rgbEnhance ? 1 : -1,
