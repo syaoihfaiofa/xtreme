@@ -38,6 +38,14 @@ export const animation = {
 const noClassifyKey = '__NO__Classify__' + Date.now();
 const noClassKey = '__NO__Class__' + Date.now();
 
+export function getClassVisible(item: IClass): boolean {
+    return item.data.some((track) => track.data.some((object) => object.visible));
+}
+
+export function getClassifyObjectCount(classify: IClassify): number {
+    return classify.data.reduce((count, item) => count + item.data.length, 0);
+}
+
 export default function useInstance() {
     let editor = useInjectEditor();
     const pc = editor.pc;
@@ -617,30 +625,26 @@ export default function useInstance() {
     }
 
     function filterInfo(classifyInfo: IClassify) {
-        let objectN = 0;
         let classifyVisible = false;
         classifyInfo.data.forEach((classInfo) => {
-            let classVisible = false;
             classInfo.data.forEach((trackInfo) => {
                 let hasVisible = false;
                 let haInvisible = false;
                 trackInfo.data.forEach((e) => {
                     if (e.visible) {
                         hasVisible = true;
-                        classifyVisible = true;
-                        classVisible = true;
                     }
                     if (e.invisible) haInvisible = true;
                 });
                 trackInfo.visible = hasVisible;
                 trackInfo.invisible = haInvisible;
-                objectN++;
             });
-            classInfo.visible = classVisible;
+            classInfo.visible = getClassVisible(classInfo);
+            if (classInfo.visible) classifyVisible = true;
         });
         classifyInfo.visible = classifyVisible;
-        classifyInfo.objectN = objectN;
-        return objectN;
+        classifyInfo.objectN = getClassifyObjectCount(classifyInfo);
+        return classifyInfo.objectN;
     }
 
     function getClassify(userData: IUserData) {
@@ -702,6 +706,7 @@ export default function useInstance() {
     ) {
         switch (action) {
             case 'toggleVisible':
+                item.visible = getClassVisible(item);
                 classHandler.onToggleVisible(item);
                 break;
             case 'edit':

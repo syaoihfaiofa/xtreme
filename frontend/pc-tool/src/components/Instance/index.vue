@@ -83,7 +83,7 @@
                                         <EyeOutlined
                                             :title="$$('title-hide')"
                                             @click.stop="onClassTool('toggleVisible', item)"
-                                            v-if="item.visible"
+                                            v-if="getClassVisible(item)"
                                         />
                                         <EyeInvisibleOutlined
                                             :title="$$('title-show')"
@@ -118,7 +118,7 @@
         EditOutlined,
     } from '@ant-design/icons-vue';
     import useUI from '../../hook/useUI';
-    import useInstance, { animation } from './useInstance';
+    import useInstance, { animation, getClassVisible } from './useInstance';
     import Header from './Header.vue';
     // import Collapse from '../../Collapse/index.vue';
 

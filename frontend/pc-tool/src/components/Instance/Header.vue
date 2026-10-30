@@ -3,7 +3,7 @@
         <span class="collapse-title">
             <!-- <span>{{ $$('result-pre') }}</span> -->
             <span class="result-classify-name limit">Instances</span>
-            ({{ data.objectN }})
+            ({{ instanceCount }})
         </span>
         <div class="tool">
             <a-popover
@@ -70,11 +70,12 @@
 </template>
 
 <script setup lang="ts">
-    import { ref, watch } from 'vue';
+    import { computed, ref, watch } from 'vue';
     import useUI from '../../hook/useUI';
     import { useInjectEditor } from '../../state';
     import * as locale from './lang';
     import { IClassify } from './type';
+    import { getClassifyObjectCount } from './useInstance';
     import { EyeOutlined } from '@ant-design/icons-vue';
     import {
         INSTANCE_VISIBILITY_TYPES,
@@ -108,6 +109,7 @@
     let visibilityScope = ref<InstanceVisibilityScope>('current-frame');
     let visibilityMenuOpen = ref(false);
     let hiddenTypes = ref<InstanceVisibilityType[]>([]);
+    let instanceCount = computed(() => getClassifyObjectCount(props.data));
 
     watch(
         [visibilityScope, () => props.visibilityFilter, () => props.frameId],
