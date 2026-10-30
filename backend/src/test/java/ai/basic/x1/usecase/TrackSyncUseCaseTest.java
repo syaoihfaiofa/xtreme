@@ -615,14 +615,15 @@ class TrackSyncUseCaseTest {
     }
 
     @Test
-    void isStaticProjectionEligible_allowsUnlabelledFrameInSameSegments() {
-        assertTrue(TrackSyncUseCase.isStaticProjectionEligible(
-                new TrackSyncUseCase.Pose(0D, 0D, 0D, 0D),
-                new TrackSyncUseCase.Pose(0D, 0D, 0D, 0D),
-                true,
-                4,
-                4,
-                true));
+    void computeReachableFrameIds_stopsAfterMaxConsecutiveMissingFrames() {
+        List<DataInfo> frames = List.of(frame(1), frame(2), frame(3), frame(4), frame(5), frame(6));
+        Map<Long, DataAnnotationObject> existingByDataId = Map.of(
+                1L, DataAnnotationObject.builder().build(),
+                3L, DataAnnotationObject.builder().build());
+
+        assertEquals(
+                Set.of(1L, 2L, 3L, 4L),
+                TrackSyncUseCase.computeReachableFrameIds(3L, frames, existingByDataId, 1));
     }
 
     @Test
