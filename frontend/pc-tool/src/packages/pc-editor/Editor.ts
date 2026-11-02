@@ -307,8 +307,17 @@ export default class Editor extends THREE.EventDispatcher {
     }
     setCurrentTrack(trackId: string | undefined = undefined, trackName: string) {
         if (this.currentTrack !== trackId) {
+            const previousTrackId = this.currentTrack;
+            if (previousTrackId) {
+                this.performanceMonitor.end('track-selection-total', previousTrackId, {
+                    superseded: true,
+                });
+            }
             this.currentTrack = trackId;
             this.currentTrackName = trackName;
+            if (trackId) {
+                this.performanceMonitor.start('track-selection-total', trackId);
+            }
             this.dispatchEvent({ type: Event.CURRENT_TRACK_CHANGE, data: this.currentTrack });
             if (this.state.config.autoLoad && this.state.config.filterFramesByTrack) {
                 this.dataResource.load();
@@ -382,7 +391,7 @@ export default class Editor extends THREE.EventDispatcher {
     isFrameAllowedByTrackFilter(index: number): boolean {
         return (
             !this.isTrackFrameFilterActive() ||
-            this.trackManager.hasTrackAtFrame(this.currentTrack, index)
+            this.trackManager.getTrackFrameIndices(this.currentTrack).includes(index)
         );
     }
 
@@ -794,7 +803,7 @@ export default class Editor extends THREE.EventDispatcher {
     }
 
     setPointCloudData(data: any, ground: number, intensityRange?: [number, number]) {
-        this.groundCorrectionMaskManager.refreshCurrentFramePointCloud();
+        this.groundCorrectionMaskManager.prepareCurrentFramePointCloud();
         this.pc.setPointCloudData(data);
         this.configManager.updatePointConfig(ground, intensityRange);
         this.dispatchEvent({ type: Event.POINTS_CHANGE });

@@ -98,6 +98,18 @@
                 font-size: 18px;
             }
 
+            // Not in the iconfont set: Material Design "terrain" drawn through a mask so it follows the text color.
+            .ground-correction-entry-icon {
+                display: inline-block;
+                width: 18px;
+                height: 18px;
+                background-color: currentColor;
+                -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14,6L10.25,11L13.1,14.8L11.5,16C9.81,13.75 7,10 7,10L1,18H23L14,6Z'/%3E%3C/svg%3E")
+                    center / contain no-repeat;
+                mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14,6L10.25,11L13.1,14.8L11.5,16C9.81,13.75 7,10 7,10L1,18H23L14,6Z'/%3E%3C/svg%3E")
+                    center / contain no-repeat;
+            }
+
             &:disabled {
                 background: #6d7278;
             }

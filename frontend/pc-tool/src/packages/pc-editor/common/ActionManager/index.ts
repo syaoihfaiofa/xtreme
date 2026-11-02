@@ -12,6 +12,14 @@ Object.keys(Actions).forEach((name) => {
 
 export let AllActions = Object.keys(Actions) as IActionName[];
 
+const FRAME_NAVIGATION_ACTIONS: IActionName[] = ['nextFrame', 'preFrame'];
+const GROUND_CORRECTION_TOOL_ACTIONS: IActionName[] = [
+    'editGroundCorrectionPolygon',
+    'editGroundCorrectionBrush',
+    'editGroundCorrectionEraser',
+    'editGroundCorrectionCluster',
+];
+
 interface IActionArgs {
     createAnnotation: { object: Box };
     projectObject2D: { updateFlag?: boolean; createFlag?: boolean; selectFlag?: boolean };
@@ -43,6 +51,14 @@ export default class ActionManager {
 
         if (!action) return;
 
+        const interruptedTool = this.getFrameInterruptibleTool(action);
+        if (interruptedTool) {
+            this.stopCurrentAction();
+            const result = await action.execute(this.editor, args);
+            void this.execute(interruptedTool);
+            return result;
+        }
+
         if (this.isBlocked()) {
             console.log(`action ${name} blocked`);
             return;
@@ -70,6 +86,23 @@ export default class ActionManager {
         }
 
         return result;
+    }
+
+    /**
+     * Ground correction tools stay active until the user exits them, so frame navigation
+     * suspends the running tool (dropping an unfinished polygon) and resumes it afterwards.
+     */
+    private getFrameInterruptibleTool(action: IAction): IActionName | undefined {
+        const tool = this.currentAction?.name as IActionName | undefined;
+        if (
+            !tool ||
+            !FRAME_NAVIGATION_ACTIONS.includes(action.name as IActionName) ||
+            !GROUND_CORRECTION_TOOL_ACTIONS.includes(tool) ||
+            this.editor.state.status !== StatusType.Default
+        ) {
+            return undefined;
+        }
+        return tool;
     }
 
     isBlocked() {

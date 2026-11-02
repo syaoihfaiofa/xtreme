@@ -132,7 +132,9 @@ function getDefaultConfig(): IConfig {
         groundCorrectionClusterRadius: 0.3,
         // Point cloud origin is the rear-axle center, so ground Z is -wheel_radius (models/car.json).
         groundCorrectionPickZ: -0.332,
-        groundCorrectionClusterHeightTolerance: 0.2,
+        groundCorrectionClusterHeightTolerance: 0.05,
+        groundCorrectionBrushRadius: 0.5,
+        groundCorrectionEraserRadius: 0.5,
         activeTrack: false,
         circleRadius: 100,
         activeHelper2d: ['aux_line'],

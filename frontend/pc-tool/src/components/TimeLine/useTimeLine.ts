@@ -163,8 +163,10 @@ export default function useBottom() {
             iState.frameConfig.curFrameIndex = editor.state.frameIndex + 1;
         },
     );
+    // Not deep: traversing every frame on each per-frame field change costs hundreds of ms in
+    // long scenes. Per-frame annotation loads are handled by onAnnotateLoad instead.
     watch(
-        () => editor.state.frames,
+        () => [editor.state.frames, editor.state.frames.length],
         () => {
             if (iState.trackTargetLine.list.length !== editor.state.frames.length) {
                 iState.trackTargetLine = emptyTrackObject();
@@ -174,10 +176,7 @@ export default function useBottom() {
             updateTrackFrameMask();
             if (editor.bsState.reviewMode) refreshReviewProgressFromServer();
         },
-        {
-            immediate: true,
-            deep: true,
-        },
+        { immediate: true },
     );
     watch(
         () => editor.bsState.reviewMode,
@@ -635,7 +634,11 @@ export default function useBottom() {
                 trackId: trackId,
                 trackName: editor.trackManager.trackMap.get(trackId + '')?.trackName || '',
             });
+            editor.performanceMonitor.start('track-selection-local', trackId);
             iState.trackTargetLine.list = getTrackLine(trackId);
+            editor.performanceMonitor.end('track-selection-local', trackId, {
+                frameCount: editor.state.frames.length,
+            });
             if (trackChanged || refreshSegments) {
                 iState.segmentBoundaries = getSegmentBoundaries(iState.trackTargetLine.list);
                 refreshSegmentBoundaries(trackId, iState.trackTargetLine.list);
@@ -836,39 +839,36 @@ export default function useBottom() {
         );
     }
 
-    function applyTrackLineList(serverList: IUserData[]) {
-        if (iState.trackTargetLine.list.length !== serverList.length) {
-            iState.trackTargetLine.list = serverList;
-            return;
-        }
-        serverList.forEach((userData, frameIndex) => {
-            iState.trackTargetLine.list[frameIndex] = userData;
-        });
+    function waitForAnimationFrame(): Promise<void> {
+        return new Promise((resolve) => requestAnimationFrame(() => resolve()));
     }
 
     async function refreshTrackLineFromServer(trackId: string): Promise<void> {
         const frames = editor.state.frames;
         if (!trackId || frames.length === 0) return;
         const requestId = ++trackLineRequest;
+        editor.performanceMonitor.start('track-selection-request', trackId);
+        let trackFrameCount = 0;
+        let succeeded = false;
         try {
-            const syncObjects = await api.getSyncTrackObjectBatch(
-                frames.map((frame) => frame.id),
-                trackId,
-            );
+            const timeline = await api.getTrackTimeline(String(frames[0].id), trackId);
+            // Applying on the next frame lets pending point-cloud renders run first.
+            await waitForAnimationFrame();
             if (requestId !== trackLineRequest || editor.currentTrack !== trackId) return;
             const trackName = editor.trackManager.trackMap.get(trackId)?.trackName || '';
+            const itemByDataId = new Map(timeline.map((item) => [String(item.dataId), item]));
             const serverList = frames.map((frame) => {
-                const object = syncObjects.objectsMap[String(frame.id)]?.[0];
-                if (!object) return undefined;
+                const item = itemByDataId.get(String(frame.id));
+                if (!item) return undefined;
                 return {
-                    trackId: object.trackId || trackId,
-                    trackName: object.trackName || trackName,
-                    motionMode: object.motionMode,
-                    syncPoseSegmentId: object.syncPoseSegmentId,
-                    syncLocationGapMs: object.syncLocationGapMs,
-                    showSyncLocationBoundaries: object.showSyncLocationBoundaries,
-                    manualSyncSegmentId: object.manualSyncSegmentId,
-                    manualSyncSegmentBoundaryDataId: object.manualSyncSegmentBoundaryDataId,
+                    trackId: item.trackId || trackId,
+                    trackName: item.trackName || trackName,
+                    motionMode: item.motionMode,
+                    syncPoseSegmentId: item.syncPoseSegmentId,
+                    syncLocationGapMs: item.syncLocationGapMs,
+                    showSyncLocationBoundaries: item.showSyncLocationBoundaries,
+                    manualSyncSegmentId: item.manualSyncSegmentId,
+                    manualSyncSegmentBoundaryDataId: item.manualSyncSegmentBoundaryDataId,
                 } as IUserData;
             }) as IUserData[];
             trackLineCache.set(trackId, serverList);
@@ -876,14 +876,29 @@ export default function useBottom() {
             serverList.forEach((userData, frameIndex) => {
                 if (userData) frameIndices.push(frameIndex);
             });
+            trackFrameCount = frameIndices.length;
             editor.trackManager.setTrackFrameIndices(trackId, frameIndices);
             if (editor.currentTrack !== trackId) return;
-            applyTrackLineList(serverList);
+            iState.trackTargetLine.list = serverList;
             iState.segmentBoundaries = getSegmentBoundaries(serverList);
             refreshSegmentBoundaries(trackId, serverList);
             updateTrackFrameMask();
+            succeeded = true;
         } catch (error) {
             console.warn('load track line failed', error);
+        } finally {
+            editor.performanceMonitor.end('track-selection-request', trackId, {
+                frameCount: frames.length,
+                trackFrameCount,
+                succeeded,
+            });
+            if (editor.currentTrack === trackId) {
+                editor.performanceMonitor.end('track-selection-total', trackId, {
+                    frameCount: frames.length,
+                    trackFrameCount,
+                    succeeded,
+                });
+            }
         }
     }
 
@@ -941,10 +956,10 @@ export default function useBottom() {
     }
 
     function onAnnotateLoad() {
+        updateReviewProgressAt(editor.state.frameIndex);
         const trackId = editor.currentTrack;
         if (!trackId || trackId !== iState.trackTargetLine.trackId) return;
         updateTrackFrameSlot(editor.state.frameIndex);
-        updateReviewProgressAt(editor.state.frameIndex);
         handleTrackActionPreview();
     }
 

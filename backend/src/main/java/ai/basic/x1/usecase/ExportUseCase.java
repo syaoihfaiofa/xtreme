@@ -207,6 +207,7 @@ public class ExportUseCase {
                                 .pointCloudFile(frame.getPointCloudUrl())
                                 .uploadBinaryPcdPath(upload.getPresignedUrl())
                                 .groundCorrectionMask(frame.getGroundCorrectionMask())
+                                .groundCorrectionProtections(frame.getGroundCorrectionProtections())
                                 .build()))
                         .build();
                 var result = pointCloudConvertRenderHttpCaller.callConvertRender(request);

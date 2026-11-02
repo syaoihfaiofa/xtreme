@@ -1110,16 +1110,9 @@ public class TrackSyncUseCase {
         if (ObjectUtil.isNull(sourceFrame) || ObjectUtil.isNull(sourceFrame.getParentId())) {
             return Map.of();
         }
-        List<Long> frameIds = dataInfoDAO.list(Wrappers.lambdaQuery(DataInfo.class)
-                        .eq(DataInfo::getParentId, sourceFrame.getParentId())
-                        .eq(DataInfo::getIsDeleted, false))
-                .stream()
-                .map(DataInfo::getId)
-                .collect(Collectors.toList());
         Map<Long, Integer> segmentByDataId = new HashMap<>();
-        dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                        .in(DataAnnotationObject::getDataId, frameIds)
-                        .eq(DataAnnotationObject::getTrackId, trackId))
+        dataAnnotationObjectDAO.getBaseMapper()
+                .findManualSyncSegmentObjects(sourceFrame.getParentId(), trackId)
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))

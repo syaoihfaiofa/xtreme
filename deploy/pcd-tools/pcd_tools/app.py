@@ -170,7 +170,11 @@ class AppHandler(BaseApiHandler):
                 upload_ground_pcd_path = item.get("uploadBinaryPcdPath")
                 if not isinstance(upload_ground_pcd_path, str) or not upload_ground_pcd_path:
                     return _build_item_error(1, "missing 'uploadBinaryPcdPath'")
-                labeled, rule = append_ground_labels(pc.data, item.get("groundCorrectionMask"))
+                labeled, rule = append_ground_labels(
+                    pc.data,
+                    item.get("groundCorrectionMask"),
+                    item.get("groundCorrectionProtections"),
+                )
                 with io.BytesIO() as output:
                     pc.save_pcd(labeled, output, pc.metadata)
                     contents = output.getvalue()

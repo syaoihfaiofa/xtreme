@@ -2,10 +2,12 @@ package ai.basic.x1.usecase;
 
 import ai.basic.x1.adapter.api.context.RequestContextHolder;
 import ai.basic.x1.adapter.port.dao.DataAnnotationObjectDAO;
+import ai.basic.x1.adapter.port.dao.DataInfoDAO;
 import ai.basic.x1.adapter.port.dao.ModelDAO;
 import ai.basic.x1.adapter.port.dao.ModelRunRecordDAO;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataAnnotationObject;
 import ai.basic.x1.adapter.port.dao.mybatis.model.DataEdit;
+import ai.basic.x1.adapter.port.dao.mybatis.model.DataInfo;
 import ai.basic.x1.adapter.port.dao.mybatis.model.Model;
 import ai.basic.x1.adapter.port.dao.mybatis.model.ModelRunRecord;
 import ai.basic.x1.adapter.port.dao.mybatis.query.ScenarioQuery;
@@ -34,6 +36,15 @@ import java.util.stream.Collectors;
  */
 public class DataAnnotationObjectUseCase {
 
+    private static final List<String> TRACK_TIMELINE_KEYS = List.of(
+            "trackName",
+            "motionMode",
+            "syncPoseSegmentId",
+            "syncLocationGapMs",
+            "showSyncLocationBoundaries",
+            "manualSyncSegmentId",
+            "manualSyncSegmentBoundaryDataId");
+
     @Autowired
     private DataAnnotationObjectDAO dataAnnotationObjectDAO;
 
@@ -42,6 +53,9 @@ public class DataAnnotationObjectUseCase {
 
     @Autowired
     private ModelRunRecordDAO modelRunRecordDAO;
+
+    @Autowired
+    private DataInfoDAO dataInfoDAO;
 
     /**
      * query results of annotation
@@ -68,7 +82,8 @@ public class DataAnnotationObjectUseCase {
             return List.of();
         }
         return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                        .in(DataAnnotationObject::getDataId, dataIds))
+                        .in(DataAnnotationObject::getDataId, dataIds)
+                        .eq(DataAnnotationObject::getTrackId, trackId))
                 .stream()
                 .filter(object -> object.getClassAttributes() != null)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
@@ -88,12 +103,38 @@ public class DataAnnotationObjectUseCase {
             return List.of();
         }
         return dataAnnotationObjectDAO.list(Wrappers.lambdaQuery(DataAnnotationObject.class)
-                        .in(DataAnnotationObject::getDataId, dataIds))
+                        .in(DataAnnotationObject::getDataId, dataIds)
+                        .eq(DataAnnotationObject::getTrackId, trackId))
                 .stream()
                 .filter(this::isSyncableTrackObject)
                 .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
                 .map(object -> DefaultConverter.convert(object, DataAnnotationObjectBO.class))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns the first syncable object of each frame in the scene containing {@code dataId}.
+     * Resolving the scene on the server keeps the request independent of the frame count.
+     */
+    public List<DataAnnotationObjectBO> findSceneTrackTimelineObjects(Long dataId, String trackId) {
+        if (ObjectUtil.isNull(dataId) || StrUtil.isBlank(trackId)) {
+            throw new IllegalArgumentException(String.format(
+                    "dataId and trackId are required: dataId=%s, trackId=%s", dataId, trackId));
+        }
+        DataInfo sourceFrame = dataInfoDAO.getById(dataId);
+        if (ObjectUtil.isNull(sourceFrame) || ObjectUtil.isNull(sourceFrame.getParentId())) {
+            throw new IllegalArgumentException(String.format("Scene frame not found: dataId=%s", dataId));
+        }
+        Map<Long, DataAnnotationObject> firstObjectByDataId = new LinkedHashMap<>();
+        dataAnnotationObjectDAO.getBaseMapper()
+                .findTrackTimelineObjects(sourceFrame.getParentId(), trackId, TRACK_TIMELINE_KEYS)
+                .stream()
+                .filter(object -> object.getSourceType() != DataAnnotationObjectSourceTypeEnum.SNAPSHOT)
+                .filter(this::isSyncableTrackObject)
+                .filter(object -> trackId.equals(object.getClassAttributes().getStr("trackId")))
+                .forEach(object -> firstObjectByDataId.putIfAbsent(object.getDataId(), object));
+        return DefaultConverter.convert(
+                new ArrayList<>(firstObjectByDataId.values()), DataAnnotationObjectBO.class);
     }
 
     private boolean isSyncableTrackObject(DataAnnotationObject object) {

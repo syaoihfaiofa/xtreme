@@ -186,6 +186,30 @@ export async function getManualSyncSegments(
     return response.data || {};
 }
 
+export interface ITrackTimelineItem {
+    dataId: string | number;
+    trackId?: string;
+    trackName?: string;
+    motionMode?: string;
+    syncPoseSegmentId?: string | number;
+    syncLocationGapMs?: number;
+    showSyncLocationBoundaries?: boolean;
+    manualSyncSegmentId?: string | number;
+    manualSyncSegmentBoundaryDataId?: string | number;
+}
+
+/** Timeline-only metadata for every frame of the scene containing dataId; no geometry. */
+export async function getTrackTimeline(
+    dataId: string,
+    trackId: string,
+): Promise<ITrackTimelineItem[]> {
+    const response = await get<{ data?: ITrackTimelineItem[] }>(
+        '/api/annotate/data/sync/trackTimeline',
+        { dataId, trackId },
+    );
+    return response.data || [];
+}
+
 export async function reviewTrack(dataId: string, trackId: string, reviewedCorrect: boolean) {
     return await post('/api/annotate/data/review', null, {
         params: { dataId, trackId, reviewedCorrect },
@@ -622,7 +646,8 @@ export async function getDataFileBatch(dataIds: string[]): Promise<Record<string
     name: string;
 }>> {
     if (dataIds.length === 0) return {};
-    const response = await get('/api/data/listByIds', { dataIds });
+    // Axios would serialize arrays as dataIds[]=..., which Tomcat rejects in the request target.
+    const response = await get('/api/data/listByIds', { dataIds: dataIds.join(',') });
     const rows = response.data || [];
     return rows.reduce((result: Record<string, { configs: IFileConfig[]; name: string }>, row: any) => {
         result[String(row.id)] = parseDataFile(row);

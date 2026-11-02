@@ -23,4 +23,11 @@ public interface DataAnnotationObjectMapper extends ExtendBaseMapper<DataAnnotat
    Page<DataAnnotationObject> findDataIdByScenarioPage(Page<DataAnnotationObject> page, @Param("scenarioQuery") ScenarioQuery scenarioQuery);
 
    List<Long> findDataIdByScenario(@Param("scenarioQuery") ScenarioQuery scenarioQuery);
+
+   List<DataAnnotationObject> findTrackTimelineObjects(@Param("sceneId") Long sceneId,
+                                                       @Param("trackId") String trackId,
+                                                       @Param("timelineKeys") List<String> timelineKeys);
+
+   List<DataAnnotationObject> findManualSyncSegmentObjects(@Param("sceneId") Long sceneId,
+                                                           @Param("trackId") String trackId);
 }

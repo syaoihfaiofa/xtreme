@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -17,4 +19,6 @@ public class GroundLabeledPcdExportFrame {
     private String pointCloudUrl;
 
     private JSONObject groundCorrectionMask;
+
+    private List<JSONObject> groundCorrectionProtections;
 }

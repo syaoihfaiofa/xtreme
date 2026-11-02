@@ -7,7 +7,7 @@ export const nextFrame = define({
     //     return editor.state.isSeriesFrame;
     // },
     execute(editor: Editor) {
-        editor.navigateFrame(1);
+        return editor.navigateFrame(1);
     },
 });
 export const preFrame = define({
@@ -15,6 +15,6 @@ export const preFrame = define({
     //     return editor.state.isSeriesFrame;
     // },
     execute(editor: Editor) {
-        editor.navigateFrame(-1);
+        return editor.navigateFrame(-1);
     },
 });

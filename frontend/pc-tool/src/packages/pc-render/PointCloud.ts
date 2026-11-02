@@ -10,7 +10,7 @@ import { isArray } from 'lodash';
 import TWEEN from '@tweenjs/tween.js';
 import PointsMaterial from './material/PointsMaterial';
 import { Points } from './points';
-import type { ForceGroundOperation } from './points/forceGround';
+import type { ForceGroundOperation, ForceGroundProtectedVolume } from './points/forceGround';
 import * as _ from 'lodash';
 
 export default class PointCloud extends THREE.EventDispatcher {
@@ -39,6 +39,7 @@ export default class PointCloud extends THREE.EventDispatcher {
     private tweenAnimationId: number = 0;
     private chunkPointIds = new Set<string>();
     private groundCorrectionMask: readonly ForceGroundOperation[] = [];
+    private groundCorrectionProtection: readonly ForceGroundProtectedVolume[] = [];
 
     constructor() {
         super();
@@ -278,10 +279,22 @@ export default class PointCloud extends THREE.EventDispatcher {
     }
 
     // *********************************************
-    setGroundCorrectionMask(operations: readonly ForceGroundOperation[]): void {
+    /** Stores the mask for the next point cloud data without recomputing the current points. */
+    prepareGroundCorrectionMask(
+        operations: readonly ForceGroundOperation[],
+        protectedVolumes: readonly ForceGroundProtectedVolume[],
+    ): void {
         this.groundCorrectionMask = operations;
+        this.groundCorrectionProtection = protectedVolumes;
+    }
+
+    setGroundCorrectionMask(
+        operations: readonly ForceGroundOperation[],
+        protectedVolumes: readonly ForceGroundProtectedVolume[],
+    ): void {
+        this.prepareGroundCorrectionMask(operations, protectedVolumes);
         this.groupPoints.children.forEach((child) => {
-            (child as Points).updateForceGround(this.groundCorrectionMask);
+            (child as Points).updateForceGround(this.groundCorrectionMask, this.groundCorrectionProtection);
         });
         this.render();
     }
@@ -301,7 +314,7 @@ export default class PointCloud extends THREE.EventDispatcher {
             points = this.groupPoints.children[0] as Points;
         }
         // this.dispatchEvent({ type: Event.LOAD_POINT_BEFORE });
-        points.updateData(data, this.groundCorrectionMask);
+        points.updateData(data, this.groundCorrectionMask, this.groundCorrectionProtection);
         this.render();
         // this.dispatchEvent({ type: Event.LOAD_POINT_AFTER });
     }
@@ -322,7 +335,7 @@ export default class PointCloud extends THREE.EventDispatcher {
             this.groupPoints.add(points);
             this.chunkPointIds.add(id);
         }
-        points.updateData(data, this.groundCorrectionMask);
+        points.updateData(data, this.groundCorrectionMask, this.groundCorrectionProtection);
         this.render();
     }
 

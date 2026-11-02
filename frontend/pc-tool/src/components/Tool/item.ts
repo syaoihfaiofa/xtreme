@@ -146,10 +146,10 @@ export const allItems: IItemConfig[] = [
     },
     {
         action: 'groundCorrectionMode',
-        label: '地面纠正',
-        title: () => '地面纠正：设置 Z 范围后以区域或笔刷标记地面点',
+        label: '地面',
+        title: () => '地面纠正：用多边形选区、画笔、魔棒聚类、橡皮擦修正点云的地面点',
         getIcon: function () {
-            return 'iconfont icon-polygon1';
+            return 'ground-correction-entry-icon';
         },
         isDisplay: function (editor: Editor) {
             return editor.state.modeConfig.actions['deleteObject'] && isGroundCorrectionMaskBevActive(editor);

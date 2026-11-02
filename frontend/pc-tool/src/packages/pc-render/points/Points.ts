@@ -3,7 +3,11 @@ import { PCDLoader } from '../loader';
 import PointsMaterial from '../material/PointsMaterial';
 import { Event } from '../config';
 import { IPoints } from './type';
-import { calculateForceGround, type ForceGroundOperation } from './forceGround';
+import {
+    calculateForceGround,
+    type ForceGroundOperation,
+    type ForceGroundProtectedVolume,
+} from './forceGround';
 
 export interface PointData {
     position?: number[];
@@ -50,6 +54,11 @@ export default class Points extends THREE.Points implements IPoints {
     timeStamp: number = 0;
     loader: PCDLoader = new PCDLoader();
     private pointData?: PointData;
+    // Inputs of the current forceGround attribute; a frame switch re-applies the same
+    // mask several times (load, annotation load, frame change) and each pass is costly.
+    private forceGroundPosition?: number[];
+    private forceGroundOperations?: readonly ForceGroundOperation[];
+    private forceGroundProtectionKey?: string;
     constructor(material: PointsMaterial) {
         let geometry = createGeometry({ position: [], color: [], intensity: [] }, new Uint8Array());
         super(geometry, material);
@@ -66,10 +75,14 @@ export default class Points extends THREE.Points implements IPoints {
         attr.needsUpdate = true;
     }
 
-    updateData(data: PointData, operations: readonly ForceGroundOperation[]): void {
+    updateData(
+        data: PointData,
+        operations: readonly ForceGroundOperation[],
+        protectedVolumes: readonly ForceGroundProtectedVolume[],
+    ): void {
         let geometry = this.geometry as THREE.BufferGeometry;
         const position = data.position || [];
-        const forceGround = calculateForceGround(position, operations);
+        const forceGround = this.calculateForceGround(position, operations, protectedVolumes);
         this.pointData = data;
         const oldPosition = geometry.getAttribute('position') as THREE.BufferAttribute;
 
@@ -106,15 +119,37 @@ export default class Points extends THREE.Points implements IPoints {
         this.dispatchEvent({ type: Event.POINTS_CHANGE });
     }
 
-    updateForceGround(operations: readonly ForceGroundOperation[]): void {
+    updateForceGround(
+        operations: readonly ForceGroundOperation[],
+        protectedVolumes: readonly ForceGroundProtectedVolume[],
+    ): void {
         if (!this.pointData) return;
         const position = this.pointData.position || [];
-        const forceGround = calculateForceGround(position, operations);
+        const protectionKey = JSON.stringify(protectedVolumes);
+        if (
+            position === this.forceGroundPosition &&
+            operations === this.forceGroundOperations &&
+            protectionKey === this.forceGroundProtectionKey
+        ) {
+            return;
+        }
+        const forceGround = this.calculateForceGround(position, operations, protectedVolumes);
         const geometry = this.geometry as THREE.BufferGeometry;
         const forceGroundAttr = new THREE.Uint8BufferAttribute(forceGround, 1);
         forceGroundAttr.count = position.length / 3;
         geometry.setAttribute('forceGround', forceGroundAttr);
         this.dispatchEvent({ type: Event.POINTS_CHANGE });
+    }
+
+    private calculateForceGround(
+        position: number[],
+        operations: readonly ForceGroundOperation[],
+        protectedVolumes: readonly ForceGroundProtectedVolume[],
+    ): Uint8Array {
+        this.forceGroundPosition = position;
+        this.forceGroundOperations = operations;
+        this.forceGroundProtectionKey = JSON.stringify(protectedVolumes);
+        return calculateForceGround(position, operations, protectedVolumes);
     }
 
     loadUrl(url: string, onProgress?: (percent: number) => void): Promise<any> {
@@ -133,7 +168,7 @@ export default class Points extends THREE.Points implements IPoints {
 
                     // this.dispatchEvent({ type: Event.LOAD_POINT_BEFORE });
 
-                    this.updateData(data, []);
+                    this.updateData(data, [], []);
                     this.loading = false;
                     resolve(this);
                     // this.dispatchEvent({ type: Event.LOAD_POINT_AFTER });

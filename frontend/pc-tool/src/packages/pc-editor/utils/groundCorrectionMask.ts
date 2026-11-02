@@ -30,11 +30,16 @@ function hasValidHeightRange(value: unknown): boolean {
     );
 }
 
+function hasValidOrigin(value: unknown): boolean {
+    return value === undefined || value === 'transfer' || value === 'propagated';
+}
+
 function validatePolygonOperation(value: unknown): value is GroundCorrectionMaskPolygonOperation {
     if (!value || typeof value !== 'object') return false;
-    const operation = value as { type?: unknown; vertices?: unknown; heightRange?: unknown };
+    const operation = value as { type?: unknown; vertices?: unknown; heightRange?: unknown; origin?: unknown };
     return (
         operation.type === 'polygon' &&
+        hasValidOrigin(operation.origin) &&
         Array.isArray(operation.vertices) &&
         operation.vertices.length >= 3 &&
         operation.vertices.every(isPoint) &&
@@ -51,9 +56,11 @@ function validateBrushOperation(value: unknown): value is GroundCorrectionMaskBr
         radius?: unknown;
         heightRange?: unknown;
         erase?: unknown;
+        origin?: unknown;
     };
     if (
         operation.type !== 'brush' ||
+        !hasValidOrigin(operation.origin) ||
         (operation.erase !== undefined && operation.erase !== true) ||
         (!isPoint(operation.center) &&
             (!Array.isArray(operation.samples) ||
@@ -69,9 +76,10 @@ function validateBrushOperation(value: unknown): value is GroundCorrectionMaskBr
 
 function validateClusterOperation(value: unknown): value is GroundCorrectionMaskClusterOperation {
     if (!value || typeof value !== 'object') return false;
-    const operation = value as { type?: unknown; points?: unknown; radius?: unknown };
+    const operation = value as { type?: unknown; points?: unknown; radius?: unknown; origin?: unknown };
     return (
         operation.type === 'cluster' &&
+        hasValidOrigin(operation.origin) &&
         Array.isArray(operation.points) &&
         operation.points.length > 0 &&
         operation.points.length <= MAX_CLUSTER_POINTS &&
@@ -119,6 +127,7 @@ export function deserializeGroundCorrectionMask(value: unknown): GroundCorrectio
                     ...(operation.heightRange
                         ? { heightRange: { ...operation.heightRange } }
                         : {}),
+                    ...(operation.origin ? { origin: operation.origin } : {}),
                 };
             }
             if (operation.type === 'cluster') {
@@ -126,6 +135,7 @@ export function deserializeGroundCorrectionMask(value: unknown): GroundCorrectio
                     type: 'cluster',
                     points: operation.points.map((point) => ({ ...point })),
                     radius: operation.radius,
+                    ...(operation.origin ? { origin: operation.origin } : {}),
                 };
             }
             return {
@@ -138,6 +148,7 @@ export function deserializeGroundCorrectionMask(value: unknown): GroundCorrectio
                     ? { heightRange: { ...operation.heightRange } }
                     : {}),
                 ...(operation.erase ? { erase: true as const } : {}),
+                ...(operation.origin ? { origin: operation.origin } : {}),
             };
         }),
     };

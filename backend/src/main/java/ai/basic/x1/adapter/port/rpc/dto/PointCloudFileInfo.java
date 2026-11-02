@@ -20,6 +20,8 @@ public class PointCloudFileInfo {
     private String uploadChunkManifestPath;
     private List<ChunkUpload> chunkUploads;
     private JSONObject groundCorrectionMask;
+    /** classAttributes of 3D_BOX / IRREGULAR_WALL annotations whose points are never ground. */
+    private List<JSONObject> groundCorrectionProtections;
 
     @Data
     @Builder

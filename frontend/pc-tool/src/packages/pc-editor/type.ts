@@ -105,10 +105,18 @@ export interface GroundCorrectionMaskHeightRange {
     max: number;
 }
 
+/**
+ * Where an operation came from; absent for operations drawn on the frame itself.
+ * `transfer`: generated from another frame's final ground state during propagation.
+ * `propagated`: an operation drawn on another frame and carried over by propagation.
+ */
+export type GroundCorrectionMaskOperationOrigin = 'transfer' | 'propagated';
+
 export interface GroundCorrectionMaskPolygonOperation {
     type: 'polygon';
     vertices: GroundCorrectionMaskPoint[];
     heightRange?: GroundCorrectionMaskHeightRange;
+    origin?: GroundCorrectionMaskOperationOrigin;
 }
 
 export interface GroundCorrectionMaskBrushOperation {
@@ -119,12 +127,14 @@ export interface GroundCorrectionMaskBrushOperation {
     heightRange?: GroundCorrectionMaskHeightRange;
     /** Restores the automatic classification for points corrected by earlier operations. */
     erase?: true;
+    origin?: GroundCorrectionMaskOperationOrigin;
 }
 
 export interface GroundCorrectionMaskClusterOperation {
     type: 'cluster';
     points: GroundCorrectionMaskClusterPoint[];
     radius: number;
+    origin?: GroundCorrectionMaskOperationOrigin;
 }
 
 export type GroundCorrectionMaskOperation =
@@ -399,6 +409,8 @@ export interface IConfig {
     groundCorrectionClusterRadius: number;
     groundCorrectionPickZ: number;
     groundCorrectionClusterHeightTolerance: number;
+    groundCorrectionBrushRadius: number;
+    groundCorrectionEraserRadius: number;
     activeTrack: boolean;
     circleRadius: number;
     activeHelper2d: IHelper2D[];

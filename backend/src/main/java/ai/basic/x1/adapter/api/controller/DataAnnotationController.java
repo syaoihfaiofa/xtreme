@@ -5,6 +5,7 @@ import ai.basic.x1.adapter.dto.DataAnnotationObjectDTO;
 import ai.basic.x1.adapter.dto.request.ObjectResultDTO;
 import ai.basic.x1.adapter.dto.response.DataAnnotationObjectResponseDTO;
 import ai.basic.x1.adapter.dto.response.DataAnnotationResultDTO;
+import ai.basic.x1.adapter.dto.response.TrackTimelineItemDTO;
 import ai.basic.x1.entity.DataAnnotationClassificationBO;
 import ai.basic.x1.entity.DataAnnotationObjectBO;
 import ai.basic.x1.usecase.DataAnnotationUseCase;
@@ -117,6 +118,16 @@ public class DataAnnotationController {
                                 objectsByDataId.getOrDefault(dataId, List.of()),
                                 DataAnnotationObjectDTO.class))
                         .build())
+                .collect(Collectors.toList());
+    }
+
+    @GetMapping("sync/trackTimeline")
+    public List<TrackTimelineItemDTO> syncTrackTimeline(
+            @RequestParam Long dataId,
+            @RequestParam String trackId) {
+        return dataAnnotationObjectUseCase.findSceneTrackTimelineObjects(dataId, trackId)
+                .stream()
+                .map(TrackTimelineItemDTO::from)
                 .collect(Collectors.toList());
     }
 

@@ -82,6 +82,7 @@
                 </template>
                 <span @keydown.capture="(e) => e.stopPropagation()">
                     <a-switch
+                        ref="trackFrameFilterSwitch"
                         :checked="config.filterFramesByTrack"
                         @change="onTrackFrameFilterChange"
                         style="margin-right: 10px"
@@ -294,6 +295,7 @@
     const autoLoadEndFrame = ref(Math.max(1, editor.state.frames.length));
     const autoLoadMaxFrames = ref(80);
     const autoLoadSwitch = ref<HTMLElement>();
+    const trackFrameFilterSwitch = ref<HTMLElement>();
     const emit = defineEmits(['onTrackAction', 'updateTrackLine']);
 
     watch(
@@ -386,6 +388,7 @@
         editor.showMsg('success', editor.lang('autoLoadSettingsApplied'));
     }
     function onTrackFrameFilterChange(checked: boolean) {
+        trackFrameFilterSwitch.value?.blur();
         config.filterFramesByTrack = checked;
         editor.dispatchEvent({
             type: Event.CURRENT_TRACK_CHANGE,

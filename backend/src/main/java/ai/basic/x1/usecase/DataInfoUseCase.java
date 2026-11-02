@@ -1190,6 +1190,11 @@ public class DataInfoUseCase {
                         entry -> entry.getKey(),
                         entry -> entry.getValue(),
                         (first, ignored) -> first));
+        var protectionsByDataId = groundTruthObjects.stream()
+                .filter(DataInfoUseCase::isGroundCorrectionProtection)
+                .collect(Collectors.groupingBy(
+                        DataAnnotationObjectBO::getDataId,
+                        Collectors.mapping(DataAnnotationObjectBO::getClassAttributes, Collectors.toList())));
         var frames = new ArrayList<GroundLabeledPcdExportFrame>();
         for (DataInfoBO dataInfo : listByIds(dataIds, true)) {
             var exportData = assembleExportDataContent(dataInfo, datasetType);
@@ -1205,10 +1210,22 @@ public class DataInfoUseCase {
                                 pointCloudIndex))
                         .pointCloudUrl(pointCloud.getInternalUrl())
                         .groundCorrectionMask(masksByDataId.get(dataInfo.getId()))
+                        .groundCorrectionProtections(
+                                protectionsByDataId.getOrDefault(dataInfo.getId(), List.of()))
                         .build());
             }
         }
         return frames;
+    }
+
+    /** Same object types pc-tool protects from ground correction. */
+    static boolean isGroundCorrectionProtection(DataAnnotationObjectBO object) {
+        var attributes = object.getClassAttributes();
+        if (attributes == null) {
+            return false;
+        }
+        var objectType = attributes.getStr("type");
+        return "3D_BOX".equals(objectType) || "IRREGULAR_WALL".equals(objectType);
     }
 
     static Map.Entry<Long, JSONObject> groundCorrectionMask(DataAnnotationObjectBO object) {
@@ -1220,7 +1237,11 @@ public class DataInfoUseCase {
         if (!"GROUND_CORRECTION_MASK".equals(objectType)) {
             objectType = attributes.getStr("type");
         }
-        var mask = attributes.getJSONObject("groundCorrectionMask");
+        // pc-tool persists the mask under classAttributes.meta.groundCorrectionMask.
+        var meta = attributes.getJSONObject("meta");
+        var mask = meta != null && meta.getJSONObject("groundCorrectionMask") != null
+                ? meta.getJSONObject("groundCorrectionMask")
+                : attributes.getJSONObject("groundCorrectionMask");
         return "GROUND_CORRECTION_MASK".equals(objectType) && mask != null
                 ? Map.entry(object.getDataId(), mask)
                 : null;

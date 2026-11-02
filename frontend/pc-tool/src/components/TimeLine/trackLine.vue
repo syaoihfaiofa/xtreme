@@ -5,9 +5,24 @@
             @contextmenu.prevent.stop="onContextMenu"
             style="display: inline-block; height: 100%"
         >
+            <!-- v-memo deps must cover every per-cell input read by the template helpers. -->
             <div
                 v-for="(item, index) in trackList"
                 :key="index"
+                v-memo="[
+                    !!item,
+                    item?.classType,
+                    item?.occluded,
+                    item?.syncDirty,
+                    isError(index),
+                    frameFilterMask?.[index],
+                    segmentBoundaries?.[index],
+                    spanWidth,
+                    primary,
+                    showStatus,
+                    showStatus && frameDataInvalid(index),
+                    showStatus && marked(index),
+                ]"
                 :class="{
                     'i-tool-frame': true,
                     'filtered-out': frameFilterMask?.[index] === false,
@@ -288,7 +303,9 @@
             height: 100%;
             pointer-events: none;
             border-right: 1px solid #1e1f22;
-            transform: translateZ(0);
+            // Keeps a per-cell stacking context for the z-indexed children without promoting
+            // each of the thousands of cells to its own compositor layer.
+            isolation: isolate;
 
             &.filtered-out {
                 opacity: 0.2;

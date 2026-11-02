@@ -54,6 +54,24 @@ test('serializes and restores ordered polygon and brush mask operations', async 
     assert.deepEqual(deserializeGroundCorrectionMask(serialized), payload);
 });
 
+test('keeps operation origins through serialization and rejects unknown origins', async () => {
+    const { deserializeGroundCorrectionMask, serializeGroundCorrectionMask } = await loadGroundCorrectionMask();
+    const payload = {
+        version: 1,
+        operations: [
+            { type: 'polygon', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }], origin: 'propagated' },
+            { type: 'brush', samples: [{ x: 1, y: 1 }], radius: 0.35, heightRange: { min: -1, max: 0 }, origin: 'transfer' },
+            { type: 'cluster', points: [{ x: 1, y: 1, z: 0 }], radius: 0.3, origin: 'propagated' },
+        ],
+    };
+
+    assert.deepEqual(deserializeGroundCorrectionMask(serializeGroundCorrectionMask(payload)), payload);
+    assert.throws(
+        () => deserializeGroundCorrectionMask({ version: 1, operations: [{ ...payload.operations[1], origin: 'other' }] }),
+        /payload is invalid/,
+    );
+});
+
 test('rejects invalid ground correction mask payloads', async () => {
     const { deserializeGroundCorrectionMask } = await loadGroundCorrectionMask();
 

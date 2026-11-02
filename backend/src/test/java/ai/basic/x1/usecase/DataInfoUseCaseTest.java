@@ -67,6 +67,38 @@ class DataInfoUseCaseTest {
     }
 
     @Test
+    void groundCorrectionMask_readsMaskPersistedInMetaByPcTool() {
+        JSONObject mask = JSONUtil.createObj()
+                .set("version", 1)
+                .set("operations", JSONUtil.createArray());
+        DataAnnotationObjectBO object = DataAnnotationObjectBO.builder()
+                .dataId(100L)
+                .classAttributes(JSONUtil.createObj()
+                        .set("type", "GROUND_CORRECTION_MASK")
+                        .set("meta", JSONUtil.createObj().set("groundCorrectionMask", mask)))
+                .build();
+
+        var result = DataInfoUseCase.groundCorrectionMask(object);
+
+        assertEquals(100L, result.getKey());
+        assertEquals(mask, result.getValue());
+    }
+
+    @Test
+    void isGroundCorrectionProtection_acceptsOnly3dBoxesAndIrregularWalls() {
+        var box = DataAnnotationObjectBO.builder()
+                .classAttributes(JSONUtil.createObj().set("type", "3D_BOX")).build();
+        var wall = DataAnnotationObjectBO.builder()
+                .classAttributes(JSONUtil.createObj().set("type", "IRREGULAR_WALL")).build();
+        var polyline = DataAnnotationObjectBO.builder()
+                .classAttributes(JSONUtil.createObj().set("type", "GROUND_POLYLINE")).build();
+
+        assertTrue(DataInfoUseCase.isGroundCorrectionProtection(box));
+        assertTrue(DataInfoUseCase.isGroundCorrectionProtection(wall));
+        assertEquals(false, DataInfoUseCase.isGroundCorrectionProtection(polyline));
+    }
+
+    @Test
     void groundLabeledPcdZipEntry_usesStableSafeFrameFileName() {
         assertEquals("frame-42-pointcloud-3.pcd",
                 ExportUseCase.groundLabeledPcdZipEntry(42L, 3));

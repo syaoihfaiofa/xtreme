@@ -66,8 +66,8 @@ async function loadGroundCorrectionMaskManager() {
             'class OrbitControlsAction {}',
         )
         .replace(
-            "import { isAutomaticNonGround, isForceGround } from '../../pc-render/points/forceGround';",
-            'const isAutomaticNonGround = () => true; const isForceGround = (value) => value > 0.5;',
+            /import \{[\s\S]*?\} from '\.\.\/\.\.\/pc-render\/points\/forceGround';/,
+            'const createProtectionMatcher = () => () => false; const isAutomaticNonGround = () => true; const isForceGround = (value) => value > 0.5; const isInEgoBody = () => false; const createEgoBodyProtectedVolume = () => ({ type: \'box\', matrix: [], inverseMatrix: [] });',
         )
         .replace(
             "import { convertObject2Annotate } from '../utils/result';",
@@ -75,7 +75,7 @@ async function loadGroundCorrectionMaskManager() {
         )
         .replace(
             /import \{[\s\S]*?\} from '\.\.\/utils\/groundCorrectionMaskEditing';/,
-            'const appendGroundCorrectionMaskOperation = (mask, operation) => ({ version: 1, operations: [...mask.operations, operation] }); const formatGroundCorrectionMaskPropagationStatus = () => ""; const isGroundCorrectionMaskBevActive = (editor) => !!editor.viewManager.getMainView() && !editor.state.config.showSingleImgView; const planGroundCorrectionMaskPropagation = () => ({ frameIds: [], missingPoseFrameIds: [], differentSegmentFrameIds: [] }); const transformGroundCorrectionMaskOperation = (operation) => operation;',
+            'const appendGroundCorrectionMaskOperation = (mask, operation) => ({ version: 1, operations: [...mask.operations, operation] }); const formatGroundCorrectionMaskPropagationStatus = () => ""; const isGroundCorrectionMaskBevActive = (editor) => !!editor.viewManager.getMainView() && !editor.state.config.showSingleImgView; const planGroundCorrectionMaskPropagation = () => ({ frameIds: [], missingPoseFrameIds: [], differentSegmentFrameIds: [] }); const transformGroundCorrectionMaskOperation = (operation) => operation; const clusterToRegionBrush = (operation) => operation; const groundToRegionBrushes = () => []; const isGroundTransferOperation = () => false; const replacePropagatedOperations = (target, propagated) => [...target, ...propagated];',
         );
     const output = ts.transpileModule(source, {
         compilerOptions: {
@@ -214,25 +214,143 @@ test('transforms persisted three-dimensional cluster points between location pos
     );
 });
 
-test('only selects contiguous neighboring frames with available locations', async () => {
+test('converts a cluster ring into a filled region brush for propagation', async () => {
+    const { clusterToRegionBrush } = await loadEditingModule();
+    // A ring of points spanning cells 0..4 with an empty centre (cells 1..3).
+    const points = [];
+    for (let i = 0; i <= 4; i++) {
+        points.push({ x: i + 0.5, y: 0.5, z: -0.3 }, { x: i + 0.5, y: 4.5, z: -0.35 });
+        points.push({ x: 0.5, y: i + 0.5, z: -0.3 }, { x: 4.5, y: i + 0.5, z: -0.3 });
+    }
+
+    const region = clusterToRegionBrush({ type: 'cluster', points, radius: 0.3 }, 1, 0.05);
+
+    assert.equal(region.type, 'brush');
+    assert.equal(region.samples.length, 25);
+    assert.ok(region.samples.some((sample) => sample.x === 2.5 && sample.y === 2.5));
+    assert.ok(Math.abs(region.radius - Math.SQRT2 / 2) < 1e-9);
+    assert.ok(Math.abs(region.heightRange.min - -0.4) < 1e-9);
+    assert.ok(Math.abs(region.heightRange.max - -0.25) < 1e-9);
+});
+
+test('keeps concave notches open when converting a cluster to a region', async () => {
+    const { clusterToRegionBrush } = await loadEditingModule();
+    // U shape: the notch at cell (1, 1)..(1, 2) is open towards +y.
+    const points = [
+        { x: 0.5, y: 0.5, z: 0 }, { x: 1.5, y: 0.5, z: 0 }, { x: 2.5, y: 0.5, z: 0 },
+        { x: 0.5, y: 1.5, z: 0 }, { x: 2.5, y: 1.5, z: 0 },
+        { x: 0.5, y: 2.5, z: 0 }, { x: 2.5, y: 2.5, z: 0 },
+    ];
+
+    const region = clusterToRegionBrush({ type: 'cluster', points, radius: 0.3 }, 1, 0.05);
+
+    assert.equal(region.samples.length, 7);
+    assert.throws(() => clusterToRegionBrush({ type: 'cluster', points, radius: 0.3 }, 0.2, 0.05));
+});
+
+test('transfers ground cells by height and mixed cells point-wise away from non-ground', async () => {
+    const { groundToRegionBrushes } = await loadEditingModule();
+    const positions = [
+        0.5, 0.5, -0.33,   // cell (0,0) ground
+        0.6, 0.6, 1.5,     // cell (0,0) non-ground far above ground: cell still qualifies
+        1.51, 0.51, -0.33, // cell (1,0) ground, 9cm from the non-ground point: kept point-wise
+        1.6, 0.5, -0.30,   // cell (1,0) non-ground at ground height: cell is mixed
+        1.62, 0.5, -0.31,  // cell (1,0) ground within 5cm of non-ground: ambiguous, dropped
+        2.5, 0.5, 0.42,    // cell (2,0) raised ground in its own height bin
+    ];
+    const ground = [true, false, true, false, true, true];
+
+    const brushes = groundToRegionBrushes(positions, (index) => ground[index], {
+        cellSize: 1, zBinSize: 0.1, zMargin: 0.05, fillDistance: 0, fillHeightAbove: 0.2, mixedPointSpacing: 0.05,
+    });
+
+    assert.equal(brushes.length, 3);
+    assert.deepEqual(brushes[0].samples, [{ x: 0.5, y: 0.5 }]);
+    assert.ok(Math.abs(brushes[0].heightRange.min - -0.45) < 1e-9);
+    assert.ok(Math.abs(brushes[0].heightRange.max - -0.25) < 1e-9);
+    assert.deepEqual(brushes[1].samples, [{ x: 2.5, y: 0.5 }]);
+    assert.ok(Math.abs(brushes[1].radius - Math.SQRT2 / 2) < 1e-9);
+    assert.equal(brushes[2].samples.length, 1);
+    assert.ok(Math.abs(brushes[2].samples[0].x - 1.525) < 1e-9);
+    assert.ok(Math.abs(brushes[2].samples[0].y - 0.525) < 1e-9);
+    assert.ok(Math.abs(brushes[2].radius - (0.05 * Math.SQRT2) / 2) < 1e-9);
+    assert.ok(Math.abs(brushes[2].heightRange.min - -0.4) < 1e-9);
+    assert.ok(Math.abs(brushes[2].heightRange.max - -0.25) < 1e-9);
+});
+
+test('repeated propagation replaces earlier results instead of growing the target mask', async () => {
+    const { replacePropagatedOperations, isGroundTransferOperation, transformGroundCorrectionMaskOperation } =
+        await loadEditingModule();
+    const legacyRadii = [0.5 * Math.SQRT1_2, 0.05 * Math.SQRT1_2];
+    const heightRange = { min: -0.45, max: -0.25 };
+    const own = { type: 'polygon', vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }] };
+    const ownBrush = { type: 'brush', samples: [{ x: 5, y: 5 }], radius: 0.4, heightRange };
+    // Saved before origins existed: recognized by the radius propagation produces.
+    const legacyTransfer = { type: 'brush', samples: [{ x: 2, y: 2 }], radius: 0.5 * Math.SQRT1_2, heightRange };
+    const legacyEraser = { ...legacyTransfer, erase: true };
+    const transfer = { type: 'brush', samples: [{ x: 3, y: 3 }], radius: 0.5 * Math.SQRT1_2, heightRange, origin: 'transfer' };
+    const carried = { type: 'polygon', vertices: [{ x: 4, y: 0 }, { x: 5, y: 0 }, { x: 4, y: 1 }], origin: 'propagated' };
+
+    assert.equal(isGroundTransferOperation(legacyTransfer, legacyRadii), true);
+    assert.equal(isGroundTransferOperation(legacyEraser, legacyRadii), false);
+    assert.equal(isGroundTransferOperation(ownBrush, legacyRadii), false);
+    assert.equal(isGroundTransferOperation({ ...legacyTransfer, origin: 'propagated' }, legacyRadii), false);
+
+    const first = replacePropagatedOperations([own, ownBrush, legacyTransfer, legacyEraser], [transfer, carried], legacyRadii);
+    const second = replacePropagatedOperations(first, [transfer, carried], legacyRadii);
+
+    assert.deepEqual(first, [own, ownBrush, legacyEraser, transfer, carried]);
+    assert.deepEqual(second, first);
+    // A legacy untagged copy of a carried operation (pose round-off below 1mm) is replaced.
+    const legacyCopy = { type: 'polygon', vertices: carried.vertices.map((point) => ({ x: point.x + 1e-5, y: point.y })) };
+    assert.deepEqual(replacePropagatedOperations([legacyCopy, ownBrush], [carried], legacyRadii), [ownBrush, carried]);
+    const pose = { dataId: 'a', posX: 1, posY: 2, posZ: 0, yaw: 0.3 };
+    assert.equal(transformGroundCorrectionMaskOperation(transfer, pose, { ...pose, dataId: 'b', posX: 3 }).origin, 'transfer');
+});
+
+test('fills empty source cells near ground with the nearest ground height raised', async () => {
+    const { groundToRegionBrushes } = await loadEditingModule();
+    // Ground at cell (0,0); cell (1,0) holds only non-ground; cells (2..,0) are empty.
+    const positions = [0.5, 0.5, -0.33, 1.5, 0.5, 1.2];
+    const ground = [true, false];
+
+    const brushes = groundToRegionBrushes(positions, (index) => ground[index], {
+        cellSize: 1, zBinSize: 0.1, zMargin: 0.05, fillDistance: 2, fillHeightAbove: 0.2, mixedPointSpacing: 0.05,
+    });
+    const samples = brushes.flatMap((brush) => brush.samples.map((sample) => `${sample.x},${sample.y}`));
+    const filled = brushes.find((brush) => brush.samples.some((sample) => sample.x === -0.5 && sample.y === 0.5));
+
+    assert.ok(samples.includes('0.5,0.5'));
+    // The non-ground cell is observed, so it is never filled.
+    assert.ok(!samples.includes('1.5,0.5'));
+    // Empty cells reach two steps away from the ground cell.
+    assert.ok(samples.includes('-1.5,0.5'));
+    assert.ok(!samples.includes('-2.5,0.5'));
+    assert.ok(Math.abs(filled.heightRange.min - -0.45) < 1e-9);
+    assert.ok(Math.abs(filled.heightRange.max - -0.05) < 1e-9);
+});
+
+test('only selects contiguous following frames with available locations', async () => {
     const { planGroundCorrectionMaskPropagation } = await loadEditingModule();
-    const frames = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }];
+    const frames = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }, { id: 'f' }];
     const poses = {
         a: { dataId: 'a', posX: 0, posY: 0, posZ: 0, yaw: 0 },
         b: { dataId: 'b', posX: 0, posY: 0, posZ: 0, yaw: 0 },
         c: { dataId: 'c', posX: 0, posY: 0, posZ: 0, yaw: 0 },
-        e: { dataId: 'e', posX: 0, posY: 0, posZ: 0, yaw: 0 },
+        d: { dataId: 'd', posX: 0, posY: 0, posZ: 0, yaw: 0 },
+        f: { dataId: 'f', posX: 0, posY: 0, posZ: 0, yaw: 0 },
     };
 
-    assert.deepEqual(planGroundCorrectionMaskPropagation(frames, 2, 2, poses, {
+    assert.deepEqual(planGroundCorrectionMaskPropagation(frames, 2, 3, poses, {
         a: 'scene-1:0',
         b: 'scene-1:0',
         c: 'scene-1:0',
-        e: 'scene-1:1',
+        d: 'scene-1:0',
+        f: 'scene-1:0',
     }), {
-        frameIds: ['a', 'b'],
-        missingPoseFrameIds: ['d'],
-        differentSegmentFrameIds: ['e'],
+        frameIds: ['d'],
+        missingPoseFrameIds: ['e'],
+        differentSegmentFrameIds: ['f'],
     });
 });
 
@@ -253,7 +371,7 @@ test('uses the server location segment map within the requested N window', async
         ]),
     );
 
-    assert.deepEqual(planGroundCorrectionMaskPropagation(frames, 2, 2, poses, {
+    assert.deepEqual(planGroundCorrectionMaskPropagation(frames, 1, 3, poses, {
         a: 'scene-1:7',
         b: 'scene-1:7',
         c: 'scene-1:7',
@@ -261,7 +379,7 @@ test('uses the server location segment map within the requested N window', async
         e: 'scene-1:8',
         f: 'scene-1:8',
     }), {
-        frameIds: ['a', 'b'],
+        frameIds: ['c'],
         missingPoseFrameIds: [],
         differentSegmentFrameIds: ['d', 'e'],
     });
@@ -506,7 +624,8 @@ test('renders the correction controls as a sibling rail beside the main toolbar'
         /<\/template>\s*<GroundCorrectionPanel \/>\s*<div\s+v-show="editor\.state\.status/,
     );
     assert.match(correctionSource, /class="ground-correction-panel"/);
-    assert.match(correctionSource, /class="item"/);
+    assert.match(correctionSource, /class="ground-correction-panel__btn"/);
+    assert.match(correctionSource, /v-model:visible="propagateVisible"/);
     assert.match(correctionSource, /<a-input-number/);
     assert.match(correctionSource, /@update:value="updateHeight\(0, \$event\)"/);
     assert.match(correctionSource, /@update:value="updateHeight\(1, \$event\)"/);
@@ -542,7 +661,7 @@ test('keeps polygon editing active and previews the unfinished polygon', async (
 
     assert.match(managerSource, /this\.previewPolygon\(\);/);
     assert.match(managerSource, /private previewPolygon\(\): void/);
-    assert.match(managerSource, /if \(this\.mode === 'polygon' \|\| this\.mode === 'cluster' \|\| this\.mode === 'eraser'\) \{\s*this\.points = \[\];\s*this\.renderOverlay\(\);\s*return;/);
+    assert.match(managerSource, /已保存地面纠正操作'\);\s*\/\/[^\n]*\n\s*this\.points = \[\];\s*this\.renderOverlay\(\);\s*\}/);
     assert.match(managerSource, /this\.mode === 'eraser' \? \{ erase: true as const \} : \{\}/);
     assert.match(managerSource, /event\.key === 'Escape' && this\.mode === 'polygon' && this\.points\.length > 0/);
     assert.match(managerSource, /event\.key === 'Escape' && this\.mode\) \{[\s\S]*?this\.editor\.actionManager\.stopCurrentAction\(\);/);
@@ -571,6 +690,9 @@ test('picks cluster seeds near the configured absolute pick plane and reuses its
     assert.match(panelSource, /groundCorrectionPickZ/);
     assert.match(managerSource, /new THREE\.Plane\(new THREE\.Vector3\(0, 0, 1\), -pickZ\)/);
     assert.match(managerSource, /findSeedNearPlanePoint/);
+    assert.match(managerSource, /const CLUSTER_SEED_Z_TOLERANCE = 0\.1;/);
+    assert.match(managerSource, /pickZ - CLUSTER_SEED_Z_TOLERANCE/);
+    assert.match(managerSource, /this\.getClusterHeightRange\(seed\.z\)/);
     assert.doesNotMatch(managerSource, /ground\.plane\.constant/);
     assert.match(managerSource, /private clusterIndex\?: ClusterSpatialIndex/);
     assert.match(managerSource, /private clusterIndexKey\?: string/);
@@ -578,9 +700,9 @@ test('picks cluster seeds near the configured absolute pick plane and reuses its
     assert.match(managerSource, /position\?\.version/);
     assert.match(managerSource, /this\.clusterCandidate = seed/);
     assert.match(managerSource, /拾取平面 Z=/);
-    assert.match(stateSource, /groundCorrectionClusterHeightTolerance: 0\.2/);
+    assert.match(stateSource, /groundCorrectionClusterHeightTolerance: 0\.05/);
     assert.match(panelSource, /groundCorrectionClusterHeightTolerance/);
-    assert.match(managerSource, /pickZ - tolerance/);
+    assert.match(managerSource, /centerZ - tolerance/);
     assert.match(managerSource, /!isAutomaticNonGround\(\{/);
     assert.match(managerSource, /!isForceGround\(forceGround\.getX\(source\.index\)\)/);
     assert.match(managerSource, /collectConnected\(seedIndex, radius, heightRange, isSelectable\)/);
@@ -599,7 +721,7 @@ test('keeps cluster mode active after saving a cluster operation', async () => {
         '../src/packages/pc-editor/common/GroundCorrectionMaskManager.ts',
     );
 
-    assert.match(managerSource, /this\.mode === 'polygon' \|\| this\.mode === 'cluster'/);
+    assert.doesNotMatch(managerSource, /已保存地面纠正操作'\);[\s\S]{0,200}this\.cancel\(\)/);
 });
 
 test('previews force-ground points in gray only when they were automatic non-ground', async () => {
@@ -609,7 +731,7 @@ test('previews force-ground points in gray only when they were automatic non-gro
 
     assert.match(
         materialSource,
-        /groundCorrectionPreview > 0\.0[\s\S]*forceGround > \$\{FORCE_GROUND_THRESHOLD\}[\s\S]*abs\(color\.r - intensity\)/,
+        /groundCorrectionPreview > 0\.0[\s\S]*groundForced > \$\{FORCE_GROUND_THRESHOLD\}[\s\S]*abs\(color\.r - intensity\)/,
     );
     assert.match(materialSource, /vColor = vec3\(0\.5\);/);
 });

@@ -13,8 +13,8 @@ async function loadVertexShader(options) {
         .replace("import * as THREE from 'three';", 'const THREE = { RawShaderMaterial: class {} };')
         .replace("import { getColorTable } from '../utils';", 'const getColorTable = () => [];')
         .replace(
-            "import {\n    AUTO_NON_GROUND_TOLERANCE,\n    FORCE_GROUND_THRESHOLD,\n} from '../points/forceGround';",
-            'const AUTO_NON_GROUND_TOLERANCE = 12; const FORCE_GROUND_THRESHOLD = 0.5;',
+            "import {\n    AUTO_NON_GROUND_TOLERANCE,\n    EGO_BODY_RANGE,\n    FORCE_GROUND_THRESHOLD,\n} from '../points/forceGround';",
+            'const AUTO_NON_GROUND_TOLERANCE = 12; const FORCE_GROUND_THRESHOLD = 0.5; const EGO_BODY_RANGE = { min: [-1.17, -1.2, 0.0], max: [3.8, 1.2, 1.4] };',
         )
         .replace('function getShaderCode(', 'export function getShaderCode(');
     const output = ts.transpileModule(source, {
@@ -36,10 +36,10 @@ test('filters ground points without changing the single or height color mode', a
     assert.doesNotMatch(source, /ColorModeEnum\.NON_GROUND/);
     assert.match(vertexShader, /uniform float hideGround;/);
     assert.match(vertexShader, /attribute float forceGround;/);
-    assert.match(vertexShader, /forceGround > 0\.5/);
+    assert.match(vertexShader, /groundForced > 0\.5/);
     assert.match(
         vertexShader,
-        /hideGround > 0\.0[\s\S]*?\(colorMode == 0\.0 \|\| colorMode == 1\.0\)[\s\S]*?forceGround > 0\.5[\s\S]*?vDiscard = 1\.0/,
+        /hideGround > 0\.0[\s\S]*?\(colorMode == 0\.0 \|\| colorMode == 1\.0\)[\s\S]*?groundForced > 0\.5[\s\S]*?vDiscard = 1\.0/,
     );
 });
 
@@ -50,7 +50,7 @@ test('generates force-ground rules before independent intensity and side-view pa
         hasRGB: true,
     });
 
-    const groundRuleIndex = vertexShader.indexOf('forceGround > 0.5');
+    const groundRuleIndex = vertexShader.indexOf('groundForced > 0.5');
     const intensityRuleIndex = vertexShader.indexOf('if(openIntensity > 0.0)');
     const sideViewRuleIndex = vertexShader.indexOf('if(sideViewContrast > 0.0)');
     const sideViewBlock = vertexShader.slice(sideViewRuleIndex, vertexShader.indexOf('#endif', sideViewRuleIndex));
@@ -69,7 +69,7 @@ test('keeps forced ground points in RGB mode while filtering automatic non-groun
 
     assert.match(
         vertexShader,
-        /hideNonGroundRgb > 0\.0[\s\S]*?forceGround <= 0\.5[\s\S]*?abs\(color\.r - intensity\) < 12\.0[\s\S]*?abs\(color\.g - intensity\) < 12\.0[\s\S]*?abs\(color\.b - intensity\) < 12\.0[\s\S]*?vDiscard = 1\.0/,
+        /hideNonGroundRgb > 0\.0[\s\S]*?groundForced <= 0\.5[\s\S]*?inEgoBody \|\|[\s\S]*?abs\(color\.r - intensity\) < 12\.0[\s\S]*?abs\(color\.g - intensity\) < 12\.0[\s\S]*?abs\(color\.b - intensity\) < 12\.0[\s\S]*?vDiscard = 1\.0/,
     );
 });
 
@@ -90,8 +90,24 @@ test('uses the shared force-ground threshold for CPU and shader classification',
     const vertexShader = source
         .replaceAll('${AUTO_NON_GROUND_TOLERANCE}', '12')
         .replaceAll('${FORCE_GROUND_THRESHOLD}', '0.5');
-    assert.match(vertexShader, /forceGround > 0\.5/);
-    assert.match(vertexShader, /forceGround <= 0\.5/);
+    assert.match(vertexShader, /groundForced > 0\.5/);
+    assert.match(vertexShader, /groundForced <= 0\.5/);
+});
+
+test('treats ego body points as non-ground and ignores their corrections in the shader', async () => {
+    const vertexShader = await loadVertexShader({
+        hasIntensity: true,
+        hasVelocity: false,
+        hasRGB: true,
+    });
+
+    assert.match(
+        vertexShader,
+        /bool inEgoBody = isInBox\(\s*position,\s*vec3\(-1\.170, -1\.200, 0\.000\),\s*vec3\(3\.800, 1\.200, 1\.400\)\s*\);/,
+    );
+    assert.match(vertexShader, /float groundForced = inEgoBody \? 0\.0 : forceGround;/);
+    assert.match(vertexShader, /groundForced <= 0\.5 &&\s*!inEgoBody &&/);
+    assert.equal((vertexShader.match(/forceGround/g) || []).length, 2);
 });
 
 test('shows the ground filter only for single and height modes', async () => {

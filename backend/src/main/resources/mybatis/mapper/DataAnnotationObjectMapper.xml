@@ -55,6 +55,74 @@
         <include refid="commonSql"/>
     </select>
 
+    <!--
+        Projects class_attributes down to timeline fields, avoiding a full JSON transfer and parse.
+        Timeline fields follow the frontend merge order (contour, meta, root). Point arrays keep at
+        most two elements, which is all isSyncableTrackObject inspects. JSON_MERGE_PATCH drops
+        null members so absent keys stay absent.
+    -->
+    <select id="findTrackTimelineObjects" resultMap="BaseResultMap">
+        SELECT
+            dao.id,
+            dao.data_id,
+            dao.source_type,
+            JSON_MERGE_PATCH('{}', JSON_OBJECT(
+                'trackId', dao.class_attributes->'$.trackId',
+                'type', dao.class_attributes->'$.type',
+                <foreach collection="timelineKeys" item="key" separator=",">
+                    #{key}, COALESCE(
+                        JSON_EXTRACT(dao.class_attributes, CONCAT('$.contour.', #{key})),
+                        JSON_EXTRACT(dao.class_attributes, CONCAT('$.meta.', #{key})),
+                        JSON_EXTRACT(dao.class_attributes, CONCAT('$.', #{key})))
+                </foreach>,
+                'contour', JSON_OBJECT(
+                    'center3D', dao.class_attributes->'$.contour.center3D',
+                    'size3D', dao.class_attributes->'$.contour.size3D',
+                    'bottomPoints', JSON_EXTRACT(dao.class_attributes,
+                        '$.contour.bottomPoints[0]', '$.contour.bottomPoints[1]'),
+                    'topPoints', JSON_EXTRACT(dao.class_attributes,
+                        '$.contour.topPoints[0]', '$.contour.topPoints[1]'),
+                    'points', IF(JSON_TYPE(dao.class_attributes->'$.contour.points') = 'ARRAY',
+                        JSON_ARRAY(), NULL))
+            )) AS class_attributes
+        FROM data_annotation_object dao
+        INNER JOIN data d ON d.id = dao.data_id
+        WHERE d.parent_id = #{sceneId}
+          AND d.is_deleted = false
+          AND dao.track_id = #{trackId}
+        ORDER BY dao.id
+    </select>
+
+    <!--
+        Projects class_attributes down to the root fields read by manual sync segment lookup.
+        manualSyncSegmentId is set separately so a stored JSON null stays present, matching the
+        containsKey filter; rows without the key are excluded in SQL instead.
+    -->
+    <select id="findManualSyncSegmentObjects" resultMap="BaseResultMap">
+        SELECT
+            dao.id,
+            dao.data_id,
+            dao.class_id,
+            JSON_SET(
+                JSON_MERGE_PATCH('{}', JSON_OBJECT(
+                    'trackId', dao.class_attributes->'$.trackId',
+                    'classId', dao.class_attributes->'$.classId',
+                    'type', dao.class_attributes->'$.type',
+                    'manualSyncSegmentStartDataId', dao.class_attributes->'$.manualSyncSegmentStartDataId',
+                    'contour', JSON_OBJECT(
+                        'center3D', dao.class_attributes->'$.contour.center3D',
+                        'size3D', dao.class_attributes->'$.contour.size3D'))),
+                '$.manualSyncSegmentId', dao.class_attributes->'$.manualSyncSegmentId'
+            ) AS class_attributes
+        FROM data_annotation_object dao
+        INNER JOIN data d ON d.id = dao.data_id
+        WHERE d.parent_id = #{sceneId}
+          AND d.is_deleted = false
+          AND dao.track_id = #{trackId}
+          AND JSON_CONTAINS_PATH(dao.class_attributes, 'one', '$.manualSyncSegmentId')
+        ORDER BY dao.id
+    </select>
+
     <sql id="commonSql">
         FROM
         data_annotation_object dao

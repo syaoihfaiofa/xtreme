@@ -4,17 +4,27 @@
         @click.prevent="(e) => onClickTick(e)"
     >
         <div class="i-scale-head-container">
-            <template v-for="(item, index) in configArray" :key="item.key">
-                <div
-                    class="ruler-container"
-                    :class="{ 'filtered-out': frameFilterMask?.[index] === false }"
-                    :style="_style(index)"
-                >
-                    <div v-if="_mark(index)" class="ruler-text">{{ index + 1 }}</div>
-                    <span :class="{ 'ruler-scale': true, bold: _mark(index) }"></span>
-                    <span :style="_style1(index)" class="loaded"></span>
-                </div>
-            </template>
+            <!-- v-memo deps must cover every per-cell input read by _style, _style1 and _mark. -->
+            <div
+                v-for="(item, index) in configArray"
+                :key="item.key"
+                v-memo="[
+                    frames[index]?.loadState,
+                    _isSample(index - 1),
+                    _isSample(index),
+                    _isSample(index + 1),
+                    frameFilterMask?.[index],
+                    _config.spanWidth,
+                    _config.interval,
+                ]"
+                class="ruler-container"
+                :class="{ 'filtered-out': frameFilterMask?.[index] === false }"
+                :style="_style(index)"
+            >
+                <div v-if="_mark(index)" class="ruler-text">{{ index + 1 }}</div>
+                <span :class="{ 'ruler-scale': true, bold: _mark(index) }"></span>
+                <span :style="_style1(index)" class="loaded"></span>
+            </div>
         </div>
     </div>
     <div :style="{ left: iState.dragDomLeft + 'px' }" ref="indicatorRef" class="i-scale-indicator">
@@ -121,6 +131,9 @@
         },
     );
     // methods
+    const _isSample = (index: number): boolean => {
+        return !!(props.frames[index] as any)?.isSample;
+    };
     const _mark = (index: number) => {
         return (index + 1) % _config.value.interval === 0 || index === 0;
     };

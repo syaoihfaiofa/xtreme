@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { getColorTable } from '../utils';
 import {
     AUTO_NON_GROUND_TOLERANCE,
+    EGO_BODY_RANGE,
     FORCE_GROUND_THRESHOLD,
 } from '../points/forceGround';
 
@@ -159,6 +160,13 @@ function getShaderCode(
 
         vOpacity = 1.0;
         float vDiscard = -1.0;
+        // Points on the ego vehicle body are never ground, automatically or by correction.
+        bool inEgoBody = isInBox(
+            position,
+            vec3(${EGO_BODY_RANGE.min.map((value) => value.toFixed(3)).join(', ')}),
+            vec3(${EGO_BODY_RANGE.max.map((value) => value.toFixed(3)).join(', ')})
+        );
+        float groundForced = inEgoBody ? 0.0 : forceGround;
         float vPointSize = pointSize;
         gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
         if(position.z>heightRange.y||position.z<heightRange.x){
@@ -192,13 +200,18 @@ function getShaderCode(
             #ifdef FLAG_INTENSITY
             if(
                 hideNonGroundRgb > 0.0 &&
-                forceGround <= ${FORCE_GROUND_THRESHOLD} &&
-                // PCD RGB/intensity channels often pass through a float-to-uint8
-                // conversion independently.  Keep a practical tolerance so sky
-                // points encoded as RGB=intensity do not leak through as white.
-                abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
-                abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
-                abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
+                groundForced <= ${FORCE_GROUND_THRESHOLD} &&
+                (
+                    inEgoBody ||
+                    // PCD RGB/intensity channels often pass through a float-to-uint8
+                    // conversion independently.  Keep a practical tolerance so sky
+                    // points encoded as RGB=intensity do not leak through as white.
+                    (
+                        abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                        abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
+                        abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0
+                    )
+                )
             ){
                 vDiscard = 1.0;
             }
@@ -254,7 +267,7 @@ function getShaderCode(
             (colorMode == 0.0 || colorMode == 1.0) &&
             (
                 (
-                    forceGround > ${FORCE_GROUND_THRESHOLD} &&
+                    groundForced > ${FORCE_GROUND_THRESHOLD} &&
                     (
                         groundCorrectionPreview <= 0.0 ||
                         !(
@@ -265,7 +278,8 @@ function getShaderCode(
                     )
                 ) ||
                 (
-                    forceGround <= ${FORCE_GROUND_THRESHOLD} &&
+                    groundForced <= ${FORCE_GROUND_THRESHOLD} &&
+                    !inEgoBody &&
                     !(
                         abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
                         abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
@@ -280,7 +294,7 @@ function getShaderCode(
         if(
             hideGround > 0.0 &&
             (colorMode == 0.0 || colorMode == 1.0) &&
-            forceGround > ${FORCE_GROUND_THRESHOLD}
+            groundForced > ${FORCE_GROUND_THRESHOLD}
         ){
             vDiscard = 1.0;
         }
@@ -289,7 +303,7 @@ function getShaderCode(
         if(
             hideGround > 0.0 &&
             (colorMode == 0.0 || colorMode == 1.0) &&
-            forceGround > ${FORCE_GROUND_THRESHOLD}
+            groundForced > ${FORCE_GROUND_THRESHOLD}
         ){
             vDiscard = 1.0;
         }
@@ -298,7 +312,7 @@ function getShaderCode(
         #ifdef FLAG_INTENSITY
         if(
             groundCorrectionPreview > 0.0 &&
-            forceGround > ${FORCE_GROUND_THRESHOLD} &&
+            groundForced > ${FORCE_GROUND_THRESHOLD} &&
             abs(color.r - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
             abs(color.g - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0 &&
             abs(color.b - intensity) < ${AUTO_NON_GROUND_TOLERANCE}.0

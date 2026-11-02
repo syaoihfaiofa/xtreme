@@ -87,6 +87,11 @@ export default class IrregularWall extends THREE.Group {
         return null;
     }
 
+    /** Paired bottom/top samples of the wall surface in local coordinates; empty without a top polyline. */
+    getSurfaceSamples(): Array<{ bottom: THREE.Vector3; top: THREE.Vector3 }> {
+        return this.mergedSamples();
+    }
+
     raycast(raycaster: THREE.Raycaster, intersects: Intersect[]): void {
         this.bottomLine.raycast(raycaster, intersects as THREE.Intersection[]);
         this.topLine.raycast(raycaster, intersects as THREE.Intersection[]);

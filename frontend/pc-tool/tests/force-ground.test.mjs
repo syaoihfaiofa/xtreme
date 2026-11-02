@@ -40,10 +40,7 @@ async function loadPoints() {
         .replace("import PointsMaterial from '../material/PointsMaterial';", 'class PointsMaterial {}')
         .replace("import { Event } from '../config';", 'const Event = { POINTS_CHANGE: "points_change" };')
         .replace("import { IPoints } from './type';", '')
-        .replace(
-            "import { calculateForceGround, type ForceGroundOperation } from './forceGround';",
-            '',
-        )
+        .replace(/import \{[\s\S]*?\} from '\.\/forceGround';/, '')
         .replace(' implements IPoints', '')}`;
     const output = ts.transpileModule(source, {
         compilerOptions: {
@@ -348,6 +345,7 @@ test('marks points inside polygons and leaves points outside unmarked', async ()
             vertices: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }],
             heightRange: { min: -1, max: 1 },
         }],
+        [],
     );
 
     assert.deepEqual([...forceGround], [1, 0, 0, 1]);
@@ -368,6 +366,7 @@ test('marks brush boundaries and respects optional height ranges', async () => {
             radius: 1,
             heightRange: { min: 0, max: 2 },
         }],
+        [],
     );
 
     assert.deepEqual([...forceGround], [1, 1, 0]);
@@ -389,6 +388,7 @@ test('combines overlapping polygon and brush operations', async () => {
             },
             { type: 'brush', samples: [{ x: 2, y: 0 }], radius: 1 },
         ],
+        [],
     );
 
     assert.deepEqual([...forceGround], [1, 1, 0]);
@@ -410,6 +410,7 @@ test('marks only exact persisted cluster points using a spatial hash', async () 
             points: [{ x: 0, y: 0, z: 0 }],
             radius: 0.3,
         }],
+        [],
     );
 
     assert.deepEqual([...forceGround], [1, 1, 0, 0, 0]);
@@ -436,16 +437,145 @@ test('eraser strokes undo only earlier corrections and later operations can re-m
     ]);
 
     assert.deepEqual(
-        [...calculateForceGround(positions, [square, eraser])],
+        [...calculateForceGround(positions, [square, eraser], [])],
         [0, 1, 1, 0],
     );
     assert.deepEqual(
-        [...calculateForceGround(positions, [square, eraser, square])],
+        [...calculateForceGround(positions, [square, eraser, square], [])],
         [1, 1, 1, 0],
     );
     assert.deepEqual(
-        [...calculateForceGround(positions, [eraser, square])],
+        [...calculateForceGround(positions, [eraser, square], [])],
         [1, 1, 1, 0],
+    );
+});
+
+test('grid-accelerated force ground matches a newest-wins brute-force reference', async () => {
+    const { calculateForceGround } = await loadForceGround();
+    let seed = 7;
+    const random = () => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return seed / 2147483648;
+    };
+    const coordinates = [];
+    for (let index = 0; index < 4000; index++) {
+        coordinates.push(random() * 40 - 20, random() * 40 - 20, random() * 2 - 1);
+    }
+    coordinates.push(5000, -5000, 0); // far outlier must not break the grid
+    const positions = new Float32Array(coordinates);
+    const point = () => ({ x: random() * 40 - 20, y: random() * 40 - 20 });
+    const operations = [
+        {
+            type: 'polygon',
+            vertices: [{ x: -15, y: -15 }, { x: 10, y: -12 }, { x: 5, y: 12 }, { x: -12, y: 8 }],
+            heightRange: { min: -0.5, max: 0.5 },
+        },
+        // Sparse region brush spread over the whole frame.
+        { type: 'brush', samples: Array.from({ length: 60 }, point), radius: 0.8, heightRange: { min: -1, max: 0 } },
+        // Dense stroke and an eraser crossing earlier corrections.
+        { type: 'brush', samples: Array.from({ length: 40 }, (_, i) => ({ x: -5 + i * 0.1, y: 0 })), radius: 1.5 },
+        { type: 'brush', samples: [{ x: 0, y: 0 }, { x: 4, y: 4 }], radius: 3, erase: true },
+        {
+            type: 'cluster',
+            points: Array.from({ length: 200 }, () => ({ ...point(), z: random() * 2 - 1 })),
+            radius: 0.9,
+        },
+        { type: 'brush', center: { x: 1, y: 1 }, radius: 1 },
+    ];
+    const inPolygon = (x, y, vertices) => {
+        let inside = false;
+        for (let current = 0, previous = vertices.length - 1; current < vertices.length; previous = current++) {
+            const start = vertices[previous];
+            const end = vertices[current];
+            if ((start.y > y) !== (end.y > y) && x < ((end.x - start.x) * (y - start.y)) / (end.y - start.y) + start.x) {
+                inside = !inside;
+            }
+        }
+        return inside;
+    };
+    const expected = [];
+    for (let index = 0; index < positions.length / 3; index++) {
+        const [x, y, z] = positions.slice(index * 3, index * 3 + 3);
+        let value = 0;
+        for (const operation of [...operations].reverse()) {
+            const range = operation.heightRange;
+            if (range && (z < range.min || z > range.max)) continue;
+            const hit = operation.type === 'polygon'
+                ? inPolygon(x, y, operation.vertices)
+                : operation.type === 'brush'
+                    ? (operation.samples || [operation.center]).some(
+                        (sample) => (x - sample.x) ** 2 + (y - sample.y) ** 2 <= operation.radius ** 2,
+                    )
+                    : operation.points.some(
+                        (sample) => (x - sample.x) ** 2 + (y - sample.y) ** 2 + (z - sample.z) ** 2 <= operation.radius ** 2,
+                    );
+            if (!hit) continue;
+            value = operation.erase ? 0 : 1;
+            break;
+        }
+        expected.push(value);
+    }
+
+    const actual = [...calculateForceGround(positions, operations, [])];
+
+    assert.ok(expected.filter(Boolean).length > 500);
+    assert.deepEqual(actual, expected);
+});
+
+test('never forces ego body points to ground', async () => {
+    const { calculateForceGround, createEgoBodyProtectedVolume, isInEgoBody } = await loadForceGround();
+    const everywhere = {
+        type: 'polygon',
+        vertices: [{ x: -100, y: -100 }, { x: 100, y: -100 }, { x: 100, y: 100 }, { x: -100, y: 100 }],
+    };
+    const positions = new Float32Array([
+        1, 0, 0.5,      // ego roof/body
+        3.5, 1.0, 0.1,  // ego body near its lower corner
+        1, 0, -0.2,     // raised ground under the vehicle, below the body volume
+        5, 0, 0.5,      // in front of the vehicle
+    ]);
+
+    assert.equal(isInEgoBody(1, 0, 0.5), true);
+    assert.deepEqual(
+        [...calculateForceGround(positions, [everywhere], [createEgoBodyProtectedVolume()])],
+        [0, 0, 1, 1],
+    );
+});
+
+test('never forces points inside protected boxes or walls to ground', async () => {
+    const { calculateForceGround } = await loadForceGround();
+    const everywhere = {
+        type: 'polygon',
+        vertices: [{ x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 10 }, { x: -10, y: 10 }],
+    };
+    // 2x2x2 box centered at (5, 0, 0), rotated 45 degrees around Z.
+    const cos = Math.cos(Math.PI / 4);
+    const sin = Math.sin(Math.PI / 4);
+    const box = {
+        type: 'box',
+        matrix: [2 * cos, 2 * sin, 0, 0, -2 * sin, 2 * cos, 0, 0, 0, 0, 2, 0, 5, 0, 0, 1],
+        inverseMatrix: [cos / 2, -sin / 2, 0, 0, sin / 2, cos / 2, 0, 0, 0, 0, 0.5, 0, -5 * cos / 2, 5 * sin / 2, 0, 1],
+    };
+    const wall = {
+        type: 'wall',
+        samples: [
+            { bottom: { x: -5, y: -2, z: 0 }, top: { x: -5, y: -2, z: 2 } },
+            { bottom: { x: -5, y: 2, z: 0 }, top: { x: -5, y: 2, z: 2 } },
+        ],
+        thickness: 0.2,
+    };
+    const positions = new Float32Array([
+        5, 0, 0.5,      // box center region
+        6, 0.9, 0,      // outside the rotated box (inside the unrotated one)
+        -5.1, 0, 1,     // on the wall
+        -5, 0, 2.5,     // above the wall
+        -4.5, 0, 1,     // beside the wall
+        0, 0, 0,        // open ground
+    ]);
+
+    assert.deepEqual(
+        [...calculateForceGround(positions, [everywhere], [box, wall])],
+        [0, 1, 0, 1, 1, 1],
     );
 });
 
@@ -453,7 +583,7 @@ test('creates matching forceGround attributes for full and late chunk point clou
     const { default: Points } = await loadPoints();
     const points = new Points({});
 
-    points.updateData({ position: [0, 0, 0, 3, 0, 0] }, []);
+    points.updateData({ position: [0, 0, 0, 3, 0, 0] }, [], []);
     const fullAttribute = points.geometry.getAttribute('forceGround');
     assert.equal(fullAttribute.count, 2);
     assert.deepEqual([...fullAttribute.array], [0, 0]);
@@ -461,6 +591,7 @@ test('creates matching forceGround attributes for full and late chunk point clou
     points.updateData(
         { position: [0, 0, 0, 2, 0, 0, 4, 0, 0] },
         [{ type: 'brush', samples: [{ x: 2, y: 0 }], radius: 1 }],
+        [],
     );
     const chunkAttribute = points.geometry.getAttribute('forceGround');
     assert.equal(chunkAttribute.count, 3);
