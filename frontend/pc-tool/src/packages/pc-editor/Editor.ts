@@ -575,6 +575,10 @@ export default class Editor extends THREE.EventDispatcher {
             delete userData.confidence;
             delete userData.reviewedCorrect;
             delete userData.reviewedCorrectVisible;
+            delete userData.manualSyncSegmentId;
+            delete userData.manualSyncSegmentBoundaryDataId;
+            delete userData.manualSyncSegmentStartDataId;
+            delete userData.manualSyncSegmentEndDataId;
             userData.manualModified = true;
             utils.setIdInfo(this, userData);
         }
